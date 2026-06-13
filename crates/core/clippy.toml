@@ -1,0 +1,17 @@
+# Purity guard for the integrity core ONLY (arch doc §5: no I/O, no clock, no env).
+# This file lives in crates/core so it does not constrain schema-gen (whose job is file I/O).
+# Two more independent guards back this up: the wasm32 CI check and scripts/check-core-deps.sh.
+allow-unwrap-in-tests = true
+
+disallowed-methods = [
+    "std::time::SystemTime::now",
+    "std::time::Instant::now",
+    "std::fs::read",
+    "std::fs::read_to_string",
+    "std::fs::write",
+    "std::fs::File::open",
+    "std::fs::File::create",
+    "std::env::var",
+    "std::env::var_os",
+    "std::env::vars",
+]

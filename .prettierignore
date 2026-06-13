@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+# Design documents are source material, never reformatted.
+docs/mvp_direction.md
+docs/mvp_architecture v17.md
+pnpm-lock.yaml
+packages/schema/src/generated/
+packages/schema/artifact/
+crates/core-node/index.js
+crates/core-node/index.d.ts
+db/schema.sql
+playwright-report/
+test-results/

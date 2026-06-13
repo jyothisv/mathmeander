@@ -1,0 +1,493 @@
+[
+  {
+    "type": "ObjectType",
+    "value": "note",
+    "valid": true
+  },
+  {
+    "type": "ObjectType",
+    "value": "theorem",
+    "valid": false,
+    "note": "formal family arrives in slice 1; not in the vocabulary yet"
+  },
+  {
+    "type": "ObjectType",
+    "value": "Note",
+    "valid": false,
+    "note": "case-sensitive"
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "raw",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "draft",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "ai_drafted",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "user_verified",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "trusted",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "needs_review",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "deprecated",
+    "valid": true
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "Draft",
+    "valid": false
+  },
+  {
+    "type": "ObjectStatus",
+    "value": "published",
+    "valid": false
+  },
+  {
+    "type": "Origin",
+    "value": "user",
+    "valid": true
+  },
+  {
+    "type": "Origin",
+    "value": "ai",
+    "valid": true
+  },
+  {
+    "type": "Origin",
+    "value": "imported",
+    "valid": true
+  },
+  {
+    "type": "Origin",
+    "value": "system",
+    "valid": true
+  },
+  {
+    "type": "Origin",
+    "value": "llm",
+    "valid": false
+  },
+  {
+    "type": "CanonicalObject",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note",
+      "title": "Cauchy sequences",
+      "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+      "status": "draft",
+      "schema_version": 1,
+      "revision": 1,
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "space_id": "0197675f-71f4-7000-8000-000000000003",
+      "created_at": "2026-06-12T00:00:00Z",
+      "updated_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true
+  },
+  {
+    "type": "CanonicalObject",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note",
+      "updated_at": "2026-06-12T00:00:00Z",
+      "created_at": "2026-06-12T00:00:00Z",
+      "status": "draft",
+      "schema_version": 1,
+      "revision": 1,
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "space_id": "0197675f-71f4-7000-8000-000000000003"
+    },
+    "valid": true,
+    "note": "title/raw_source absent — unset is a valid state (§6.3 tri-state)"
+  },
+  {
+    "type": "CanonicalObject",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note",
+      "title": "Cauchy sequences",
+      "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+      "status": "draft",
+      "schema_version": 1,
+      "revision": 1,
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "space_id": "0197675f-71f4-7000-8000-000000000003",
+      "created_at": "2026-06-12T00:00:00Z",
+      "updated_at": "2026-06-12T00:00:00Z",
+      "from_the_future": {
+        "carried": true
+      }
+    },
+    "valid": true,
+    "note": "unknown fields are CARRIED, not rejected (§2.2 preservation)"
+  },
+  {
+    "type": "CanonicalObject",
+    "value": {
+      "updated_at": "2026-06-12T00:00:00Z",
+      "type": "note",
+      "title": "Cauchy sequences",
+      "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+      "status": "draft",
+      "schema_version": 1,
+      "revision": 1,
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "space_id": "0197675f-71f4-7000-8000-000000000003",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": false
+  },
+  {
+    "type": "CanonicalObject",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note",
+      "title": "Cauchy sequences",
+      "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+      "status": "published",
+      "schema_version": 1,
+      "revision": 1,
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "space_id": "0197675f-71f4-7000-8000-000000000003",
+      "created_at": "2026-06-12T00:00:00Z",
+      "updated_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": false
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "user",
+      "created_by": "user-1",
+      "occurred_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "system",
+      "occurred_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true,
+    "note": "created_by absent — Option means absent is fine at SHAPE level"
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "system",
+      "created_by": null,
+      "occurred_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true,
+    "note": "created_by explicitly null"
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "user",
+      "created_by": "user-1",
+      "occurred_at": "2026-06-12T02:00:00+02:00"
+    },
+    "valid": true,
+    "note": "RFC3339 offset form — chrono accepts; zod must match"
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "not-a-uuid",
+      "origin": "user",
+      "created_by": "user-1",
+      "occurred_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": false
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "user",
+      "created_by": "user-1",
+      "occurred_at": "yesterday"
+    },
+    "valid": false
+  },
+  {
+    "type": "Provenance",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "origin": "user",
+      "created_by": "user-1"
+    },
+    "valid": false,
+    "note": "occurred_at missing"
+  },
+  {
+    "type": "CreateObjectInput",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note"
+    },
+    "valid": true
+  },
+  {
+    "type": "CreateObjectInput",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001",
+      "type": "note",
+      "title": "",
+      "raw_source": "$x$"
+    },
+    "valid": true,
+    "note": "empty title is a VALUE (tri-state)"
+  },
+  {
+    "type": "CreateObjectInput",
+    "value": {
+      "id": "not-even-a-uuid",
+      "type": "theorem"
+    },
+    "valid": true,
+    "note": "shape-valid: id format and type vocabulary are CORE semantics (typed errors), not transport shape"
+  },
+  {
+    "type": "CreateObjectInput",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-000000000001"
+    },
+    "valid": false,
+    "note": "type missing"
+  },
+  {
+    "type": "CreateContext",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "origin": "user",
+      "created_by": "user-1"
+    },
+    "valid": true
+  },
+  {
+    "type": "CreateContext",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "origin": "system"
+    },
+    "valid": true
+  },
+  {
+    "type": "CreateContext",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+      "origin": "llm"
+    },
+    "valid": false
+  },
+  {
+    "type": "ObjectPatch",
+    "value": {
+      "expected_revision": 1
+    },
+    "valid": true,
+    "note": "title absent = leave unchanged"
+  },
+  {
+    "type": "ObjectPatch",
+    "value": {
+      "expected_revision": 1,
+      "title": null
+    },
+    "valid": true,
+    "note": "null = clear to unset"
+  },
+  {
+    "type": "ObjectPatch",
+    "value": {
+      "expected_revision": 1,
+      "title": "New name"
+    },
+    "valid": true
+  },
+  {
+    "type": "ObjectPatch",
+    "value": {
+      "expected_revision": 1,
+      "title": ""
+    },
+    "valid": true,
+    "note": "empty string is a VALUE, not a clear"
+  },
+  {
+    "type": "ObjectPatch",
+    "value": {
+      "title": "x"
+    },
+    "valid": false,
+    "note": "expected_revision required (§6.4)"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "unknown_object_type",
+      "given": "theorem"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "title_too_long",
+      "max_chars": 1024,
+      "given_chars": 2000
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "missing_created_by",
+      "origin": "user"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "origin_not_producible",
+      "origin": "ai"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "schema_version_from_the_future",
+      "given": 9,
+      "current": 1
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "not_a_real_code"
+    },
+    "valid": false,
+    "note": "unknown tag"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "title_too_long",
+      "max_chars": 1024
+    },
+    "valid": false,
+    "note": "missing variant field"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "given": "theorem"
+    },
+    "valid": false,
+    "note": "tag missing entirely"
+  },
+  {
+    "type": "CoreError",
+    "value": {
+      "kind": "malformed_input",
+      "context": "create input",
+      "message": "expected value at line 1"
+    },
+    "valid": true
+  },
+  {
+    "type": "CoreError",
+    "value": {
+      "kind": "validation",
+      "code": "title_too_long",
+      "max_chars": 1024,
+      "given_chars": 2000
+    },
+    "valid": true,
+    "note": "validation errors flatten inline behind kind"
+  },
+  {
+    "type": "CoreError",
+    "value": {
+      "kind": "validation"
+    },
+    "valid": false,
+    "note": "flattened inner error missing"
+  },
+  {
+    "type": "CoreError",
+    "value": {
+      "kind": "panic"
+    },
+    "valid": false
+  },
+  {
+    "type": "ObjectResult",
+    "value": {
+      "ok": true,
+      "value": {
+        "id": "0197675f-71f4-7000-8000-000000000001",
+        "type": "note",
+        "title": "Cauchy sequences",
+        "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+        "status": "draft",
+        "schema_version": 1,
+        "revision": 1,
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "created_at": "2026-06-12T00:00:00Z",
+        "updated_at": "2026-06-12T00:00:00Z"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "ObjectResult",
+    "value": {
+      "ok": false,
+      "error": {
+        "kind": "validation",
+        "code": "not_uuid_v7",
+        "field": "id"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "ObjectResult",
+    "value": {
+      "ok": true
+    },
+    "valid": false,
+    "note": "ok without value"
+  }
+]

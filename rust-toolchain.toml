@@ -1,0 +1,7 @@
+# Exact toolchain pin: CI and every laptop compile identically. Bumped by deliberate PR.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+# wasm32 is a PURITY GATE for mathmeander-core (arch doc §5: core compiles to WASM later),
+# checked in CI on every commit — not a shipped runtime.
+targets = ["wasm32-unknown-unknown"]

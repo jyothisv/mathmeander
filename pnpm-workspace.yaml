@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - crates/core-node
+  - e2e
+
+# pnpm 10 blocks dependency build scripts by default. This is the explicit, auditable
+# allowlist — new native deps must be reviewed in code review before being added here.
+onlyBuiltDependencies:
+  - '@mathmeander/core-node'
+  - esbuild # binary install for tsx/vite

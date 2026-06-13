@@ -1,0 +1,1571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mathmeander-schema",
+  "artifact_version": 1,
+  "schema_version": 1,
+  "$defs": {
+    "CanonicalObject": {
+      "additionalProperties": true,
+      "title": "CanonicalObject",
+      "description": "A canonical object — the doc's §6 `objects` row shape, verbatim (all eleven fields).\nContent (`content_units`/MathContent) is a SEPARATE aggregate arriving in slice 1;\nan object with zero units is valid, which is what makes that addition purely\nstructural. Named `CanonicalObject` (not `Object`) so the generated TS type never\nshadows JavaScript's global `Object`.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Client-minted UUIDv7 (arch doc §4/§6.3).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+          "type": "string",
+          "enum": [
+            "note"
+          ]
+        },
+        "title": {
+          "description": "Tri-state (§6.3): `None` = unset, `Some(\"\")` = explicitly empty — never collapsed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_source": {
+          "description": "The rough input, preserved VERBATIM (§2.2). No normalization function exists.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though\nthe skeleton's create path can only PRODUCE `Draft`; other values become producible\nvia future status-transition operations.",
+          "type": "string",
+          "enum": [
+            "raw",
+            "draft",
+            "ai_drafted",
+            "user_verified",
+            "trusted",
+            "needs_review",
+            "deprecated"
+          ]
+        },
+        "schema_version": {
+          "description": "Application-level model version (§6.3); migrated by the core's total functions.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "revision": {
+          "description": "Optimistic-concurrency token (§6.4): increments on every persisted write.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "space_id": {
+          "description": "Identity of a space (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "status",
+        "schema_version",
+        "revision",
+        "provenance_id",
+        "space_id",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "CoreError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "context": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "malformed_input"
+            }
+          },
+          "required": [
+            "kind",
+            "context",
+            "message"
+          ]
+        },
+        {
+          "description": "A domain validation failure. Errors are VALUES crossing the FFI (result envelopes),\nnever exceptions (arch doc §17 boundary discipline).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "validation"
+            }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "given": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "unknown_object_type"
+                }
+              },
+              "required": [
+                "code",
+                "given"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "invalid_id"
+                }
+              },
+              "required": [
+                "code",
+                "field"
+              ]
+            },
+            {
+              "description": "Client-minted ids must be UUIDv7 (arch doc §4/§6.3 — sortable, client-mintable).",
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "not_uuid_v7"
+                }
+              },
+              "required": [
+                "code",
+                "field"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "max_chars": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "given_chars": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "title_too_long"
+                }
+              },
+              "required": [
+                "code",
+                "max_chars",
+                "given_chars"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "max_bytes": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "given_bytes": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "raw_source_too_large"
+                }
+              },
+              "required": [
+                "code",
+                "max_bytes",
+                "given_bytes"
+              ]
+            },
+            {
+              "description": "First §6.1a origin-field invariant: `created_by` is required when origin = user.",
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "ai",
+                    "imported",
+                    "system"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "missing_created_by"
+                }
+              },
+              "required": [
+                "code",
+                "origin"
+              ]
+            },
+            {
+              "description": "AI/import provenance is structurally impossible until its columns land (§6.1).",
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "ai",
+                    "imported",
+                    "system"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "origin_not_producible"
+                }
+              },
+              "required": [
+                "code",
+                "origin"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "given": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "schema_version_mismatch"
+                }
+              },
+              "required": [
+                "code",
+                "expected",
+                "given"
+              ]
+            },
+            {
+              "description": "A stored value claims a schema_version newer than this core understands —\nrefusing loudly beats misreading user data (§2.2).",
+              "type": "object",
+              "properties": {
+                "given": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "current": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "schema_version_from_the_future"
+                }
+              },
+              "required": [
+                "code",
+                "given",
+                "current"
+              ]
+            }
+          ],
+          "required": [
+            "kind"
+          ]
+        }
+      ],
+      "title": "CoreError",
+      "description": "Errors crossing the FFI result envelope: a domain validation failure, or input that\ndid not even parse as the expected shape. Tagged so the glue dispatches without\nstring-matching."
+    },
+    "CreateContext": {
+      "required": [
+        "provenance_id",
+        "origin"
+      ],
+      "title": "CreateContext",
+      "description": "Server-side context for a create: who/what is creating (origin + actor) and the\nglue-minted provenance id. Never client-supplied.",
+      "type": "object",
+      "properties": {
+        "provenance_id": {
+          "type": "string"
+        },
+        "origin": {
+          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+          "type": "string",
+          "enum": [
+            "user",
+            "ai",
+            "imported",
+            "system"
+          ]
+        },
+        "created_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CreateObjectInput": {
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "CreateObjectInput",
+      "description": "Client-supplied create payload. `status` / `schema_version` / `revision` are NOT\nclient-suppliable — the core stamps them (fewer representable invalid states).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Client-minted UUIDv7, as a string — the core parses and version-checks it.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CreateObjectResult": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "value": {
+              "description": "What a successful create yields: both rows the glue persists in ONE transaction.",
+              "type": "object",
+              "properties": {
+                "object": {
+                  "description": "A canonical object — the doc's §6 `objects` row shape, verbatim (all eleven fields).\nContent (`content_units`/MathContent) is a SEPARATE aggregate arriving in slice 1;\nan object with zero units is valid, which is what makes that addition purely\nstructural. Named `CanonicalObject` (not `Object`) so the generated TS type never\nshadows JavaScript's global `Object`.",
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "description": "Client-minted UUIDv7 (arch doc §4/§6.3).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "type": {
+                      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+                      "type": "string",
+                      "enum": [
+                        "note"
+                      ]
+                    },
+                    "title": {
+                      "description": "Tri-state (§6.3): `None` = unset, `Some(\"\")` = explicitly empty — never collapsed.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "raw_source": {
+                      "description": "The rough input, preserved VERBATIM (§2.2). No normalization function exists.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "description": "Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though\nthe skeleton's create path can only PRODUCE `Draft`; other values become producible\nvia future status-transition operations.",
+                      "type": "string",
+                      "enum": [
+                        "raw",
+                        "draft",
+                        "ai_drafted",
+                        "user_verified",
+                        "trusted",
+                        "needs_review",
+                        "deprecated"
+                      ]
+                    },
+                    "schema_version": {
+                      "description": "Application-level model version (§6.3); migrated by the core's total functions.",
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "revision": {
+                      "description": "Optimistic-concurrency token (§6.4): increments on every persisted write.",
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "provenance_id": {
+                      "description": "Identity of a provenance row (glue-minted UUIDv7).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "space_id": {
+                      "description": "Identity of a space (glue-minted UUIDv7).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "schema_version",
+                    "revision",
+                    "provenance_id",
+                    "space_id",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "additionalProperties": true
+                },
+                "provenance": {
+                  "description": "Provenance — the typed trust spine (arch doc §6.1). One row per provenanced fact;\norigin-specific fields (model, prompt_template, context_snapshot_id, review_item_id,\nsource_id, source_locator) arrive as `Option` fields together with their target\ntables — additive in Rust and SQL simultaneously.",
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "description": "Identity of a provenance row (glue-minted UUIDv7).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "origin": {
+                      "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "ai",
+                        "imported",
+                        "system"
+                      ]
+                    },
+                    "created_by": {
+                      "description": "User/agent id. Required when `origin = user` (arch doc §6.1a) — enforced by\nvalidation, not by the shape.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "occurred_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "origin",
+                    "occurred_at"
+                  ]
+                }
+              },
+              "required": [
+                "object",
+                "provenance"
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": false
+            },
+            "error": {
+              "description": "Errors crossing the FFI result envelope: a domain validation failure, or input that\ndid not even parse as the expected shape. Tagged so the glue dispatches without\nstring-matching.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "context": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "malformed_input"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "context",
+                    "message"
+                  ]
+                },
+                {
+                  "description": "A domain validation failure. Errors are VALUES crossing the FFI (result envelopes),\nnever exceptions (arch doc §17 boundary discipline).",
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "validation"
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "unknown_object_type"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "invalid_id"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field"
+                      ]
+                    },
+                    {
+                      "description": "Client-minted ids must be UUIDv7 (arch doc §4/§6.3 — sortable, client-mintable).",
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "not_uuid_v7"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "max_chars": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "given_chars": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "title_too_long"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "max_chars",
+                        "given_chars"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "max_bytes": {
+                          "type": "integer",
+                          "format": "uint64",
+                          "minimum": 0
+                        },
+                        "given_bytes": {
+                          "type": "integer",
+                          "format": "uint64",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "raw_source_too_large"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "max_bytes",
+                        "given_bytes"
+                      ]
+                    },
+                    {
+                      "description": "First §6.1a origin-field invariant: `created_by` is required when origin = user.",
+                      "type": "object",
+                      "properties": {
+                        "origin": {
+                          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "imported",
+                            "system"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "missing_created_by"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "origin"
+                      ]
+                    },
+                    {
+                      "description": "AI/import provenance is structurally impossible until its columns land (§6.1).",
+                      "type": "object",
+                      "properties": {
+                        "origin": {
+                          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "imported",
+                            "system"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "origin_not_producible"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "origin"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "schema_version_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "expected",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "A stored value claims a schema_version newer than this core understands —\nrefusing loudly beats misreading user data (§2.2).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "current": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "schema_version_from_the_future"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given",
+                        "current"
+                      ]
+                    }
+                  ],
+                  "required": [
+                    "kind"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "error"
+          ]
+        }
+      ],
+      "title": "CreateObjectResult",
+      "description": "Envelope of `create_object`."
+    },
+    "CreatedObject": {
+      "required": [
+        "object",
+        "provenance"
+      ],
+      "title": "CreatedObject",
+      "description": "What a successful create yields: both rows the glue persists in ONE transaction.",
+      "type": "object",
+      "properties": {
+        "object": {
+          "description": "A canonical object — the doc's §6 `objects` row shape, verbatim (all eleven fields).\nContent (`content_units`/MathContent) is a SEPARATE aggregate arriving in slice 1;\nan object with zero units is valid, which is what makes that addition purely\nstructural. Named `CanonicalObject` (not `Object`) so the generated TS type never\nshadows JavaScript's global `Object`.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Client-minted UUIDv7 (arch doc §4/§6.3).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": {
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+              "type": "string",
+              "enum": [
+                "note"
+              ]
+            },
+            "title": {
+              "description": "Tri-state (§6.3): `None` = unset, `Some(\"\")` = explicitly empty — never collapsed.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "raw_source": {
+              "description": "The rough input, preserved VERBATIM (§2.2). No normalization function exists.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "description": "Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though\nthe skeleton's create path can only PRODUCE `Draft`; other values become producible\nvia future status-transition operations.",
+              "type": "string",
+              "enum": [
+                "raw",
+                "draft",
+                "ai_drafted",
+                "user_verified",
+                "trusted",
+                "needs_review",
+                "deprecated"
+              ]
+            },
+            "schema_version": {
+              "description": "Application-level model version (§6.3); migrated by the core's total functions.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "revision": {
+              "description": "Optimistic-concurrency token (§6.4): increments on every persisted write.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "provenance_id": {
+              "description": "Identity of a provenance row (glue-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "space_id": {
+              "description": "Identity of a space (glue-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "status",
+            "schema_version",
+            "revision",
+            "provenance_id",
+            "space_id",
+            "created_at",
+            "updated_at"
+          ],
+          "additionalProperties": true
+        },
+        "provenance": {
+          "description": "Provenance — the typed trust spine (arch doc §6.1). One row per provenanced fact;\norigin-specific fields (model, prompt_template, context_snapshot_id, review_item_id,\nsource_id, source_locator) arrive as `Option` fields together with their target\ntables — additive in Rust and SQL simultaneously.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "Identity of a provenance row (glue-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "origin": {
+              "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+              "type": "string",
+              "enum": [
+                "user",
+                "ai",
+                "imported",
+                "system"
+              ]
+            },
+            "created_by": {
+              "description": "User/agent id. Required when `origin = user` (arch doc §6.1a) — enforced by\nvalidation, not by the shape.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "occurred_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "id",
+            "origin",
+            "occurred_at"
+          ]
+        }
+      }
+    },
+    "ObjectPatch": {
+      "required": [
+        "expected_revision"
+      ],
+      "title": "ObjectPatch",
+      "description": "PATCH payload for object metadata (title is the only patchable field in the walking\nskeleton). `expected_revision` is enforced by the glue's conditional UPDATE (§6.4);\nit rides here so the request shape is core-defined.",
+      "type": "object",
+      "properties": {
+        "expected_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ObjectResult": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "value": {
+              "description": "A canonical object — the doc's §6 `objects` row shape, verbatim (all eleven fields).\nContent (`content_units`/MathContent) is a SEPARATE aggregate arriving in slice 1;\nan object with zero units is valid, which is what makes that addition purely\nstructural. Named `CanonicalObject` (not `Object`) so the generated TS type never\nshadows JavaScript's global `Object`.",
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "Client-minted UUIDv7 (arch doc §4/§6.3).",
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": {
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+                  "type": "string",
+                  "enum": [
+                    "note"
+                  ]
+                },
+                "title": {
+                  "description": "Tri-state (§6.3): `None` = unset, `Some(\"\")` = explicitly empty — never collapsed.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "raw_source": {
+                  "description": "The rough input, preserved VERBATIM (§2.2). No normalization function exists.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "description": "Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though\nthe skeleton's create path can only PRODUCE `Draft`; other values become producible\nvia future status-transition operations.",
+                  "type": "string",
+                  "enum": [
+                    "raw",
+                    "draft",
+                    "ai_drafted",
+                    "user_verified",
+                    "trusted",
+                    "needs_review",
+                    "deprecated"
+                  ]
+                },
+                "schema_version": {
+                  "description": "Application-level model version (§6.3); migrated by the core's total functions.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "revision": {
+                  "description": "Optimistic-concurrency token (§6.4): increments on every persisted write.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "provenance_id": {
+                  "description": "Identity of a provenance row (glue-minted UUIDv7).",
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "space_id": {
+                  "description": "Identity of a space (glue-minted UUIDv7).",
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "status",
+                "schema_version",
+                "revision",
+                "provenance_id",
+                "space_id",
+                "created_at",
+                "updated_at"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "ok",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": false
+            },
+            "error": {
+              "description": "Errors crossing the FFI result envelope: a domain validation failure, or input that\ndid not even parse as the expected shape. Tagged so the glue dispatches without\nstring-matching.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "context": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "malformed_input"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "context",
+                    "message"
+                  ]
+                },
+                {
+                  "description": "A domain validation failure. Errors are VALUES crossing the FFI (result envelopes),\nnever exceptions (arch doc §17 boundary discipline).",
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "validation"
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "unknown_object_type"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "invalid_id"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field"
+                      ]
+                    },
+                    {
+                      "description": "Client-minted ids must be UUIDv7 (arch doc §4/§6.3 — sortable, client-mintable).",
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "not_uuid_v7"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "field"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "max_chars": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "given_chars": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "title_too_long"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "max_chars",
+                        "given_chars"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "max_bytes": {
+                          "type": "integer",
+                          "format": "uint64",
+                          "minimum": 0
+                        },
+                        "given_bytes": {
+                          "type": "integer",
+                          "format": "uint64",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "raw_source_too_large"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "max_bytes",
+                        "given_bytes"
+                      ]
+                    },
+                    {
+                      "description": "First §6.1a origin-field invariant: `created_by` is required when origin = user.",
+                      "type": "object",
+                      "properties": {
+                        "origin": {
+                          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "imported",
+                            "system"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "missing_created_by"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "origin"
+                      ]
+                    },
+                    {
+                      "description": "AI/import provenance is structurally impossible until its columns land (§6.1).",
+                      "type": "object",
+                      "properties": {
+                        "origin": {
+                          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "imported",
+                            "system"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "origin_not_producible"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "origin"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "schema_version_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "expected",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "A stored value claims a schema_version newer than this core understands —\nrefusing loudly beats misreading user data (§2.2).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "current": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "schema_version_from_the_future"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given",
+                        "current"
+                      ]
+                    }
+                  ],
+                  "required": [
+                    "kind"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "error"
+          ]
+        }
+      ],
+      "title": "ObjectResult",
+      "description": "Envelope of `apply_title_patch` and `parse_and_migrate_object`."
+    },
+    "ObjectStatus": {
+      "enum": [
+        "raw",
+        "draft",
+        "ai_drafted",
+        "user_verified",
+        "trusted",
+        "needs_review",
+        "deprecated"
+      ],
+      "title": "ObjectStatus",
+      "description": "Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though\nthe skeleton's create path can only PRODUCE `Draft`; other values become producible\nvia future status-transition operations.",
+      "type": "string"
+    },
+    "ObjectType": {
+      "enum": [
+        "note"
+      ],
+      "title": "ObjectType",
+      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+      "type": "string"
+    },
+    "Origin": {
+      "enum": [
+        "user",
+        "ai",
+        "imported",
+        "system"
+      ],
+      "title": "Origin",
+      "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+      "type": "string"
+    },
+    "Provenance": {
+      "required": [
+        "id",
+        "origin",
+        "occurred_at"
+      ],
+      "title": "Provenance",
+      "description": "Provenance — the typed trust spine (arch doc §6.1). One row per provenanced fact;\norigin-specific fields (model, prompt_template, context_snapshot_id, review_item_id,\nsource_id, source_locator) arrive as `Option` fields together with their target\ntables — additive in Rust and SQL simultaneously.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "origin": {
+          "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+          "type": "string",
+          "enum": [
+            "user",
+            "ai",
+            "imported",
+            "system"
+          ]
+        },
+        "created_by": {
+          "description": "User/agent id. Required when `origin = user` (arch doc §6.1a) — enforced by\nvalidation, not by the shape.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ValidationError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "given": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "unknown_object_type"
+            }
+          },
+          "required": [
+            "code",
+            "given"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "invalid_id"
+            }
+          },
+          "required": [
+            "code",
+            "field"
+          ]
+        },
+        {
+          "description": "Client-minted ids must be UUIDv7 (arch doc §4/§6.3 — sortable, client-mintable).",
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "not_uuid_v7"
+            }
+          },
+          "required": [
+            "code",
+            "field"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "max_chars": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "given_chars": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "title_too_long"
+            }
+          },
+          "required": [
+            "code",
+            "max_chars",
+            "given_chars"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "max_bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "given_bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "raw_source_too_large"
+            }
+          },
+          "required": [
+            "code",
+            "max_bytes",
+            "given_bytes"
+          ]
+        },
+        {
+          "description": "First §6.1a origin-field invariant: `created_by` is required when origin = user.",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+              "type": "string",
+              "enum": [
+                "user",
+                "ai",
+                "imported",
+                "system"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "missing_created_by"
+            }
+          },
+          "required": [
+            "code",
+            "origin"
+          ]
+        },
+        {
+          "description": "AI/import provenance is structurally impossible until its columns land (§6.1).",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+              "type": "string",
+              "enum": [
+                "user",
+                "ai",
+                "imported",
+                "system"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "origin_not_producible"
+            }
+          },
+          "required": [
+            "code",
+            "origin"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "expected": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "given": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "schema_version_mismatch"
+            }
+          },
+          "required": [
+            "code",
+            "expected",
+            "given"
+          ]
+        },
+        {
+          "description": "A stored value claims a schema_version newer than this core understands —\nrefusing loudly beats misreading user data (§2.2).",
+          "type": "object",
+          "properties": {
+            "given": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "current": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "schema_version_from_the_future"
+            }
+          },
+          "required": [
+            "code",
+            "given",
+            "current"
+          ]
+        }
+      ],
+      "title": "ValidationError",
+      "description": "A domain validation failure. Errors are VALUES crossing the FFI (result envelopes),\nnever exceptions (arch doc §17 boundary discipline)."
+    }
+  }
+}

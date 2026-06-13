@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    // Load-bearing: the arch doc's tri-state field semantics (§6.3) — "unset" vs
+    // "explicitly empty/null" must not collapse in TS. Do not relax.
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "target": "ES2023",
+    "lib": ["ES2023"]
+  }
+}

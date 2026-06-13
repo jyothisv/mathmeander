@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/core-node", "crates/schema-gen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-or-later"
+
+# One home for dependency versions (latest stable at setup, 2026-06-12; bumps are deliberate PRs).
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
+# uuid WITHOUT the v7/rng generation features: the core VALIDATES ids (UUIDv7 version
+# bits), it never mints them — minting needs entropy, which the pure core must not have.
+# Ids are client-minted (frontend) or glue-minted (provenance rows), per arch doc §6.3.
+uuid = { version = "1.23.3", features = ["serde"] }
+thiserror = "2.0.18"
+# chrono WITHOUT the "clock" feature: Utc::now() does not exist in the core's dependency
+# graph — time is always passed in (arch doc §5), enforced by the compiler, not convention.
+schemars = { version = "1.2.1", features = ["uuid1", "chrono04"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
+sha2 = "0.11.0"
+proptest = "1.11.0"
+napi = { version = "3.9.1", default-features = false }
+napi-derive = "3.5.6"
+napi-build = "2.3.2"
+
+# NOTE: no workspace-level `unsafe_code = deny` — napi-derive's generated code in
+# crates/core-node is unsafe by nature. The integrity core forbids it at source level
+# (#![forbid(unsafe_code)] in crates/core/src/lib.rs).
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+
+# Debug builds of the napi addon are the dev loop; keep them snappy.
+[profile.dev]
+debug = 1

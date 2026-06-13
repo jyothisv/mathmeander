@@ -1,0 +1,15 @@
+[
+  "CanonicalObject",
+  "CoreError",
+  "CreateContext",
+  "CreateObjectInput",
+  "CreateObjectResult",
+  "CreatedObject",
+  "ObjectPatch",
+  "ObjectResult",
+  "ObjectStatus",
+  "ObjectType",
+  "Origin",
+  "Provenance",
+  "ValidationError"
+]

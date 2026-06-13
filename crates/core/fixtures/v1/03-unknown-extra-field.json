@@ -1,0 +1,14 @@
+{
+  "id": "0197675f-71f4-7000-8000-00000000c001",
+  "type": "note",
+  "title": "",
+  "raw_source": "explicitly-empty title above is a VALUE, not unset (§6.3)",
+  "status": "draft",
+  "schema_version": 1,
+  "revision": 2,
+  "provenance_id": "0197675f-71f4-7000-8000-00000000c002",
+  "space_id": "0197675f-71f4-7000-8000-00000000c003",
+  "created_at": "2026-06-12T00:00:00Z",
+  "updated_at": "2026-06-12T00:00:00Z",
+  "from_a_newer_minor": { "must": "survive", "round": ["trips", 1, true] }
+}

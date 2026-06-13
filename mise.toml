@@ -1,0 +1,6 @@
+# Single authority for non-cargo toolchain versions (Rust is pinned by rust-toolchain.toml).
+# CI consumes this via jdx/mise-action; locally `mise install` or matching manual installs.
+[tools]
+node = "24.4.1"
+pnpm = "10.24.0"
+just = "1.51.0"

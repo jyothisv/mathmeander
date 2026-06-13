@@ -1,0 +1,31 @@
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# napi build outputs (built from source everywhere; never committed)
+*.node
+crates/core-node/index.js
+crates/core-node/index.d.ts
+crates/core-node/browser.js
+
+# Environment & local secrets (.env.example is the committed contract)
+.env
+.dev/
+
+# Test / tooling output
+coverage/
+playwright-report/
+test-results/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code
+.claude/

@@ -1,0 +1,29 @@
+# mathmeander-core-node — the ONLY crate that depends on napi (arch doc §17 seam).
+# Zero logic: every #[napi] function is a one-line delegation into mathmeander_core::api,
+# with JSON strings crossing the boundary. Keeping napi out of mathmeander-core is what
+# keeps the core FFI-free and WASM-compilable.
+[package]
+name = "mathmeander-core-node"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mathmeander-core = { path = "../core" }
+napi = { workspace = true, features = ["napi9"] }
+napi-derive = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }
+# The addon embeds the sha256 of the schema artifact derived from the EXACT core code it
+# was compiled against; the glue refuses to boot unless it equals @mathmeander/schema's
+# generated ARTIFACT_HASH. A stale addon is no server, not subtle bugs.
+mathmeander-core = { path = "../core", features = ["schema-artifact"] }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

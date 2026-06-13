@@ -1,0 +1,31 @@
+# mathmeander-core — the integrity core (arch doc §5).
+# PURE: no I/O, no HTTP, no DB, no clock, no FFI. Guards: #![forbid(unsafe_code)],
+# clippy.toml disallowed-methods, the wasm32 CI check, and scripts/check-core-deps.sh.
+[package]
+name = "mathmeander-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Schema-artifact emission (schemars) is compiled only for mathmeander-schema-gen;
+# the core consumed by the addon carries no schema-generation machinery.
+schema-artifact = ["dep:schemars"]
+
+[dependencies]
+# No hashing crates here: the artifact HASH is computed by the shells that do I/O
+# (mathmeander-schema-gen, and mathmeander-core-node's build.rs which embeds it at compile
+# time) — sha2 pulls cpufeatures→libc, which the purity tree-check rightly rejects.
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+schemars = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

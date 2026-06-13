@@ -1,0 +1,17 @@
+# mathmeander-schema-gen — the I/O shell around the core's pure schema-artifact functions.
+# The core (with the schema-artifact feature) builds the artifact + fixtures IN MEMORY;
+# this binary only writes them to disk. Keeping the writer out of the core preserves
+# "no I/O" literally; keeping it out of the napi crate keeps codegen Node-free.
+[package]
+name = "mathmeander-schema-gen"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+mathmeander-core = { path = "../core", features = ["schema-artifact"] }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

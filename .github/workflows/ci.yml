@@ -1,0 +1,155 @@
+# CI — every job gates merge. Grows with the setup steps; see docs/setup.md for the
+# guard catalogue (trap → mechanism → where it fires).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1 # honors rust-toolchain.toml
+        with:
+          cache-shared-key: ci
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy (warnings deny)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Core purity — wasm32 check
+        run: cargo check -p mathmeander-core --target wasm32-unknown-unknown --locked
+      - name: Core purity — dependency tree
+        run: ./scripts/check-core-deps.sh
+      - name: Tests (unit + proptest + migration harness + conformance)
+        run: cargo test --workspace --all-features --locked
+
+  # Drift gate: the committed artifact + generated TS must be exactly what regeneration
+  # produces (run twice = determinism check), or the build is red.
+  codegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: ci
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Regenerate twice and require a clean diff
+        run: just codegen-check
+
+  # The napi addon must build on both dev (macOS) and prod (Linux) shapes — platform
+  # drift is caught at PR time, not at first deploy.
+  addon:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: ci
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Build addon (debug)
+        run: pnpm --filter @mathmeander/core-node build
+      - name: Addon smoke test
+        run: pnpm --filter @mathmeander/core-node test
+
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: ci
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Lint (eslint + prettier)
+        run: pnpm lint && pnpm format
+      - name: Migration lint
+        run: node scripts/lint-migrations.mjs
+      - name: Build addon (debug, cached)
+        run: pnpm --filter @mathmeander/core-node build
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests (conformance + addon lockstep + envelopes)
+        run: pnpm -r --no-bail --filter '!@mathmeander/e2e' test
+      - name: Start Postgres (same compose file as dev)
+        run: docker compose up -d --wait postgres
+      - name: Apply migrations (dev + test databases)
+        run: |
+          docker compose run --rm dbmate --url "postgres://mathmeander:mathmeander@postgres:5432/mathmeander_dev?sslmode=disable" --no-dump-schema up
+          docker compose run --rm dbmate --url "postgres://mathmeander:mathmeander@postgres:5432/mathmeander_test?sslmode=disable" --no-dump-schema up
+      - name: Integration tests (real Postgres + ephemeral IdP)
+        run: pnpm --filter @mathmeander/server test:integration
+        env:
+          TEST_DATABASE_URL: postgres://mathmeander:mathmeander@localhost:5432/mathmeander_test?sslmode=disable
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: ci
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Build addon (debug, cached)
+        run: pnpm --filter @mathmeander/core-node build
+      - name: Start Postgres + apply migrations
+        run: |
+          docker compose up -d --wait postgres
+          docker compose run --rm dbmate --url "postgres://mathmeander:mathmeander@postgres:5432/mathmeander_dev?sslmode=disable" --no-dump-schema up
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install chromium
+        run: pnpm --filter @mathmeander/e2e exec playwright install chromium --with-deps
+      - name: Walking-skeleton e2e
+        run: pnpm --filter @mathmeander/e2e test
+        env:
+          CI: 'true'
+      - name: Upload trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: e2e/test-results/
+          retention-days: 7
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Release configuration must not rot unverified (prebuild/publish matrix grows here later).
+  release-build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: ci-release
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Build addon (release)
+        run: pnpm --filter @mathmeander/core-node build:release

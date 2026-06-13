@@ -1,0 +1,25 @@
+{
+  "name": "@mathmeander/core-node",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "mathmeander-core"
+  },
+  "scripts": {
+    "build": "napi build --platform --esm",
+    "build:release": "napi build --platform --esm --release",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@mathmeander/schema": "workspace:*",
+    "@napi-rs/cli": "3.7.1",
+    "@types/node": "24.13.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}
