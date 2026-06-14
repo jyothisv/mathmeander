@@ -1,7 +1,7 @@
 # MathMeander — guidance for AI-assisted development
 
 This is a **model-driven codebase**. Before changing anything substantive, read the
-relevant sections of `docs/mvp_architecture v17.md` (note the space in the filename) —
+relevant sections of `docs/mvp_architecture.md` —
 it is authoritative. Quick index: §5 integrity core · §6 data model + schema (§6.0
 MathContent, §6.1 provenance, §6.3 tri-state/ids/migration, §6.4 concurrency) ·
 §7 glue/type-sharing · §9.y authoring workflow · §13a build slices · §18 current

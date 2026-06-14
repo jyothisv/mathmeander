@@ -7,7 +7,7 @@ than an authority.
 
 **Authoritative design documents** (read these first; the code conforms to them):
 [docs/mvp_direction.md](docs/mvp_direction.md) (product) and
-[docs/mvp_architecture v17.md](<docs/mvp_architecture v17.md>) (architecture).
+[docs/mvp_architecture.md](docs/mvp_architecture.md) (architecture).
 Setup-phase decisions are recorded in [docs/adr/0001-initial-setup.md](docs/adr/0001-initial-setup.md);
 the guard catalogue lives in [docs/setup.md](docs/setup.md).
 

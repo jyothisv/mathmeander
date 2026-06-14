@@ -4,7 +4,7 @@ Date: 2026-06-12 · Status: accepted (implemented)
 
 ## Context
 
-Greenfield build of the platform specified by `docs/mvp_architecture v17.md`. This phase
+Greenfield build of the platform specified by `docs/mvp_architecture.md`. This phase
 delivered repository foundations plus a walking skeleton proving every architectural
 seam end-to-end (web → HTTP → glue → napi → Rust core → Postgres → back, typed
 throughout), deliberately **not** §13a slice 1 (the full canonical object core), which
