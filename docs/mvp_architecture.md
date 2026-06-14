@@ -1,6 +1,6 @@
 # Higher Mathematics Knowledge Platform — MVP Architecture
 
-**Status:** Reference architecture for the implementation spike. The canonical model is mathematics-first and transparent; the authoring input flow — an owned, names-canonical math surface, frictionless cross-reference, and a rough→LLM-proposes→multimodal-edit review loop — is specified in §6.3a/§9.x/§9.y. Ownership prototype first; heavy AI/PDF work waits behind that gate (§13a).
+**Status:** Reference architecture for the implementation spike. The canonical model is mathematics-first and transparent; the authoring input flow — an owned, names-canonical math surface, frictionless cross-reference, and a rough→LLM-proposes→multimodal-edit review loop — is specified in §6.3a/§9.x/§9.y. The UI is built from **surfaces** — curated projections over the object graph, never owners of it (§6.5); the **journal** is the first/default surface we build, with the default itself a revisable product choice. Ownership prototype first; heavy AI/PDF work waits behind that gate (§13a).
 **Scope basis:** the MVP direction document (§4–§7) plus architecture decisions reached in design discussion
 **How to read this:** Sections 1–4 set scope and the one governing principle. Sections 5–11 are the architecture proper. Section 12 onward covers posture (sync, ops, testing), build sequencing, the decided language split, and the assumptions this draft rests on. If an assumption in §18 is wrong, the affected section will say which.
 
@@ -10,7 +10,7 @@
 
 **MVP goal (§4):** prove the input loop — a serious learner inputs rough mathematical material and turns it into high-quality, interconnected, source-linked objects, with raw input preserved and everything exportable and migratable.
 
-**In scope (§5):** rough math editor with LaTeX-compatible math and object blocks; the core object types (note, definition, the **formal family** — theorem, lemma, proposition, corollary, conjecture, claim —, proof, example, question, source_excerpt, trail, annotation); PDF selection-to-object with source provenance; trails and breadcrumbs with light refinement; Inbox and Review Queue; notation snippets + registry; linking, aliases, backlinks, typed relationships; a small set of built-in AI workflows; and export/import + migration *foundations*.
+**In scope (§5):** rough math editor with LaTeX-compatible math and object blocks; the core object types (note, definition, the **formal family** — theorem, lemma, proposition, corollary, conjecture, claim —, proof, example, question, source_excerpt, trail, annotation); PDF selection-to-object with source provenance; trails and breadcrumbs with light refinement, surfaced as the **journal** — the first/default surface (§6.5); Inbox and Review Queue; notation snippets + registry; linking, aliases, backlinks, typed relationships; a small set of built-in AI workflows; and export/import + migration *foundations*.
 
 **Reserved, not built (schema must accommodate, no UI):** the entire **computational exploration pillar** (§3.16, §4 explicit) — object types and relationship types reserved in the model; no generator runtime, no GPU, no client experiment engine. **Structured diagrams** are likewise reserved (diagram object type + structured diagram model reserved, no renderer/editor/codegen) — cut from MVP scope to shrink the build (§14). Also reserved: equation-subexpression anchoring, multi-device sync, native apps, BYOK, and richer export targets (Typst/LaTeX/PDF).
 
@@ -281,7 +281,7 @@ A math object's content is **one flowing `MathContent`** (an ordered unit sequen
 - **Types, not fields, carry "what a theorem says."** "The statement of this theorem" = its `theorem`/`claim`/`conjecture`-typed unit(s); rendering and export present them set-apart by *reading types*, computed on demand. The finer hypotheses/conclusion breakdown is optional `extracted_structure` (§6.0), not stored fields. So you keep a structured *view* without structural *rigidity*, and an untyped theorem is still just flowing units.
 - **Typed units are not unique per object and need not be contiguous — and renderers must respect that.** A theorem may carry several `intuition` units (and several `example`, `remark`, `proof_idea` units) scattered through its flow, each on a different aspect. "Show the intuitions for this theorem" is therefore `units WHERE type = intuition ORDER BY position` — a renderer or exporter must **gather scattered same-type units**, never assume one-per-object. (Attachment is by co-location: these intuitions are about the object they sit in. An intuition about *one specific distant thing* is instead an **edge**, §6.1b — the usual intrinsic-vs-relational split.)
 - **Only genuine non-content metadata stays a typed field.** A definition's **definiendum (`term`)** is object identity, so it's a small column (§6.1c); `proves`, `depends_on`, `uses` are **edges**. There are no `statement`/`hypotheses`/`conclusion` content columns.
-- **Units are rows (`content_units`), not a blob.** This gives units the stable identity the rest of the model needs (anchors, AI targets, edge sources) and keeps the model transparent. Nesting (group/list/case_split children) is via `parent_unit_id` + `position`.
+- **Units are rows (`content_units`), not a blob.** This gives units the stable identity the rest of the model needs (anchors, AI targets, edge sources) and keeps the model transparent. Nesting (group/list/case_split children) is via `parent_unit_id` + `position`. **Units are *content*, not graph nodes** — the graph is objects + `links`; a unit lives *inside* an object, and **a node never *contains* another node**: it **references/embeds** (the `embed` unit, or an inline materialized object), never owns it (§6.5).
 
 **Variants, alternatives, and reformulations are objects + edges — never fields, never new object types.** This is the general answer to "multiple proofs," "informal vs. formal definitions," etc.:
 - *Multiple proofs of one theorem* = multiple **proof objects**, each with its own `proves` edge to the theorem (many-to-one); "the theorem's proofs" is the backlink query. A proof's **flavour** ("elementary", "slick", "by contradiction") is the proof object's own `type`-label or a **user tag** — not a field on the theorem.
@@ -295,9 +295,10 @@ Two downstream consequences: the **search projection** (§6.3b) flattens text ac
 ```sql
 -- One row per first-class object (note, definition, theorem/lemma/proposition/
 -- corollary/conjecture/claim (the formal family — enum-only, no detail tables), proof, example,
--- question, source_excerpt, trail, annotation). COMMON fields only; content is in
+-- question, source_excerpt, trail, journal_day, annotation). COMMON fields only; content is in
 -- content_units; type-specific metadata in detail tables (§6.1c).
--- (diagram + computational: reserved, §14.)
+-- (journal_day = a WRITING-surface day-object whose flow is content_units; the journal is the
+--  date-ordered VIEW of journal_day objects, §6.5. diagram + computational: reserved, §14.)
 objects (
   id              uuid PRIMARY KEY,         -- UUIDv7, client-mintable
   type            text NOT NULL,            -- validated by core enum (§ enum-vs-text)
@@ -435,6 +436,15 @@ definition_detail (
 -- the formal family (theorem/lemma/proposition/corollary/conjecture/claim) / proof / example /
 -- question / note carry NO content columns and NO detail tables: content is flowing units;
 -- a proof's `proves` and a theorem's `depends_on`/`uses` are EDGES (links), not fields.
+
+-- journal_day = a WRITING-surface day-object (§6.5); its only NON-content metadata is its date.
+-- (The journal is the date-ordered VIEW over these; knowledge objects carry NO journal date.)
+journal_day_detail (
+  object_id  uuid PRIMARY KEY REFERENCES objects(id),  -- the journal_day object
+  date       date NOT NULL,                            -- the day this surface-object IS
+  space_id   uuid NOT NULL,
+  UNIQUE (space_id, date)                              -- one day-object per date per space
+)
 
 -- The EDGE table: typed relationships AND references/occurrences extracted from content (§6.0b/§6.1b).
 -- Each carries its source unit_id, so it is queryable, shows up in backlinks, and the graph sees it.
@@ -597,12 +607,19 @@ annotation_targets (
   target_source_id uuid REFERENCES sources(id),   -- …a source directly (raw PDF marks);
                                                   --   knowledge-grounding flows through
                                                   --   source_excerpt OBJECTS instead
+  target_placement_id uuid REFERENCES trail_steps(id), -- …or a trail STEP — a REFERENCE-surface
+                                                  --   appearance (§6.5), LOCAL to that trail. (A
+                                                  --   WRITING-surface appearance — an `embed` unit in a
+                                                  --   journal_day / notebook — is anchored via
+                                                  --   target_unit_id; an object/unit anchor travels to
+                                                  --   EVERY appearance)
   target_unit_id   uuid,            -- refinement: composite FK (target_unit_id, target_object_id)
                                     --   → content_units(id, object_id)
   anchor           jsonb NOT NULL   -- THIS target's selectors (§6.2 multi-selector; §6.1d union)
 )
--- Invariants: exactly one of target_object_id/target_source_id set (CHECK); target_unit_id ⇒
--- target_object_id; UNIQUE (annotation_id, role, position); every target-row id a PRIMITIVE
+-- Invariants: exactly one of target_object_id/target_source_id/target_placement_id set (CHECK);
+-- a trail-step (or `embed`-unit) anchor is local-to-one-appearance (§6.5), an object/unit anchor travels to all;
+-- target_unit_id ⇒ target_object_id; UNIQUE (annotation_id, role, position); every target-row id a PRIMITIVE
 -- references must belong to the same annotation_id (core, §6.1a); an anchor's UnitRef selector,
 -- when present, must EQUAL the row's target_unit_id (authority in the FK column; the selector
 -- chain stays whole for export/re-resolution). Per-target rows also make PARTIAL orphaning
@@ -645,10 +662,14 @@ source_excerpt_detail (
   confidence        numeric                -- extraction confidence where applicable
 )
 
--- A trail is an object; its breadcrumbs are an ORDERED, TYPED sequence — explicit rows, not a blob.
+-- A trail is an object — a REFERENCE SURFACE (§6.5: a curated list of pointers to existing
+-- objects), distinct from a WRITING surface (a note / journal_day, whose flow is content_units).
+-- Its steps are an ORDERED, TYPED sequence — explicit rows, not a blob. NOTE: the journal is NOT
+-- built on this table — it is the date-ordered VIEW of journal_day objects (§6.5), and an object's
+-- appearance inside a writing surface is an `embed` unit. trail_steps stays the trail primitive.
 trail_steps (
   id          uuid PRIMARY KEY,
-  trail_id    uuid NOT NULL REFERENCES objects(id),
+  trail_id    uuid NOT NULL REFERENCES objects(id),  -- the owning `trail` object
   position    int NOT NULL,                -- order within the trail
   kind        text NOT NULL,               -- object_ref | source_passage | return_later
                                            --   | external_placeholder | side_quest | gap (§3.7)
@@ -802,7 +823,7 @@ Provenance is a **typed table** (not a per-row JSONB blob), so it is queryable a
 
 Several fields are **polymorphic references** that a relational schema can't FK-check, so the **core owns these invariants** as part of validation — they are exactly the integrity rules the Rust core exists to guarantee:
 
-- **Type-qualified object references** (SQL cannot cheaply express these; the core enforces them): every `*_detail.object_id` must reference an object of the matching type; `trail_steps.trail_id` must reference a `trail`; `annotation_targets.annotation_id` an `annotation`.
+- **Type-qualified object references** (SQL cannot cheaply express these; the core enforces them): every `*_detail.object_id` must reference an object of the matching type (e.g. `journal_day_detail.object_id` a `journal_day`); `trail_steps.trail_id` must reference a `trail`; `annotation_targets.annotation_id` an `annotation`, and `annotation_targets.target_placement_id` (when set) a `trail_steps` row.
 - **Link-target discipline** (§6.1b): a non-content row (`from_content = false`) must carry `target_object_id`; notation/source targets imply `from_content = true`; `target_unit_id` implies `target_object_id` and same-object membership (composite FK). This is what keeps the typed knowledge graph object-only as a *validated invariant*, not a convention.
 - **`*.scope` ↔ `*.scope_ref` consistency** (for `notation_entries`, `conventions`, `aliases`): `global` → `scope_ref` IS NULL; `space` → NULL or equals `space_id`; `source` → references `sources(id)`; `trail`/`document` → references `objects(id)` of the expected type; `environment` → a known InputEnvironment id. A `source` scope pointing at a trail id is a validation error.
 - **`links.target_selector` / `annotation_targets.anchor`** must reference an existing object (or source) and, where a sub-target is given, a selector shape valid for that target type.
@@ -813,13 +834,13 @@ These are property-tested alongside serialization and migration (§16).
 
 ### 6.1b References and occurrences are edges (not buried in content)
 
-The `links` table is the single home of relationships — deliberate typed links *and* both flavours of content reference (§6.0b): a `Reference` in prose and an `Occurrence` inside an expression. Each content-derived edge carries `from_content = true`, its **`source_unit_id`** (which unit it sits in), `in_expression` (true for occurrences), and a `content_locator` — for occurrences, **`{expression_id, char_span}`** (§6.3a), which is stable across inline/display toggles and surrounding prose edits; for prose references, a span within the unit. The canonical relationship lives in the edge, so backlinks and graph queries see it; the unit keeps only a local marker for rendering. **Targets are polymorphic but constrained** (the table FK-checks each kind): the typed knowledge graph is **object-only** — every graph edge type requires an object target — while content-derived rows may instead resolve to a `notation_entries` row (an occurrence resolved before any definition object exists) or, for whole-work references, a `sources` row; *passage* references always flow through `source_excerpt` **objects**, keeping source grounding inside the graph.
+The `links` table is the single home of relationships — deliberate typed links *and* both flavours of content reference (§6.0b): a `Reference` in prose and an `Occurrence` inside an expression. Each content-derived edge carries `from_content = true`, its **`source_unit_id`** (which unit it sits in), `in_expression` (true for occurrences), and a `content_locator` — for occurrences, **`{expression_id, char_span}`** (§6.3a), which is stable across inline/display toggles and surrounding prose edits; for prose references, a span within the unit. The canonical relationship lives in the edge, so backlinks and graph queries see it; the unit keeps only a local marker for rendering. **Targets are polymorphic but constrained** (the table FK-checks each kind): the typed knowledge graph is **object-only** — every graph edge type requires an object target — while content-derived rows may instead resolve to a `notation_entries` row (an occurrence resolved before any definition object exists) or, for whole-work references, a `sources` row; *passage* references always flow through `source_excerpt` **objects**, keeping source grounding inside the graph. (Which of an object's edges a *surface* chooses to **present** — e.g. one of a theorem's several proofs in a given notebook — is a separate, surface-scoped concern carried on the placement, §6.5; the graph itself stays global and complete.)
 
 **Edge lifecycle vs. content (generalizing the §9.y proves rule):** marker-derived edges (`from_content = true`) are *derived state*, synchronized with their markers — deleting the unit or the `Reference`/`Occurrence` marker deletes the edge. Deliberate edges anchored to units (`from_content = false` with a `source_unit_id`, e.g. a proof step's `depends_on`) are *canonical state*: deleting the anchoring unit never silently deletes them — they go **stale / to review**, removed only by the user.
 
 ### 6.1c Typed object detail is non-content metadata only
 
-With content as flowing units (§6.0b), the typed detail tables hold **only non-content metadata**: `definition_detail.term` (the definiendum, which is object identity). Theorems, proofs, examples, questions, and notes have **no content columns** — their content is `content_units`, the mathematical force of each unit is its **`type`** (theorem/claim/conjecture/…), any hypotheses/conclusion breakdown is optional `extracted_structure`, and relationships (`proves`, `depends_on`, `uses`) are **edges**. "A theorem is a typed object, not styled prose" is expressed by *unit types + extracted structure + edges*, not by statement/hypotheses/conclusion columns — which keeps it from being rigid (§2.4).
+With content as flowing units (§6.0b), the typed detail tables hold **only non-content metadata**: `definition_detail.term` (the definiendum, which is object identity) and `journal_day_detail.date` (the day a journal-day writing surface *is*, §6.5). Theorems, proofs, examples, questions, and notes have **no content columns** — their content is `content_units`, the mathematical force of each unit is its **`type`** (theorem/claim/conjecture/…), any hypotheses/conclusion breakdown is optional `extracted_structure`, and relationships (`proves`, `depends_on`, `uses`) are **edges**. "A theorem is a typed object, not styled prose" is expressed by *unit types + extracted structure + edges*, not by statement/hypotheses/conclusion columns — which keeps it from being rigid (§2.4).
 
 ### 6.1d Specified tagged unions — locators and selectors are never open blobs
 
@@ -901,6 +922,8 @@ On create, a mark gets a sensible **default placement** (margin notes → margin
 
 **MVP uses `UnitRef` + `ExpressionRef` + `TextQuote` + `TextPosition` + `Region`** for anchors and `AnchorRelative` + `MarginRelative` for placement. The `StructuralPath`/composite anchor variants and `PageRelative` exist in the enums but are unused — reserving subexpression/diagram-element anchoring (§3.14, §7) as additive. *(Scope note: the MVP can ship constrained placement — margin notes that drag vertically and switch sides — and add fuller free-canvas placement later; the stored model is the same either way, so this is a UI-degrees-of-freedom choice, not a schema change.)*
 
+**Anchoring to an *appearance* (§6.5).** A target may be not just an object/unit/source but a specific *appearance* of an object on a surface. On a **writing surface** (a journal_day or notebook) an appearance is an **`embed` unit** — anchor via `target_unit_id`; on a **reference surface** (a trail) it is a **trail step** — anchor via `target_placement_id`. An object/unit anchor travels to *every* appearance (a fact about the theorem); an appearance anchor is local to that one. Orthogonal to the mark's own *Placement* above (where it draws), which is unchanged. *(Per-appearance anchoring rides the broader anchor work, §13a slice 4.)*
+
 ### 6.3 Tri-state fields, IDs, versioning
 
 - **Tri-state field semantics.** A field is *unset* (never given), *explicitly empty*, or *has a value*, and migrations/edits/exports must never collapse the first two into a default. This is modeled in the **core types** (e.g. an explicit presence wrapper / `Option<Option<T>>` where it matters), with nullable columns plus the convention that **migrations never backfill a default for a previously-unset field**. This is the precise meaning of "preservation of unknown fields" (§2.2) — a typing discipline, not a JSONB feature.
@@ -960,6 +983,27 @@ Single active session removes *multi-device divergence*; it does **not** remove 
 - **`activity_events`** = **fine-grained activity** (§3.7), mostly hidden, for reconstructing recent paths.
 
 So: `revision` gates writes, `object_versions` is the history the user can browse/restore, `activity_events` is the breadcrumb trail.
+
+### 6.5 Surfaces are curated projections (journal, notebook, …)
+
+**First, what is and isn't in the graph.** The object graph is **objects (nodes) + typed `links` (edges)**. A **`Unit` is *content* of an object, not a graph node** (`content_units`, owned by exactly one `object_id`, §6.0b): a journal's flow of prose/idea/remark units is *content*, and content need not be interlinked. Only units the user *declares* (`Thm.`, `Def.`) materialize into **objects** and enter the graph (§9.y greedy capture). And **a node never *contains* another node** — what looks like nesting is one of two things: *unit nesting* within an object (`parent_unit_id`: content structure, not graph structure), or *one object inside another's flow* via an **`embed` unit** or an inline **materialized** object — a **reference**, not ownership. The embedded/materialized object stays **surface-independent**; the host only points at it. So nodes **reference and embed**; they never **contain**. ("The graph is the canonical truth" is shorthand for *objects + their content + links*.)
+
+**A surface is a curated projection over that graph — never an owner of it** (§3.18 turned on the workspace UI: surfaces *present* objects, they don't own them). Surfaces come in two shapes:
+
+- **Writing surfaces** (a `note`; a journal **day**) are **content-bearing objects** you author into — their flow *is* their `content_units`: authored units, inline **materialized** objects (§9.y), and **`embed`** transclusions of standalone objects. This is where loose, not-yet-interlinked thinking lives, owned by the writing-surface object (a unit always has an owning object — *that owner* is the writing-surface object, never "the surface view").
+- **Reference surfaces** (a `trail`, §3.7) are **curated lists of references** to existing objects (`trail_steps`) — ordered pointers with little or no authored content.
+
+**The journal is a date-ordered *projection* of day-objects.** Each day (or session) the user writes in is a content-bearing **`journal_day`** object owning that day's flow; the **journal** is the view `journal_day objects ORDER BY date` — a genuine projection, not a container, with no journal-content-object and no per-day placement row. (This bounds each object to one day's writing — necessary, since the core↔glue FFI is coarse, whole-document-in/out, §17 — and it is the proven daily-notes model.) A **`journal_day` carries its date** (that is what it *is*); **knowledge objects carry no journal date** — a theorem isn't dated, its *appearances* are.
+
+**An object's "appearance" on a surface** is an **`embed` unit** (writing surface) or a **`trail_step`** (reference surface). So **one object can appear under many dates** = it is embedded in several day-objects (and notebooks); the date of each appearance comes from its containing day. Three consequences the model states honestly:
+
+- **Per-surface annotation (§6.2).** An annotation anchored to the **object/unit** is a fact about the theorem and travels to *every* appearance; one anchored to the **appearance** — the `embed` unit (via `target_unit_id`) or a trail-step (via `target_placement_id`) — is local to that surface. So the same object can carry different annotations on different surfaces.
+- **Per-surface link relevance.** A theorem keeps *all* its `proves` edges in the global graph (never fragmented); a surface curates *which* it presents — by what it **embeds** and/or a per-appearance **link-selection** ("the relevant proof here is proof-1") — the rest still reachable via the global backlink. The edge stays global; the selection is surface-scoped.
+- **Re-dating, plainly.** Moving an object's **appearance** to another day is light — move its `embed`. Moving **loose authored content** to another day is a **content move** (split/merge between day-objects, §6.0a/§9.y), not a free field edit. Re-dating never alters the underlying knowledge object; `object_versions` (§6.4) is the non-destructive safety net, so editing one's own history loses nothing unintentionally (§2.2/§2.3).
+
+**Notebook — a curated structured document.** Also a writing surface: a content-bearing object that *becomes* curated over time (rough → polished — trail refinement, §3.8), organized topically with section structure (heading/`group` units), **embedding shared objects by transclusion** (the `embed` unit, §6.0; paste-as-reference, §6.3a) rather than owning them. So one object lives once and appears at its date in the journal *and* by reference in many notebooks; multi-membership rides on embeds + backlinks, so **no collection/membership primitive is introduced**.
+
+**No surface is privileged in the model.** Named objects on any surface stay **boundary-invisible** (§9.y greedy capture); removing one is reviewable **dissolution**; an embed whose target is gone goes to-review, never silent (§6.1b). Surfaces are **additive and sequenced** — built **one at a time, journal first** (the journal needs none of the transclusion/ownership machinery, §13a) — and *which* surface is the default "home" is a revisable product/UX choice: the journal is the default *now*, but a notebook-centric (or other) default later is a config/UX change, never a model change. That swappability is the whole point of surface-independence.
 
 ---
 
@@ -1091,7 +1135,7 @@ Natural actions — *Add another proof · Reuse this proof · Link this proof to
 
 **Diagrams — reserved, not in the MVP (§14).** No SVG renderer, direct-manipulation editor, NL diagram authoring, or TikZ codegen is built for the MVP. The diagram object type and a structured diagram model are *reserved* in the canonical model so adding them later is additive (the "structured data, not pixels" thesis, §3.13, is preserved for when it lands).
 
-**Home — calm desk (§5.11).** Continue-where-you-left-off, active trails, Inbox, Review Queue, return-later items, recent sources, recent notes. Not a graph dashboard.
+**Home — the default surface (§6.5; §5.11).** The home surface is, *for now*, the **journal**: an infinitely-scrollable, date-bannered **view of the user's per-day writing** — the date-ordered projection of `journal_day` content-objects (§6.5), a curated trail (§3.7), *not* the raw activity log. It carries continue-where-you-left-off and the user's dated entries; **Inbox, Review Queue, return-later, recent sources/notes are peeks within or beside it**, not a separate desk. Still calm — not a graph dashboard. **Which surface is the default home is a revisable product choice** — the model privileges none (§6.5); the journal is the first one built, notebooks and others are added incrementally, and the default could later shift to another surface without a model change.
 
 ### 9.z Math input ergonomics and the universal-`Tab` keying model
 
@@ -1197,6 +1241,8 @@ The MVP is large, so build it as **thin vertical slices** that each prove part o
 
 This keeps the **read/write → object → source-linked → annotated → reviewed → exported** loop validated at every step while holding the largest risks (the `MathContent` model, the anchor model, AI iteration) where they can be managed. *(Diagrams are not in this sequence — reserved, §14.)*
 
+*(**Surfaces, §6.5.** The **journal is the first surface built and the current default**: slice 2's editor surface *is* the journal — the date-ordered view of per-day **`journal_day`** content-objects (§6.5) — not a notes-list. Notebooks and further surfaces are additive, one at a time, and *which* surface is the default home is revisable as the catalog grows (the model privileges none). **Slice 1 is unaffected**: knowledge objects carry no journal date — only `journal_day` objects do.)*
+
 ---
 
 ## 14. Reserved futures (doors held open at near-zero cost)
@@ -1261,7 +1307,7 @@ The document's load-bearing commitments, stated once — correct any that are wr
 6. **Maturity, ranking, and tags control graph noise — not absence** (questions auto-materialize; §6.3b ranking defaults do the filtering work).
 7. **`MathExpression` identity is presentation-independent.** Ids are unique workspace-wide; display mode is derived from placement; the toggle composes a placement operation with ordinary split/merge; **copying mints fresh expression ids** (paste-as-reference = transclusion); the expression→unit index is an MVP projection.
 8. **The typed knowledge graph is object-only** (a validated invariant). Content-derived references may resolve to notation entries or sources; *passage* references flow through `source_excerpt` objects; unresolved references carry `unresolved_text` on the edge.
-9. **Annotations:** targets are rows with structural roles (main | from | to | member) and per-target anchors; **relation semantics live only in `links`** (`backing_link_id`); primitives describe drawing and reference target rows. *Marks are cheap; excerpts are knowledge.*
+9. **Annotations:** targets are rows with structural roles (main | from | to | member) and per-target anchors — to an object/unit/source **or an *appearance*** (an `embed` unit on a writing surface, or a trail step, §6.5); **relation semantics live only in `links`** (`backing_link_id`); primitives describe drawing and reference target rows. *Marks are cheap; excerpts are knowledge.*
 10. **One fact, one home.** Every projection — `content_kind`, `in_expression`, display mode, search documents — is derived, never independently written.
 11. **Provenance is typed and auditable.** Origin ≠ authority; acceptance is explicit (`review_item_id`); derivation chains are FK-checked rows.
 12. **`extracted_structure` is candidate-only**: version-bound envelope, a named registry of kinds with acceptance operations; nothing affecting graph, search, rendering, or trust lives only there.
@@ -1270,3 +1316,4 @@ The document's load-bearing commitments, stated once — correct any that are wr
 15. **We own the math surface.** `MathExpression.surface_text` is our names-canonical `mathmeander` grammar (atoms as ASCII names, 2D structure as linear operators); LaTeX/Typst are import/export adapters and KaTeX/MathML a render adapter; `parse_status` is defined by our parser; `original_input` is preserved verbatim; normalization runs only before any anchor exists (the keystone invariant) or through an explicit span-remap op (§6.3a). Input is recognition-first and dialect-agnostic, with a universal-`Tab` ladder (§9.z).
 16. **Labels are human-readable and user-nameable.** A reference binds to a stable id (never shown); the display label is a number computed on demand by the numbering projection, or an optional user name — `aliases` for objects, `handles` for a unit/expression — with no `\label`/`\ref` bookkeeping (generated only at the export boundary) (§6.3b).
 17. **The AI `[Edit]` arm is element-anchored and multimodal, trust-spine-bound.** Mechanical edits apply directly to the candidate; semantic edits are a scoped, anchored `revise_candidate_part`; nothing canonical is written until an explicit `accept_ai_candidate` (declared_by = user + AI provenance; version-bound). A **global context-aware assistant** is the open-ended surface and is bound by the same trust model — an agent that "can do anything" still cannot make AI output silently canonical (§9.w, §2.5/§3.9).
+18. **Surfaces are curated projections over a global graph (§6.5).** The graph is objects + `links`; **units are *content* of objects, not nodes, and a node never *contains* another node — it references/embeds.** A **surface** never owns objects/links. *Writing surfaces* (a `note`; a journal **day**) are content-bearing objects whose flow is `content_units`; the **journal** is the **date-ordered view of `journal_day` objects** (the current default home — revisable; the model privileges no surface). *Reference surfaces* (trails) are `trail_steps` lists. An object's **appearance** is an `embed` unit (writing surface) or a `trail_step`; one object → many dated appearances (embeds across day-objects). **Notebooks** embed shared objects by transclusion (no collection primitive). Surfaces are added one at a time, journal first (§13a); knowledge objects carry no journal date (only `journal_day` does; slice 1 unaffected).
