@@ -10,10 +10,14 @@ license.workspace = true
 
 [features]
 # Schema-artifact emission (schemars) is compiled only for mathmeander-schema-gen;
-# the core consumed by the addon carries no schema-generation machinery.
-schema-artifact = ["dep:schemars"]
+# the core consumed by the addon carries no schema-generation machinery. Forwarded to
+# mathmeander-surface so the relocated leaf types (CharSpan/ParseStatus/SurfaceFormat/
+# InputSyntax) carry JsonSchema when the core's artifact is emitted (arch doc §6.3a).
+schema-artifact = ["dep:schemars", "mathmeander-surface/schema-artifact"]
 
 [dependencies]
+# The owned math surface language (arch doc §5/§6.3a). One direction: core → surface.
+mathmeander-surface = { path = "../surface" }
 # No hashing crates here: the artifact HASH is computed by the shells that do I/O
 # (mathmeander-schema-gen, and mathmeander-core-node's build.rs which embeds it at compile
 # time) — sha2 pulls cpufeatures→libc, which the purity tree-check rightly rejects.

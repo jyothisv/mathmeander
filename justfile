@@ -107,6 +107,7 @@ lint-ts:
 
 check-core-purity:
     cargo check -p mathmeander-core --target wasm32-unknown-unknown
+    cargo check -p mathmeander-surface --target wasm32-unknown-unknown
     ./scripts/check-core-deps.sh
 
 lint-migrations:

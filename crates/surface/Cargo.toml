@@ -1,0 +1,32 @@
+# mathmeander-surface — the owned math surface language (arch doc §5/§6.3a).
+# PURE like the integrity core: no I/O, no clock, no FFI, no entropy, WASM-clean. It owns
+# the `mathmeander` grammar — lexer, parser, AST, canonical serializer, normalizer, the
+# char-span model, parse_status, and the LaTeX/render adapters. The integrity core depends
+# on THIS crate (one direction: core → surface), so surface owns no domain identity.
+# Guards: #![forbid(unsafe_code)], clippy.toml disallowed-methods, the wasm32 check, and
+# scripts/check-core-deps.sh (extended to this crate).
+[package]
+name = "mathmeander-surface"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Same split as the core: schemars is compiled only for schema-artifact emission; the
+# surface consumed by the addon carries no schema-generation machinery.
+schema-artifact = ["dep:schemars"]
+
+[dependencies]
+# No uuid (expression/object identity lives in the core, which depends on this crate),
+# no chrono, no serde_json in the normal tree, no entropy crates.
+serde = { workspace = true }
+thiserror = { workspace = true }
+schemars = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

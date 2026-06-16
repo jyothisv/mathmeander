@@ -373,6 +373,7 @@ name = "mathmeander-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "mathmeander-surface",
  "proptest",
  "schemars",
  "serde",
@@ -398,6 +399,17 @@ version = "0.1.0"
 dependencies = [
  "mathmeander-core",
  "sha2",
+]
+
+[[package]]
+name = "mathmeander-surface"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
