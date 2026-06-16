@@ -111,6 +111,11 @@ pub fn create_object(
 ) -> Result<(CanonicalObject, Provenance), ValidationError> {
     let id = ObjectId(parse_uuid_v7("id", &input.id)?);
     let object_type = parse_object_type(&input.object_type)?;
+    if !object_type.is_producible() {
+        // Reserved vocabulary (source_excerpt/trail/annotation/journal_day): valid to
+        // read, but their owning machinery lands in later slices (§6.1a/§13a).
+        return Err(ValidationError::TypeNotProducibleYet { object_type });
+    }
     if let Some(title) = &input.title {
         check_title(title)?;
     }

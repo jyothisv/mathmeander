@@ -3,19 +3,60 @@
 //! exports them, and generated zod validates them at the HTTP edge. Adding a variant is
 //! a compiler-guided core change (arch doc §5), never a DB migration.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::ids::{ObjectId, ProvenanceId, SpaceId};
+use crate::ids::{
+    AliasId, ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, SpaceId,
+    TagId, TaggingId, UnitId,
+};
 
 /// Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).
-/// Walking skeleton accepts only `note`; slice 1 adds the formal family
-/// (theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,
-/// question, source_excerpt, trail, annotation — each a new variant here.
+/// Slice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the
+/// formal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,
+/// proof, example, question — all producible via create — plus source_excerpt, trail,
+/// annotation, journal_day, which are **reserved vocabulary** (valid on read, not yet
+/// producible — their detail tables / surfaces land in later slices, §6.1a/§13a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectType {
     Note,
+    // The formal family (enum-only; no detail tables — §6.0b/§6.1c).
+    Theorem,
+    Lemma,
+    Proposition,
+    Corollary,
+    Conjecture,
+    Claim,
+    Definition,
+    Proof,
+    Example,
+    Question,
+    // Reserved vocabulary — known on read, not producible via the plain create path
+    // until their detail tables / surfaces arrive (source: §13a.3, annotation: §13a.4,
+    // trail/journal_day: §6.5 surfaces, slice 2+). The producibility gate is in `validate`.
+    SourceExcerpt,
+    Trail,
+    Annotation,
+    JournalDay,
+}
+
+impl ObjectType {
+    /// Whether the plain create path may PRODUCE this type. The reserved surface /
+    /// source / annotation types are valid vocabulary (they parse on read) but their
+    /// owning machinery (detail tables, surfaces) lands in later slices, so creating one
+    /// now would leave a type-qualified-reference invariant unsatisfiable (§6.1a).
+    pub fn is_producible(self) -> bool {
+        !matches!(
+            self,
+            ObjectType::SourceExcerpt
+                | ObjectType::Trail
+                | ObjectType::Annotation
+                | ObjectType::JournalDay
+        )
+    }
 }
 
 /// Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though
@@ -91,4 +132,544 @@ pub struct Provenance {
     /// validation, not by the shape.
     pub created_by: Option<String>,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Slice 1 — canonical object core (arch doc §6.0–§6.3b)
+//
+// What follows are the canonical-model types the walking skeleton deferred: the unit
+// vocabularies, the `MathContent` content model (`UnitContent` + `MathExpression`), the
+// edge/alias/handle/tag/version entities, and the locator/selector tagged unions. Each
+// is a PROJECTION SOURCE — the SQL columns, the generated zod, the FFI, and the numbering
+// projection all derive from these shapes (§13a.1 "crystallize the integrity core").
+//
+// Conventions, matching the entities above:
+//   • evolving vocabularies are `text` validated by these enums ONLY — never PG enums
+//     (§6 enum-vs-text); adding a variant is a compiler-guided core change;
+//   • optional columns are `Option<T>` (absent or null ⇒ unset), like `title`;
+//   • content-kind / in_expression are DERIVED SQL columns, never struct fields
+//     (one fact, one home — §6.0b);
+//   • nesting is by ROWS (`parent_unit_id`), never `UnitContent`-in-`UnitContent`, which
+//     keeps the content union acyclic and inline-able in the artifact (§6.0b).
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ── Unit vocabularies (§6.0) ─────────────────────────────────────────────────
+
+/// THE one user-facing math-flow label of a unit (§6.0). Carries *force and meaning*;
+/// form lives separately in `UnitContent.kind`. Absent (`Option::None`) = plain content.
+/// Forms (list/group/embed/derivation/case_split) are deliberately NOT here — they are
+/// content kinds, never types (§6.0b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UnitType {
+    // Formal / claim-like.
+    Theorem,
+    Lemma,
+    Proposition,
+    Corollary,
+    Definition,
+    Conjecture,
+    Claim,
+    Question,
+    // Reasoning.
+    Proof,
+    ProofStep,
+    // Thinking (the living-math layer).
+    Motivation,
+    Intuition,
+    Idea,
+    ProofIdea,
+    Remark,
+    Observation,
+    Warning,
+    Analogy,
+    Application,
+    OpenIssue,
+    ReturnLater,
+    Note,
+    // Examples (refined by ExampleKind).
+    Example,
+}
+
+/// Per-unit crystallization state (§6.0/§2.4) — distinct from `MathExpression.parse_status`
+/// (surface renderability) and from `ObjectStatus` (object lifecycle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UnitStatus {
+    Rough,
+    Parsed,
+    UserVerified,
+    Stale,
+}
+
+/// Who declared a unit's STRUCTURE (its type/kind) — a separate fact from content
+/// provenance (§6.0). `ai` is deliberately absent: AI proposals are review_items, never
+/// canonical units; acceptance enters as `user` with AI provenance/derivation (§3.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum DeclaredBy {
+    User,
+    Deterministic,
+    Imported,
+}
+
+/// Optional refinement of `type = example` (§6.0). Never a second classifying act — cues
+/// like "Non-example:" expand to type + kind in one gesture (§9.y), or it is set later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ExampleKind {
+    Illustrative,
+    Worked,
+    NonExample,
+}
+
+// ── Edge / alias / handle vocabularies (§6.1b/§6.3b) ─────────────────────────
+
+/// Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges
+/// (object-target, §6.1a); `related`/content-derived rows may stay unresolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LinkType {
+    Related,
+    Proves, // §6.1c proof→theorem; enum is source of truth where the §6 list lagged (dec. E)
+    Uses,
+    SourceFor,
+    ExampleOf,
+    CounterexampleTo,
+    ApplicationOf,
+    MotivatedBy,
+    Answers,
+    Generalizes,
+    SpecialCaseOf,
+    EquivalentTo,
+    Questions,
+    // Reserved for math semantic / type inference (§6.3a/§14): membership ∈, subset ⊆,
+    // equality =. Declared so the vocabulary is stable; no operation produces them yet.
+    ElementOf,
+    SubsetOf,
+    Equals,
+}
+
+/// Edge lifecycle (§6.1b). Marker-derived edges never go stale (they sync with or die
+/// with their markers); canonical edges whose basis vanished go `stale` to review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LinkStatus {
+    Active,
+    Stale,
+    Deprecated,
+}
+
+/// How an alias came to name an object (§6.3b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AliasKind {
+    User,
+    Source,
+    Context,
+    Standard,
+}
+
+/// The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AliasScope {
+    Global,
+    Space,
+    Source,
+    Trail,
+    Local,
+}
+
+/// Uniqueness/conflict scope of a handle (§6.3b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum HandleScope {
+    Object,
+    Space,
+}
+
+/// Handle lifecycle (§6.3b): a handle whose target is gone goes `stale` to review,
+/// never silently (§6.1b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum HandleStatus {
+    Active,
+    Stale,
+}
+
+// ── MathExpression surface vocabularies (§6.3a) ──────────────────────────────
+
+/// The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)
+/// is canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and
+/// `asciimath` are reserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceFormat {
+    Mathmeander,
+    Latex,
+    Typst,
+    Asciimath,
+}
+
+/// How an expression was entered/imported (§6.3a). Tri-state: *absent* (`Option::None`,
+/// never recorded) ≠ `unknown` (recorded, but the dialect could not be determined);
+/// migrations never backfill it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum InputSyntax {
+    Mathmeander,
+    Latex,
+    Typst,
+    Asciimath,
+    Unicode,
+    Mixed,
+    Unknown,
+}
+
+/// Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not
+/// LaTeX. Un-parseable input is never punished: it persists as `invalid` with
+/// `original_input` intact (§2.2). The parser itself lands in slice 1b.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ParseStatus {
+    Unresolved,
+    Renderable,
+    PartiallyResolved,
+    Invalid,
+}
+
+// ── Locators, selectors, and the content model (§6.0/§6.1d/§6.3a) ────────────
+
+/// A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —
+/// `mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The
+/// canonical implementation moves to `mathmeander-surface` in slice 1b; declared here so
+/// the content model and artifact are complete now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct CharSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+/// The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and
+/// presentation-independent; display mode is DERIVED from placement, so there is no mode
+/// field. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;
+/// this is the wire shape it produces.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct MathExpression {
+    /// Stable identity, minted in content (UUIDv7), unique workspace-wide — the
+    /// copy-mints-fresh / transclude-references rule hangs off this (§6.3a).
+    pub id: ExpressionId,
+    /// The canonical surface in our grammar (names-canonical `mathmeander`).
+    pub surface_text: String,
+    pub surface_format: SurfaceFormat,
+    /// Tri-state (absent ≠ `unknown`); see `InputSyntax`.
+    pub input_syntax: Option<InputSyntax>,
+    /// Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).
+    pub original_input: String,
+    pub parse_status: ParseStatus,
+    /// Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present
+    /// (`[]` when none) so the shape is explicit on both sides of the FFI.
+    pub occurrences: Vec<Occurrence>,
+}
+
+/// A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char
+/// span (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is
+/// absent while unresolved (the queue carries the unresolved text on the `links` row).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Occurrence {
+    pub selector: CharSpan,
+    pub target: Option<OccurrenceTarget>,
+}
+
+/// Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;
+/// the `notation` arm (resolve to `notation_entries`) is reserved until that registry
+/// lands (slice 2), and `symbol` (with `BoundVar`) is reserved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OccurrenceTarget {
+    Object { object_id: ObjectId },
+}
+
+/// Where in a unit's content an edge sits (§6.1d). Paired with the `source_unit_id`
+/// column (the unit is context-supplied). The SQL `in_expression` column is DERIVED from
+/// `kind = expression_span` — never written independently.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContentLocator {
+    /// A span within the unit's prose text.
+    ProseSpan {
+        start: u32,
+        end: u32,
+    },
+    /// A span within an expression's surface — stable across inline/display toggles (§6.3a).
+    ExpressionSpan {
+        expression_id: ExpressionId,
+        start: u32,
+        end: u32,
+    },
+    WholeUnit,
+}
+
+/// A finer-than-unit refinement of an edge target (§6.1d). Unit-level refinement is the
+/// FK column `target_unit_id` (never duplicated as a selector — one home). `StructuralPath`
+/// (sub-term addressing) is reserved (§14 structural editing) and deliberately NOT declared
+/// in slice 1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TargetSelector {
+    ExpressionRef {
+        expression_id: ExpressionId,
+        span: Option<CharSpan>,
+    },
+}
+
+/// What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;
+/// `source_excerpt` is reserved until sources land (slice 3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EmbedTarget {
+    Object { object_id: ObjectId },
+}
+
+/// Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT
+/// arm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReferenceTarget {
+    Object { object_id: ObjectId },
+}
+
+/// An inline element of prose (§6.0): minimal formatting, inline math, or a mention.
+/// Inline `$…$` math is an ELEMENT of prose, not its own unit (else one sentence explodes
+/// into units). Each element carries a `span` indexing into the prose `text` (the same
+/// char-offset discipline expressions use). Rich formatting waits for the editor (slice 2);
+/// MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Inline {
+    Mark {
+        span: CharSpan,
+        style: String,
+    },
+    Math {
+        span: CharSpan,
+        expr: MathExpression,
+    },
+    Reference {
+        span: CharSpan,
+        /// The literal reference surface ("Bolzano–Weierstrass") — kept verbatim; the
+        /// resolved edge lives in `links` (§6.1b).
+        text: String,
+        target: Option<ReferenceTarget>,
+    },
+}
+
+/// A SINGLE unit's own authored material (§6.0) — never an embedded unit tree (children
+/// are rows: `parent_unit_id` + `position` + `slot`). The internal `kind` tag is the
+/// AUTHORITATIVE discriminator and the source of the derived `content_kind` SQL column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UnitContent {
+    /// Prose + inline formatting + inline math + mentions.
+    Prose { text: String, inline: Vec<Inline> },
+    /// A display/block PLACEMENT of one `MathExpression` — not a separate math model.
+    Math { expr: MathExpression },
+    /// Items are child rows.
+    List { ordered: bool },
+    /// Steps are child rows; each step child carries its relation (slice 1b+).
+    Derivation,
+    /// Each case is a child group; `slot` marks the assumption child vs body children.
+    CaseSplit,
+    /// THE generic container — a typed unit's multi-part body, or a neutral grouping.
+    Group,
+    /// Quotes & object embeds.
+    Embed { target: EmbedTarget },
+}
+
+/// The mandatory envelope every `extracted_structure` candidate carries (§6.0). This is a
+/// CANDIDATE/working layer — never canonical knowledge — and slice 1 DECLARES it with NO
+/// write or acceptance path (acceptance materializes into units/links/typed metadata in
+/// slice 5). The version binding (`base_object_revision`) mirrors the review-candidate
+/// discipline (§6.4) at unit scale.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ExtractedStructureEnvelope {
+    /// A value from the small named registry (e.g. `hypothesis_conclusion_decomposition`).
+    pub kind: String,
+    pub schema_version: u32,
+    pub generated_by: String,
+    pub base_object_revision: u32,
+    /// The version it materialized into, once accepted (audit trail) — `None` until then.
+    pub accepted_into: Option<ObjectVersionId>,
+}
+
+// ── Entity rows (§6.0b/§6.1/§6.3b) ───────────────────────────────────────────
+
+/// A content unit — the §6.0b `content_units` row. Content is the authored material;
+/// `content_kind` is a DERIVED SQL column (the `content` tag), so it is NOT a field here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Unit {
+    pub id: UnitId,
+    pub object_id: ObjectId,
+    /// THE nesting mechanism: a child names its parent (must be in the same object, §6.1a).
+    pub parent_unit_id: Option<UnitId>,
+    /// Order among siblings (§6.0b).
+    pub position: u32,
+    /// Container-internal part where needed, e.g. `assumption` (case child) /
+    /// `justification` (proof_step child); `None` otherwise.
+    pub slot: Option<String>,
+    /// THE one user-facing math-flow label; `None` = plain content.
+    #[serde(rename = "type")]
+    pub unit_type: Option<UnitType>,
+    /// For `type = example`: the example refinement.
+    pub example_kind: Option<ExampleKind>,
+    pub status: UnitStatus,
+    pub declared_by: DeclaredBy,
+    /// Optional candidate decomposition — declared, never written in slice 1 (§6.0).
+    pub extracted_structure: Option<ExtractedStructureEnvelope>,
+    pub content: UnitContent,
+    pub provenance_id: ProvenanceId,
+}
+
+/// An edge — the §6.1b `links` row. Slice 1 supports a TWO-ARM target (`target_object_id`
+/// xor `unresolved_text`); the notation/source arms widen in slices 2/3 when their FK
+/// targets exist. `target_unit_id`/`target_selector` are REFINEMENTS of the object target,
+/// never target alternatives. `in_expression` is a DERIVED SQL column (not a field).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Link {
+    pub id: LinkId,
+    /// The edge's source end (§6.1b).
+    pub source_object_id: ObjectId,
+    /// The object target (one of the two slice-1 target arms).
+    pub target_object_id: Option<ObjectId>,
+    /// Refinement: a unit within `target_object_id` (composite FK, §6.1a).
+    pub target_unit_id: Option<UnitId>,
+    /// The literal reference text while UNRESOLVED — the other slice-1 target arm.
+    pub unresolved_text: Option<String>,
+    /// Finer-than-unit refinement of the object target (§6.1d).
+    pub target_selector: Option<TargetSelector>,
+    #[serde(rename = "type")]
+    pub link_type: LinkType,
+    pub status: LinkStatus,
+    /// `true` = extracted from content (a `Reference`/`Occurrence`); `false` = deliberate.
+    pub from_content: bool,
+    /// Which unit the reference/occurrence sits in (composite FK to the source object).
+    pub source_unit_id: Option<UnitId>,
+    /// Where in that unit (§6.1d). The SQL `in_expression` column is derived from this.
+    pub content_locator: Option<ContentLocator>,
+    pub provenance_id: ProvenanceId,
+    pub created_at: DateTime<Utc>,
+}
+
+/// An alias — a name for an EXISTING object (§6.3b). Unresolved *references* are `links`
+/// rows carrying `unresolved_text`, not aliases (one mechanism, not two).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Alias {
+    pub id: AliasId,
+    pub object_id: ObjectId,
+    pub name: String,
+    pub kind: AliasKind,
+    pub scope: AliasScope,
+    /// The scoping entity (source, trail, note…), polymorphic — core-validated against
+    /// `scope` (§6.1a). `None` for global scope.
+    pub scope_ref: Option<Uuid>,
+}
+
+/// A handle — an optional human name for an INTRA-object element (a unit or an
+/// expression), §6.3b. Bound to the owning object (always) refined by exactly one of
+/// unit / expression. Objects are named by `aliases`, not handles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Handle {
+    pub id: HandleId,
+    pub space_id: SpaceId,
+    pub name: String,
+    pub target_object_id: ObjectId,
+    /// Composite FK `(target_unit_id, target_object_id) → content_units(id, object_id)`.
+    pub target_unit_id: Option<UnitId>,
+    /// A `MathExpression` id, resolved via the expression→unit index (§6.3a). Exactly one
+    /// of `{target_unit_id, target_expression_id}` is set (§6.1a).
+    pub target_expression_id: Option<ExpressionId>,
+    pub status: HandleStatus,
+    pub scope: HandleScope,
+    pub provenance_id: ProvenanceId,
+}
+
+/// A user tag — free-form personal organization, a facet apart from `type` and edges,
+/// with no mathematical semantics (§6.0b).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Tag {
+    pub id: TagId,
+    pub space_id: SpaceId,
+    pub name: String,
+}
+
+/// A tagging — a tag applied to exactly one target (object xor unit), §6.0b.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct Tagging {
+    pub id: TaggingId,
+    pub tag_id: TagId,
+    pub tagged_object_id: Option<ObjectId>,
+    pub tagged_unit_id: Option<UnitId>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A lightweight, append-only history checkpoint (§6.4). The `snapshot` is a serialized
+/// canonical object (a snapshot/log, the §6 JSONB exception), carried opaquely by the core.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ObjectVersion {
+    pub id: ObjectVersionId,
+    pub object_id: ObjectId,
+    pub version_no: u32,
+    pub snapshot: serde_json::Value,
+    pub provenance_id: ProvenanceId,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Non-content metadata for a `definition` object (§6.1c): the definiendum, which is
+/// object identity. The body is flowing units, not a column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct DefinitionDetail {
+    pub object_id: ObjectId,
+    pub term: String,
+}
+
+/// One edge of the provenance derivation chain (§6.1) — a typed, FK-checked join row
+/// rather than a `uuid[]`, because provenance is the trust spine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ProvenanceDerivation {
+    pub provenance_id: ProvenanceId,
+    pub derived_from_provenance_id: ProvenanceId,
 }

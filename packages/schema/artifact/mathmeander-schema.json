@@ -4,6 +4,85 @@
   "artifact_version": 1,
   "schema_version": 1,
   "$defs": {
+    "Alias": {
+      "required": [
+        "id",
+        "object_id",
+        "name",
+        "kind",
+        "scope"
+      ],
+      "title": "Alias",
+      "description": "An alias — a name for an EXISTING object (§6.3b). Unresolved *references* are `links`\nrows carrying `unresolved_text`, not aliases (one mechanism, not two).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of an alias (`aliases` row, §6.3b) — a name for an object.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "How an alias came to name an object (§6.3b).",
+          "type": "string",
+          "enum": [
+            "user",
+            "source",
+            "context",
+            "standard"
+          ]
+        },
+        "scope": {
+          "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+          "type": "string",
+          "enum": [
+            "global",
+            "space",
+            "source",
+            "trail",
+            "local"
+          ]
+        },
+        "scope_ref": {
+          "description": "The scoping entity (source, trail, note…), polymorphic — core-validated against\n`scope` (§6.1a). `None` for global scope.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "AliasKind": {
+      "enum": [
+        "user",
+        "source",
+        "context",
+        "standard"
+      ],
+      "title": "AliasKind",
+      "description": "How an alias came to name an object (§6.3b).",
+      "type": "string"
+    },
+    "AliasScope": {
+      "enum": [
+        "global",
+        "space",
+        "source",
+        "trail",
+        "local"
+      ],
+      "title": "AliasScope",
+      "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+      "type": "string"
+    },
     "CanonicalObject": {
       "additionalProperties": true,
       "title": "CanonicalObject",
@@ -16,10 +95,24 @@
           "format": "uuid"
         },
         "type": {
-          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
           "type": "string",
           "enum": [
-            "note"
+            "note",
+            "theorem",
+            "lemma",
+            "proposition",
+            "corollary",
+            "conjecture",
+            "claim",
+            "definition",
+            "proof",
+            "example",
+            "question",
+            "source_excerpt",
+            "trail",
+            "annotation",
+            "journal_day"
           ]
         },
         "title": {
@@ -91,6 +184,101 @@
         "created_at",
         "updated_at"
       ]
+    },
+    "CharSpan": {
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "CharSpan",
+      "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "ContentLocator": {
+      "oneOf": [
+        {
+          "description": "A span within the unit's prose text.",
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "prose_span"
+            }
+          },
+          "required": [
+            "kind",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "A span within an expression's surface — stable across inline/display toggles (§6.3a).",
+          "type": "object",
+          "properties": {
+            "expression_id": {
+              "description": "Identity of a `MathExpression` (§6.3a). Minted in content, presentation-\nindependent, and unique workspace-wide (the copy-mints-fresh rule, §6.3a).\nLives inside serialized `UnitContent`, not its own table.",
+              "type": "string",
+              "format": "uuid"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "expression_span"
+            }
+          },
+          "required": [
+            "kind",
+            "expression_id",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "whole_unit"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ],
+      "title": "ContentLocator",
+      "description": "Where in a unit's content an edge sits (§6.1d). Paired with the `source_unit_id`\ncolumn (the unit is context-supplied). The SQL `in_expression` column is DERIVED from\n`kind = expression_span` — never written independently."
     },
     "CoreError": {
       "oneOf": [
@@ -317,6 +505,323 @@
                 "given",
                 "current"
               ]
+            },
+            {
+              "description": "A `links` row must set exactly one target arm. Slice 1's arms are\n`{target_object_id, unresolved_text}`; `given` is how many were set (§6.1a/§6.1b).",
+              "type": "object",
+              "properties": {
+                "given": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "link_target_not_exactly_one"
+                }
+              },
+              "required": [
+                "code",
+                "given"
+              ]
+            },
+            {
+              "description": "A deliberate edge (`from_content = false`) carries no object target — the typed\nknowledge graph stays object-only, no off-graph deliberate edges (§6.1a).",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "off_graph_deliberate_edge"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "`target_unit_id` is set without `target_object_id` — a unit refinement requires\nits owning object target (§6.1a composite-FK discipline).",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "unit_target_without_object"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "A typed graph edge resolved to a non-object target (notation/source/unresolved) —\nevery graph edge type requires an object target (§6.1a/§6.1b).",
+              "type": "object",
+              "properties": {
+                "link_type": {
+                  "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+                  "type": "string",
+                  "enum": [
+                    "related",
+                    "proves",
+                    "uses",
+                    "source_for",
+                    "example_of",
+                    "counterexample_to",
+                    "application_of",
+                    "motivated_by",
+                    "answers",
+                    "generalizes",
+                    "special_case_of",
+                    "equivalent_to",
+                    "questions",
+                    "element_of",
+                    "subset_of",
+                    "equals"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "typed_edge_requires_object_target"
+                }
+              },
+              "required": [
+                "code",
+                "link_type"
+              ]
+            },
+            {
+              "description": "`target_selector` is set without `target_object_id` — a selector refines an object\ntarget, never substitutes for one (§6.1a).",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "selector_without_object_target"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "The derived `content_kind` would disagree with the unit's `content` tag (one fact,\none home — the generated column must equal the union tag, §6.0b).",
+              "type": "object",
+              "properties": {
+                "column": {
+                  "type": "string"
+                },
+                "content_tag": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "content_kind_mismatch"
+                }
+              },
+              "required": [
+                "code",
+                "column",
+                "content_tag"
+              ]
+            },
+            {
+              "description": "A unit's `slot` is not valid for its parent's content kind (§6.0b/§6.1a).",
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "parent_kind": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "invalid_slot_for_parent_kind"
+                }
+              },
+              "required": [
+                "code",
+                "slot",
+                "parent_kind"
+              ]
+            },
+            {
+              "description": "`example_kind` is set on a unit whose `type` is not `example` (§6.0b).",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "example_kind_without_example_type"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "A `*_detail.object_id` references an object of the wrong type (§6.1a\ntype-qualified references).",
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                  "type": "string",
+                  "enum": [
+                    "note",
+                    "theorem",
+                    "lemma",
+                    "proposition",
+                    "corollary",
+                    "conjecture",
+                    "claim",
+                    "definition",
+                    "proof",
+                    "example",
+                    "question",
+                    "source_excerpt",
+                    "trail",
+                    "annotation",
+                    "journal_day"
+                  ]
+                },
+                "given": {
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                  "type": "string",
+                  "enum": [
+                    "note",
+                    "theorem",
+                    "lemma",
+                    "proposition",
+                    "corollary",
+                    "conjecture",
+                    "claim",
+                    "definition",
+                    "proof",
+                    "example",
+                    "question",
+                    "source_excerpt",
+                    "trail",
+                    "annotation",
+                    "journal_day"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "detail_type_mismatch"
+                }
+              },
+              "required": [
+                "code",
+                "expected",
+                "given"
+              ]
+            },
+            {
+              "description": "The create path cannot produce this object type yet (reserved vocabulary whose\nowning machinery lands in a later slice, §6.1a/§13a).",
+              "type": "object",
+              "properties": {
+                "object_type": {
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                  "type": "string",
+                  "enum": [
+                    "note",
+                    "theorem",
+                    "lemma",
+                    "proposition",
+                    "corollary",
+                    "conjecture",
+                    "claim",
+                    "definition",
+                    "proof",
+                    "example",
+                    "question",
+                    "source_excerpt",
+                    "trail",
+                    "annotation",
+                    "journal_day"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "type_not_producible_yet"
+                }
+              },
+              "required": [
+                "code",
+                "object_type"
+              ]
+            },
+            {
+              "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
+              "type": "object",
+              "properties": {
+                "given": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "tagging_target_not_exactly_one"
+                }
+              },
+              "required": [
+                "code",
+                "given"
+              ]
+            },
+            {
+              "description": "An alias's `scope` and `scope_ref` are inconsistent (§6.1a scope ↔ scope_ref).",
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+                  "type": "string",
+                  "enum": [
+                    "global",
+                    "space",
+                    "source",
+                    "trail",
+                    "local"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "alias_scope_ref_mismatch"
+                }
+              },
+              "required": [
+                "code",
+                "scope"
+              ]
+            },
+            {
+              "description": "A `handles` row must set exactly one refinement of {unit, expression}; `given` is\nhow many were set (§6.3b/§6.1a).",
+              "type": "object",
+              "properties": {
+                "given": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "code": {
+                  "type": "string",
+                  "const": "handle_target_not_exactly_one"
+                }
+              },
+              "required": [
+                "code",
+                "given"
+              ]
+            },
+            {
+              "description": "`declared_by = ai` is structurally forbidden: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` (§3.9/§6.0).",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "declared_by_ai"
+                }
+              },
+              "required": [
+                "code"
+              ]
             }
           ],
           "required": [
@@ -410,10 +915,24 @@
                       "format": "uuid"
                     },
                     "type": {
-                      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+                      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
                       "type": "string",
                       "enum": [
-                        "note"
+                        "note",
+                        "theorem",
+                        "lemma",
+                        "proposition",
+                        "corollary",
+                        "conjecture",
+                        "claim",
+                        "definition",
+                        "proof",
+                        "example",
+                        "question",
+                        "source_excerpt",
+                        "trail",
+                        "annotation",
+                        "journal_day"
                       ]
                     },
                     "title": {
@@ -769,6 +1288,323 @@
                         "given",
                         "current"
                       ]
+                    },
+                    {
+                      "description": "A `links` row must set exactly one target arm. Slice 1's arms are\n`{target_object_id, unresolved_text}`; `given` is how many were set (§6.1a/§6.1b).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "link_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "A deliberate edge (`from_content = false`) carries no object target — the typed\nknowledge graph stays object-only, no off-graph deliberate edges (§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "off_graph_deliberate_edge"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "`target_unit_id` is set without `target_object_id` — a unit refinement requires\nits owning object target (§6.1a composite-FK discipline).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "unit_target_without_object"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "A typed graph edge resolved to a non-object target (notation/source/unresolved) —\nevery graph edge type requires an object target (§6.1a/§6.1b).",
+                      "type": "object",
+                      "properties": {
+                        "link_type": {
+                          "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+                          "type": "string",
+                          "enum": [
+                            "related",
+                            "proves",
+                            "uses",
+                            "source_for",
+                            "example_of",
+                            "counterexample_to",
+                            "application_of",
+                            "motivated_by",
+                            "answers",
+                            "generalizes",
+                            "special_case_of",
+                            "equivalent_to",
+                            "questions",
+                            "element_of",
+                            "subset_of",
+                            "equals"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "typed_edge_requires_object_target"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "link_type"
+                      ]
+                    },
+                    {
+                      "description": "`target_selector` is set without `target_object_id` — a selector refines an object\ntarget, never substitutes for one (§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "selector_without_object_target"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "The derived `content_kind` would disagree with the unit's `content` tag (one fact,\none home — the generated column must equal the union tag, §6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "column": {
+                          "type": "string"
+                        },
+                        "content_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_kind_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "column",
+                        "content_tag"
+                      ]
+                    },
+                    {
+                      "description": "A unit's `slot` is not valid for its parent's content kind (§6.0b/§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "slot": {
+                          "type": "string"
+                        },
+                        "parent_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "invalid_slot_for_parent_kind"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "slot",
+                        "parent_kind"
+                      ]
+                    },
+                    {
+                      "description": "`example_kind` is set on a unit whose `type` is not `example` (§6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "example_kind_without_example_type"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "A `*_detail.object_id` references an object of the wrong type (§6.1a\ntype-qualified references).",
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "given": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "detail_type_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "expected",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "The create path cannot produce this object type yet (reserved vocabulary whose\nowning machinery lands in a later slice, §6.1a/§13a).",
+                      "type": "object",
+                      "properties": {
+                        "object_type": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "type_not_producible_yet"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "object_type"
+                      ]
+                    },
+                    {
+                      "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "tagging_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "An alias's `scope` and `scope_ref` are inconsistent (§6.1a scope ↔ scope_ref).",
+                      "type": "object",
+                      "properties": {
+                        "scope": {
+                          "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+                          "type": "string",
+                          "enum": [
+                            "global",
+                            "space",
+                            "source",
+                            "trail",
+                            "local"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "alias_scope_ref_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "scope"
+                      ]
+                    },
+                    {
+                      "description": "A `handles` row must set exactly one refinement of {unit, expression}; `given` is\nhow many were set (§6.3b/§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "handle_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "`declared_by = ai` is structurally forbidden: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` (§3.9/§6.0).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "declared_by_ai"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
                     }
                   ],
                   "required": [
@@ -806,10 +1642,24 @@
               "format": "uuid"
             },
             "type": {
-              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
               "type": "string",
               "enum": [
-                "note"
+                "note",
+                "theorem",
+                "lemma",
+                "proposition",
+                "corollary",
+                "conjecture",
+                "claim",
+                "definition",
+                "proof",
+                "example",
+                "question",
+                "source_excerpt",
+                "trail",
+                "annotation",
+                "journal_day"
               ]
             },
             "title": {
@@ -922,6 +1772,879 @@
         }
       }
     },
+    "DeclaredBy": {
+      "enum": [
+        "user",
+        "deterministic",
+        "imported"
+      ],
+      "title": "DeclaredBy",
+      "description": "Who declared a unit's STRUCTURE (its type/kind) — a separate fact from content\nprovenance (§6.0). `ai` is deliberately absent: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` with AI provenance/derivation (§3.9).",
+      "type": "string"
+    },
+    "DefinitionDetail": {
+      "required": [
+        "object_id",
+        "term"
+      ],
+      "title": "DefinitionDetail",
+      "description": "Non-content metadata for a `definition` object (§6.1c): the definiendum, which is\nobject identity. The body is flowing units, not a column.",
+      "type": "object",
+      "properties": {
+        "object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "term": {
+          "type": "string"
+        }
+      }
+    },
+    "EmbedTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "description": "Identity of a canonical object (client-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "object_id"
+          ]
+        }
+      ],
+      "title": "EmbedTarget",
+      "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3)."
+    },
+    "ExampleKind": {
+      "enum": [
+        "illustrative",
+        "worked",
+        "non_example"
+      ],
+      "title": "ExampleKind",
+      "description": "Optional refinement of `type = example` (§6.0). Never a second classifying act — cues\nlike \"Non-example:\" expand to type + kind in one gesture (§9.y), or it is set later.",
+      "type": "string"
+    },
+    "ExtractedStructureEnvelope": {
+      "required": [
+        "kind",
+        "schema_version",
+        "generated_by",
+        "base_object_revision"
+      ],
+      "title": "ExtractedStructureEnvelope",
+      "description": "The mandatory envelope every `extracted_structure` candidate carries (§6.0). This is a\nCANDIDATE/working layer — never canonical knowledge — and slice 1 DECLARES it with NO\nwrite or acceptance path (acceptance materializes into units/links/typed metadata in\nslice 5). The version binding (`base_object_revision`) mirrors the review-candidate\ndiscipline (§6.4) at unit scale.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "A value from the small named registry (e.g. `hypothesis_conclusion_decomposition`).",
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "generated_by": {
+          "type": "string"
+        },
+        "base_object_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "accepted_into": {
+          "description": "The version it materialized into, once accepted (audit trail) — `None` until then.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        }
+      }
+    },
+    "Handle": {
+      "required": [
+        "id",
+        "space_id",
+        "name",
+        "target_object_id",
+        "status",
+        "scope",
+        "provenance_id"
+      ],
+      "title": "Handle",
+      "description": "A handle — an optional human name for an INTRA-object element (a unit or an\nexpression), §6.3b. Bound to the owning object (always) refined by exactly one of\nunit / expression. Objects are named by `aliases`, not handles.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a handle (`handles` row, §6.3b) — a user name for an intra-object\nelement (a unit or expression).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "space_id": {
+          "description": "Identity of a space (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target_object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_unit_id": {
+          "description": "Composite FK `(target_unit_id, target_object_id) → content_units(id, object_id)`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "target_expression_id": {
+          "description": "A `MathExpression` id, resolved via the expression→unit index (§6.3a). Exactly one\nof `{target_unit_id, target_expression_id}` is set (§6.1a).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "status": {
+          "description": "Handle lifecycle (§6.3b): a handle whose target is gone goes `stale` to review,\nnever silently (§6.1b).",
+          "type": "string",
+          "enum": [
+            "active",
+            "stale"
+          ]
+        },
+        "scope": {
+          "description": "Uniqueness/conflict scope of a handle (§6.3b).",
+          "type": "string",
+          "enum": [
+            "object",
+            "space"
+          ]
+        },
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "HandleScope": {
+      "enum": [
+        "object",
+        "space"
+      ],
+      "title": "HandleScope",
+      "description": "Uniqueness/conflict scope of a handle (§6.3b).",
+      "type": "string"
+    },
+    "HandleStatus": {
+      "enum": [
+        "active",
+        "stale"
+      ],
+      "title": "HandleStatus",
+      "description": "Handle lifecycle (§6.3b): a handle whose target is gone goes `stale` to review,\nnever silently (§6.1b).",
+      "type": "string"
+    },
+    "Inline": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "span": {
+              "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            },
+            "style": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "mark"
+            }
+          },
+          "required": [
+            "kind",
+            "span",
+            "style"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "span": {
+              "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            },
+            "expr": {
+              "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "surface_text": {
+                  "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                  "type": "string"
+                },
+                "surface_format": {
+                  "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+                  "type": "string",
+                  "enum": [
+                    "mathmeander",
+                    "latex",
+                    "typst",
+                    "asciimath"
+                  ]
+                },
+                "input_syntax": {
+                  "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "mathmeander",
+                    "latex",
+                    "typst",
+                    "asciimath",
+                    "unicode",
+                    "mixed",
+                    "unknown",
+                    null
+                  ]
+                },
+                "original_input": {
+                  "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                  "type": "string"
+                },
+                "parse_status": {
+                  "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+                  "type": "string",
+                  "enum": [
+                    "unresolved",
+                    "renderable",
+                    "partially_resolved",
+                    "invalid"
+                  ]
+                },
+                "occurrences": {
+                  "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                  "type": "array",
+                  "items": {
+                    "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ]
+                      },
+                      "target": {
+                        "anyOf": [
+                          {
+                            "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object_id": {
+                                    "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "object"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "object_id"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "selector"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "surface_text",
+                "surface_format",
+                "original_input",
+                "parse_status",
+                "occurrences"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "math"
+            }
+          },
+          "required": [
+            "kind",
+            "span",
+            "expr"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "span": {
+              "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            },
+            "text": {
+              "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+              "type": "string"
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "object_id": {
+                          "description": "Identity of a canonical object (client-minted UUIDv7).",
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "object_id"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "reference"
+            }
+          },
+          "required": [
+            "kind",
+            "span",
+            "text"
+          ]
+        }
+      ],
+      "title": "Inline",
+      "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\nInline `$…$` math is an ELEMENT of prose, not its own unit (else one sentence explodes\ninto units). Each element carries a `span` indexing into the prose `text` (the same\nchar-offset discipline expressions use). Rich formatting waits for the editor (slice 2);\nMVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly."
+    },
+    "InputSyntax": {
+      "enum": [
+        "mathmeander",
+        "latex",
+        "typst",
+        "asciimath",
+        "unicode",
+        "mixed",
+        "unknown"
+      ],
+      "title": "InputSyntax",
+      "description": "How an expression was entered/imported (§6.3a). Tri-state: *absent* (`Option::None`,\nnever recorded) ≠ `unknown` (recorded, but the dialect could not be determined);\nmigrations never backfill it.",
+      "type": "string"
+    },
+    "Link": {
+      "required": [
+        "id",
+        "source_object_id",
+        "type",
+        "status",
+        "from_content",
+        "provenance_id",
+        "created_at"
+      ],
+      "title": "Link",
+      "description": "An edge — the §6.1b `links` row. Slice 1 supports a TWO-ARM target (`target_object_id`\nxor `unresolved_text`); the notation/source arms widen in slices 2/3 when their FK\ntargets exist. `target_unit_id`/`target_selector` are REFINEMENTS of the object target,\nnever target alternatives. `in_expression` is a DERIVED SQL column (not a field).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of an edge (`links` row, §6.1b).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source_object_id": {
+          "description": "The edge's source end (§6.1b).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_object_id": {
+          "description": "The object target (one of the two slice-1 target arms).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "target_unit_id": {
+          "description": "Refinement: a unit within `target_object_id` (composite FK, §6.1a).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "unresolved_text": {
+          "description": "The literal reference text while UNRESOLVED — the other slice-1 target arm.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_selector": {
+          "description": "Finer-than-unit refinement of the object target (§6.1d).",
+          "anyOf": [
+            {
+              "description": "A finer-than-unit refinement of an edge target (§6.1d). Unit-level refinement is the\nFK column `target_unit_id` (never duplicated as a selector — one home). `StructuralPath`\n(sub-term addressing) is reserved (§14 structural editing) and deliberately NOT declared\nin slice 1.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "expression_id": {
+                      "description": "Identity of a `MathExpression` (§6.3a). Minted in content, presentation-\nindependent, and unique workspace-wide (the copy-mints-fresh rule, §6.3a).\nLives inside serialized `UnitContent`, not its own table.",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "span": {
+                      "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "start": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "end": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "start",
+                        "end"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "expression_ref"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "expression_id"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+          "type": "string",
+          "enum": [
+            "related",
+            "proves",
+            "uses",
+            "source_for",
+            "example_of",
+            "counterexample_to",
+            "application_of",
+            "motivated_by",
+            "answers",
+            "generalizes",
+            "special_case_of",
+            "equivalent_to",
+            "questions",
+            "element_of",
+            "subset_of",
+            "equals"
+          ]
+        },
+        "status": {
+          "description": "Edge lifecycle (§6.1b). Marker-derived edges never go stale (they sync with or die\nwith their markers); canonical edges whose basis vanished go `stale` to review.",
+          "type": "string",
+          "enum": [
+            "active",
+            "stale",
+            "deprecated"
+          ]
+        },
+        "from_content": {
+          "description": "`true` = extracted from content (a `Reference`/`Occurrence`); `false` = deliberate.",
+          "type": "boolean"
+        },
+        "source_unit_id": {
+          "description": "Which unit the reference/occurrence sits in (composite FK to the source object).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "content_locator": {
+          "description": "Where in that unit (§6.1d). The SQL `in_expression` column is derived from this.",
+          "anyOf": [
+            {
+              "description": "Where in a unit's content an edge sits (§6.1d). Paired with the `source_unit_id`\ncolumn (the unit is context-supplied). The SQL `in_expression` column is DERIVED from\n`kind = expression_span` — never written independently.",
+              "oneOf": [
+                {
+                  "description": "A span within the unit's prose text.",
+                  "type": "object",
+                  "properties": {
+                    "start": {
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "prose_span"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "start",
+                    "end"
+                  ]
+                },
+                {
+                  "description": "A span within an expression's surface — stable across inline/display toggles (§6.3a).",
+                  "type": "object",
+                  "properties": {
+                    "expression_id": {
+                      "description": "Identity of a `MathExpression` (§6.3a). Minted in content, presentation-\nindependent, and unique workspace-wide (the copy-mints-fresh rule, §6.3a).\nLives inside serialized `UnitContent`, not its own table.",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start": {
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "format": "uint32",
+                      "minimum": 0
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "expression_span"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "expression_id",
+                    "start",
+                    "end"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "whole_unit"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "LinkStatus": {
+      "enum": [
+        "active",
+        "stale",
+        "deprecated"
+      ],
+      "title": "LinkStatus",
+      "description": "Edge lifecycle (§6.1b). Marker-derived edges never go stale (they sync with or die\nwith their markers); canonical edges whose basis vanished go `stale` to review.",
+      "type": "string"
+    },
+    "LinkType": {
+      "enum": [
+        "related",
+        "proves",
+        "uses",
+        "source_for",
+        "example_of",
+        "counterexample_to",
+        "application_of",
+        "motivated_by",
+        "answers",
+        "generalizes",
+        "special_case_of",
+        "equivalent_to",
+        "questions",
+        "element_of",
+        "subset_of",
+        "equals"
+      ],
+      "title": "LinkType",
+      "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+      "type": "string"
+    },
+    "MathExpression": {
+      "required": [
+        "id",
+        "surface_text",
+        "surface_format",
+        "original_input",
+        "parse_status",
+        "occurrences"
+      ],
+      "title": "MathExpression",
+      "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "surface_text": {
+          "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+          "type": "string"
+        },
+        "surface_format": {
+          "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+          "type": "string",
+          "enum": [
+            "mathmeander",
+            "latex",
+            "typst",
+            "asciimath"
+          ]
+        },
+        "input_syntax": {
+          "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "mathmeander",
+            "latex",
+            "typst",
+            "asciimath",
+            "unicode",
+            "mixed",
+            "unknown",
+            null
+          ]
+        },
+        "original_input": {
+          "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+          "type": "string"
+        },
+        "parse_status": {
+          "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+          "type": "string",
+          "enum": [
+            "unresolved",
+            "renderable",
+            "partially_resolved",
+            "invalid"
+          ]
+        },
+        "occurrences": {
+          "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+          "type": "array",
+          "items": {
+            "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+            "type": "object",
+            "properties": {
+              "selector": {
+                "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  },
+                  "end": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "start",
+                  "end"
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "object_id": {
+                            "description": "Identity of a canonical object (client-minted UUIDv7).",
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "object"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "object_id"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "selector"
+            ]
+          }
+        }
+      }
+    },
     "ObjectPatch": {
       "required": [
         "expected_revision"
@@ -962,10 +2685,24 @@
                   "format": "uuid"
                 },
                 "type": {
-                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
                   "type": "string",
                   "enum": [
-                    "note"
+                    "note",
+                    "theorem",
+                    "lemma",
+                    "proposition",
+                    "corollary",
+                    "conjecture",
+                    "claim",
+                    "definition",
+                    "proof",
+                    "example",
+                    "question",
+                    "source_excerpt",
+                    "trail",
+                    "annotation",
+                    "journal_day"
                   ]
                 },
                 "title": {
@@ -1278,6 +3015,323 @@
                         "given",
                         "current"
                       ]
+                    },
+                    {
+                      "description": "A `links` row must set exactly one target arm. Slice 1's arms are\n`{target_object_id, unresolved_text}`; `given` is how many were set (§6.1a/§6.1b).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "link_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "A deliberate edge (`from_content = false`) carries no object target — the typed\nknowledge graph stays object-only, no off-graph deliberate edges (§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "off_graph_deliberate_edge"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "`target_unit_id` is set without `target_object_id` — a unit refinement requires\nits owning object target (§6.1a composite-FK discipline).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "unit_target_without_object"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "A typed graph edge resolved to a non-object target (notation/source/unresolved) —\nevery graph edge type requires an object target (§6.1a/§6.1b).",
+                      "type": "object",
+                      "properties": {
+                        "link_type": {
+                          "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+                          "type": "string",
+                          "enum": [
+                            "related",
+                            "proves",
+                            "uses",
+                            "source_for",
+                            "example_of",
+                            "counterexample_to",
+                            "application_of",
+                            "motivated_by",
+                            "answers",
+                            "generalizes",
+                            "special_case_of",
+                            "equivalent_to",
+                            "questions",
+                            "element_of",
+                            "subset_of",
+                            "equals"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "typed_edge_requires_object_target"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "link_type"
+                      ]
+                    },
+                    {
+                      "description": "`target_selector` is set without `target_object_id` — a selector refines an object\ntarget, never substitutes for one (§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "selector_without_object_target"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "The derived `content_kind` would disagree with the unit's `content` tag (one fact,\none home — the generated column must equal the union tag, §6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "column": {
+                          "type": "string"
+                        },
+                        "content_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_kind_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "column",
+                        "content_tag"
+                      ]
+                    },
+                    {
+                      "description": "A unit's `slot` is not valid for its parent's content kind (§6.0b/§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "slot": {
+                          "type": "string"
+                        },
+                        "parent_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "invalid_slot_for_parent_kind"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "slot",
+                        "parent_kind"
+                      ]
+                    },
+                    {
+                      "description": "`example_kind` is set on a unit whose `type` is not `example` (§6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "example_kind_without_example_type"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    },
+                    {
+                      "description": "A `*_detail.object_id` references an object of the wrong type (§6.1a\ntype-qualified references).",
+                      "type": "object",
+                      "properties": {
+                        "expected": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "given": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "detail_type_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "expected",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "The create path cannot produce this object type yet (reserved vocabulary whose\nowning machinery lands in a later slice, §6.1a/§13a).",
+                      "type": "object",
+                      "properties": {
+                        "object_type": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "type_not_producible_yet"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "object_type"
+                      ]
+                    },
+                    {
+                      "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "tagging_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "An alias's `scope` and `scope_ref` are inconsistent (§6.1a scope ↔ scope_ref).",
+                      "type": "object",
+                      "properties": {
+                        "scope": {
+                          "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+                          "type": "string",
+                          "enum": [
+                            "global",
+                            "space",
+                            "source",
+                            "trail",
+                            "local"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "alias_scope_ref_mismatch"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "scope"
+                      ]
+                    },
+                    {
+                      "description": "A `handles` row must set exactly one refinement of {unit, expression}; `given` is\nhow many were set (§6.3b/§6.1a).",
+                      "type": "object",
+                      "properties": {
+                        "given": {
+                          "type": "integer",
+                          "format": "uint32",
+                          "minimum": 0
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "handle_target_not_exactly_one"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "given"
+                      ]
+                    },
+                    {
+                      "description": "`declared_by = ai` is structurally forbidden: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` (§3.9/§6.0).",
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "declared_by_ai"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
                     }
                   ],
                   "required": [
@@ -1312,11 +3366,149 @@
     },
     "ObjectType": {
       "enum": [
-        "note"
+        "note",
+        "theorem",
+        "lemma",
+        "proposition",
+        "corollary",
+        "conjecture",
+        "claim",
+        "definition",
+        "proof",
+        "example",
+        "question",
+        "source_excerpt",
+        "trail",
+        "annotation",
+        "journal_day"
       ],
       "title": "ObjectType",
-      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nWalking skeleton accepts only `note`; slice 1 adds the formal family\n(theorem/lemma/proposition/corollary/conjecture/claim), definition, proof, example,\nquestion, source_excerpt, trail, annotation — each a new variant here.",
+      "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
       "type": "string"
+    },
+    "ObjectVersion": {
+      "required": [
+        "id",
+        "object_id",
+        "version_no",
+        "snapshot",
+        "provenance_id",
+        "created_at"
+      ],
+      "title": "ObjectVersion",
+      "description": "A lightweight, append-only history checkpoint (§6.4). The `snapshot` is a serialized\ncanonical object (a snapshot/log, the §6 JSONB exception), carried opaquely by the core.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a version checkpoint (`object_versions` row, §6.4).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "version_no": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "snapshot": true,
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "Occurrence": {
+      "required": [
+        "selector"
+      ],
+      "title": "Occurrence",
+      "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+      "type": "object",
+      "properties": {
+        "selector": {
+          "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ]
+        },
+        "target": {
+          "anyOf": [
+            {
+              "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "object_id": {
+                      "description": "Identity of a canonical object (client-minted UUIDv7).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "object"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "object_id"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "OccurrenceTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "description": "Identity of a canonical object (client-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "object_id"
+          ]
+        }
+      ],
+      "title": "OccurrenceTarget",
+      "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved."
     },
     "Origin": {
       "enum": [
@@ -1327,6 +3519,17 @@
       ],
       "title": "Origin",
       "description": "Provenance origin (arch doc §6.1). Stable, complete set; only `User` and `System`\nare producible until the AI/import provenance columns land with their slices.",
+      "type": "string"
+    },
+    "ParseStatus": {
+      "enum": [
+        "unresolved",
+        "renderable",
+        "partially_resolved",
+        "invalid"
+      ],
+      "title": "ParseStatus",
+      "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
       "type": "string"
     },
     "Provenance": {
@@ -1366,6 +3569,1437 @@
           "format": "date-time"
         }
       }
+    },
+    "ProvenanceDerivation": {
+      "required": [
+        "provenance_id",
+        "derived_from_provenance_id"
+      ],
+      "title": "ProvenanceDerivation",
+      "description": "One edge of the provenance derivation chain (§6.1) — a typed, FK-checked join row\nrather than a `uuid[]`, because provenance is the trust spine.",
+      "type": "object",
+      "properties": {
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "derived_from_provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ReferenceTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "description": "Identity of a canonical object (client-minted UUIDv7).",
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "object_id"
+          ]
+        }
+      ],
+      "title": "ReferenceTarget",
+      "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved."
+    },
+    "SurfaceFormat": {
+      "enum": [
+        "mathmeander",
+        "latex",
+        "typst",
+        "asciimath"
+      ],
+      "title": "SurfaceFormat",
+      "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+      "type": "string"
+    },
+    "Tag": {
+      "required": [
+        "id",
+        "space_id",
+        "name"
+      ],
+      "title": "Tag",
+      "description": "A user tag — free-form personal organization, a facet apart from `type` and edges,\nwith no mathematical semantics (§6.0b).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a tag (`tags` row, §6.0b).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "space_id": {
+          "description": "Identity of a space (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "Tagging": {
+      "required": [
+        "id",
+        "tag_id",
+        "created_at"
+      ],
+      "title": "Tagging",
+      "description": "A tagging — a tag applied to exactly one target (object xor unit), §6.0b.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a tagging (`taggings` row, §6.0b) — a tag applied to a target.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "tag_id": {
+          "description": "Identity of a tag (`tags` row, §6.0b).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "tagged_object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "tagged_unit_id": {
+          "description": "Identity of a content unit (`content_units` row, §6.0b) — what annotations\nanchor to, AI candidates target, and edges point at.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "TargetSelector": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "expression_id": {
+              "description": "Identity of a `MathExpression` (§6.3a). Minted in content, presentation-\nindependent, and unique workspace-wide (the copy-mints-fresh rule, §6.3a).\nLives inside serialized `UnitContent`, not its own table.",
+              "type": "string",
+              "format": "uuid"
+            },
+            "span": {
+              "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "expression_ref"
+            }
+          },
+          "required": [
+            "kind",
+            "expression_id"
+          ]
+        }
+      ],
+      "title": "TargetSelector",
+      "description": "A finer-than-unit refinement of an edge target (§6.1d). Unit-level refinement is the\nFK column `target_unit_id` (never duplicated as a selector — one home). `StructuralPath`\n(sub-term addressing) is reserved (§14 structural editing) and deliberately NOT declared\nin slice 1."
+    },
+    "Unit": {
+      "required": [
+        "id",
+        "object_id",
+        "position",
+        "status",
+        "declared_by",
+        "content",
+        "provenance_id"
+      ],
+      "title": "Unit",
+      "description": "A content unit — the §6.0b `content_units` row. Content is the authored material;\n`content_kind` is a DERIVED SQL column (the `content` tag), so it is NOT a field here.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Identity of a content unit (`content_units` row, §6.0b) — what annotations\nanchor to, AI candidates target, and edges point at.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "object_id": {
+          "description": "Identity of a canonical object (client-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "parent_unit_id": {
+          "description": "THE nesting mechanism: a child names its parent (must be in the same object, §6.1a).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "position": {
+          "description": "Order among siblings (§6.0b).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "slot": {
+          "description": "Container-internal part where needed, e.g. `assumption` (case child) /\n`justification` (proof_step child); `None` otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "THE one user-facing math-flow label; `None` = plain content.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "theorem",
+            "lemma",
+            "proposition",
+            "corollary",
+            "definition",
+            "conjecture",
+            "claim",
+            "question",
+            "proof",
+            "proof_step",
+            "motivation",
+            "intuition",
+            "idea",
+            "proof_idea",
+            "remark",
+            "observation",
+            "warning",
+            "analogy",
+            "application",
+            "open_issue",
+            "return_later",
+            "note",
+            "example",
+            null
+          ]
+        },
+        "example_kind": {
+          "description": "For `type = example`: the example refinement.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "illustrative",
+            "worked",
+            "non_example",
+            null
+          ]
+        },
+        "status": {
+          "description": "Per-unit crystallization state (§6.0/§2.4) — distinct from `MathExpression.parse_status`\n(surface renderability) and from `ObjectStatus` (object lifecycle).",
+          "type": "string",
+          "enum": [
+            "rough",
+            "parsed",
+            "user_verified",
+            "stale"
+          ]
+        },
+        "declared_by": {
+          "description": "Who declared a unit's STRUCTURE (its type/kind) — a separate fact from content\nprovenance (§6.0). `ai` is deliberately absent: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` with AI provenance/derivation (§3.9).",
+          "type": "string",
+          "enum": [
+            "user",
+            "deterministic",
+            "imported"
+          ]
+        },
+        "extracted_structure": {
+          "description": "Optional candidate decomposition — declared, never written in slice 1 (§6.0).",
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "kind": {
+              "description": "A value from the small named registry (e.g. `hypothesis_conclusion_decomposition`).",
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "generated_by": {
+              "type": "string"
+            },
+            "base_object_revision": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "accepted_into": {
+              "description": "The version it materialized into, once accepted (audit trail) — `None` until then.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "schema_version",
+            "generated_by",
+            "base_object_revision"
+          ]
+        },
+        "content": {
+          "description": "A SINGLE unit's own authored material (§6.0) — never an embedded unit tree (children\nare rows: `parent_unit_id` + `position` + `slot`). The internal `kind` tag is the\nAUTHORITATIVE discriminator and the source of the derived `content_kind` SQL column.",
+          "oneOf": [
+            {
+              "description": "Prose + inline formatting + inline math + mentions.",
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "inline": {
+                  "type": "array",
+                  "items": {
+                    "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\nInline `$…$` math is an ELEMENT of prose, not its own unit (else one sentence explodes\ninto units). Each element carries a `span` indexing into the prose `text` (the same\nchar-offset discipline expressions use). Rich formatting waits for the editor (slice 2);\nMVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "style": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "mark"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "style"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "expr": {
+                            "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "surface_text": {
+                                "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                "type": "string"
+                              },
+                              "surface_format": {
+                                "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+                                "type": "string",
+                                "enum": [
+                                  "mathmeander",
+                                  "latex",
+                                  "typst",
+                                  "asciimath"
+                                ]
+                              },
+                              "input_syntax": {
+                                "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "enum": [
+                                  "mathmeander",
+                                  "latex",
+                                  "typst",
+                                  "asciimath",
+                                  "unicode",
+                                  "mixed",
+                                  "unknown",
+                                  null
+                                ]
+                              },
+                              "original_input": {
+                                "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                "type": "string"
+                              },
+                              "parse_status": {
+                                "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+                                "type": "string",
+                                "enum": [
+                                  "unresolved",
+                                  "renderable",
+                                  "partially_resolved",
+                                  "invalid"
+                                ]
+                              },
+                              "occurrences": {
+                                "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                "type": "array",
+                                "items": {
+                                  "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                  "type": "object",
+                                  "properties": {
+                                    "selector": {
+                                      "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                                      "type": "object",
+                                      "properties": {
+                                        "start": {
+                                          "type": "integer",
+                                          "format": "uint32",
+                                          "minimum": 0
+                                        },
+                                        "end": {
+                                          "type": "integer",
+                                          "format": "uint32",
+                                          "minimum": 0
+                                        }
+                                      },
+                                      "required": [
+                                        "start",
+                                        "end"
+                                      ]
+                                    },
+                                    "target": {
+                                      "anyOf": [
+                                        {
+                                          "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                          "oneOf": [
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "object_id": {
+                                                  "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                  "type": "string",
+                                                  "format": "uuid"
+                                                },
+                                                "kind": {
+                                                  "type": "string",
+                                                  "const": "object"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind",
+                                                "object_id"
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "selector"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "surface_text",
+                              "surface_format",
+                              "original_input",
+                              "parse_status",
+                              "occurrences"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "math"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "expr"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "text": {
+                            "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                            "type": "string"
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "object_id": {
+                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "object_id"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "reference"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "text"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "prose"
+                }
+              },
+              "required": [
+                "kind",
+                "text",
+                "inline"
+              ]
+            },
+            {
+              "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+              "type": "object",
+              "properties": {
+                "expr": {
+                  "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "surface_text": {
+                      "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                      "type": "string"
+                    },
+                    "surface_format": {
+                      "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+                      "type": "string",
+                      "enum": [
+                        "mathmeander",
+                        "latex",
+                        "typst",
+                        "asciimath"
+                      ]
+                    },
+                    "input_syntax": {
+                      "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "mathmeander",
+                        "latex",
+                        "typst",
+                        "asciimath",
+                        "unicode",
+                        "mixed",
+                        "unknown",
+                        null
+                      ]
+                    },
+                    "original_input": {
+                      "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                      "type": "string"
+                    },
+                    "parse_status": {
+                      "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+                      "type": "string",
+                      "enum": [
+                        "unresolved",
+                        "renderable",
+                        "partially_resolved",
+                        "invalid"
+                      ]
+                    },
+                    "occurrences": {
+                      "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                      "type": "array",
+                      "items": {
+                        "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                        "type": "object",
+                        "properties": {
+                          "selector": {
+                            "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "object_id": {
+                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "object_id"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "selector"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface_text",
+                    "surface_format",
+                    "original_input",
+                    "parse_status",
+                    "occurrences"
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "math"
+                }
+              },
+              "required": [
+                "kind",
+                "expr"
+              ]
+            },
+            {
+              "description": "Items are child rows.",
+              "type": "object",
+              "properties": {
+                "ordered": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "list"
+                }
+              },
+              "required": [
+                "kind",
+                "ordered"
+              ]
+            },
+            {
+              "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "derivation"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "case_split"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "group"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "Quotes & object embeds.",
+              "type": "object",
+              "properties": {
+                "target": {
+                  "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "object_id": {
+                          "description": "Identity of a canonical object (client-minted UUIDv7).",
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "object_id"
+                      ]
+                    }
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "embed"
+                }
+              },
+              "required": [
+                "kind",
+                "target"
+              ]
+            }
+          ]
+        },
+        "provenance_id": {
+          "description": "Identity of a provenance row (glue-minted UUIDv7).",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "UnitContent": {
+      "oneOf": [
+        {
+          "description": "Prose + inline formatting + inline math + mentions.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "inline": {
+              "type": "array",
+              "items": {
+                "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\nInline `$…$` math is an ELEMENT of prose, not its own unit (else one sentence explodes\ninto units). Each element carries a `span` indexing into the prose `text` (the same\nchar-offset discipline expressions use). Rich formatting waits for the editor (slice 2);\nMVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "span": {
+                        "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ]
+                      },
+                      "style": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "mark"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "span",
+                      "style"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "span": {
+                        "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ]
+                      },
+                      "expr": {
+                        "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "surface_text": {
+                            "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                            "type": "string"
+                          },
+                          "surface_format": {
+                            "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+                            "type": "string",
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath"
+                            ]
+                          },
+                          "input_syntax": {
+                            "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath",
+                              "unicode",
+                              "mixed",
+                              "unknown",
+                              null
+                            ]
+                          },
+                          "original_input": {
+                            "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                            "type": "string"
+                          },
+                          "parse_status": {
+                            "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+                            "type": "string",
+                            "enum": [
+                              "unresolved",
+                              "renderable",
+                              "partially_resolved",
+                              "invalid"
+                            ]
+                          },
+                          "occurrences": {
+                            "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                            "type": "array",
+                            "items": {
+                              "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "selector"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface_text",
+                          "surface_format",
+                          "original_input",
+                          "parse_status",
+                          "occurrences"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "math"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "span",
+                      "expr"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "span": {
+                        "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ]
+                      },
+                      "text": {
+                        "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                        "type": "string"
+                      },
+                      "target": {
+                        "anyOf": [
+                          {
+                            "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object_id": {
+                                    "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "object"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "object_id"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "reference"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "span",
+                      "text"
+                    ]
+                  }
+                ]
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "prose"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "inline"
+          ]
+        },
+        {
+          "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+          "type": "object",
+          "properties": {
+            "expr": {
+              "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "surface_text": {
+                  "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                  "type": "string"
+                },
+                "surface_format": {
+                  "description": "The grammar a `surface_text` is written in (§6.3a). `mathmeander` (our owned grammar)\nis canonical; `latex` is retained for raw-imported/unnormalized surfaces; `typst` and\n`asciimath` are reserved.",
+                  "type": "string",
+                  "enum": [
+                    "mathmeander",
+                    "latex",
+                    "typst",
+                    "asciimath"
+                  ]
+                },
+                "input_syntax": {
+                  "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "mathmeander",
+                    "latex",
+                    "typst",
+                    "asciimath",
+                    "unicode",
+                    "mixed",
+                    "unknown",
+                    null
+                  ]
+                },
+                "original_input": {
+                  "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                  "type": "string"
+                },
+                "parse_status": {
+                  "description": "Whether a surface is usable, per OUR parser (§6.3a) — defined by `mathmeander`, not\nLaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2). The parser itself lands in slice 1b.",
+                  "type": "string",
+                  "enum": [
+                    "unresolved",
+                    "renderable",
+                    "partially_resolved",
+                    "invalid"
+                  ]
+                },
+                "occurrences": {
+                  "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                  "type": "array",
+                  "items": {
+                    "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "description": "A character-offset span into a surface (§6.3a/§6.1d). Char offsets, not bytes —\n`mathmeander` is ASCII-canonical so char == grapheme, keeping spans simple. The\ncanonical implementation moves to `mathmeander-surface` in slice 1b; declared here so\nthe content model and artifact are complete now.",
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ]
+                      },
+                      "target": {
+                        "anyOf": [
+                          {
+                            "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "object_id": {
+                                    "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "object"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "object_id"
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "selector"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "surface_text",
+                "surface_format",
+                "original_input",
+                "parse_status",
+                "occurrences"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "math"
+            }
+          },
+          "required": [
+            "kind",
+            "expr"
+          ]
+        },
+        {
+          "description": "Items are child rows.",
+          "type": "object",
+          "properties": {
+            "ordered": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "list"
+            }
+          },
+          "required": [
+            "kind",
+            "ordered"
+          ]
+        },
+        {
+          "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "derivation"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "case_split"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "group"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Quotes & object embeds.",
+          "type": "object",
+          "properties": {
+            "target": {
+              "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "object_id": {
+                      "description": "Identity of a canonical object (client-minted UUIDv7).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "object"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "object_id"
+                  ]
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "embed"
+            }
+          },
+          "required": [
+            "kind",
+            "target"
+          ]
+        }
+      ],
+      "title": "UnitContent",
+      "description": "A SINGLE unit's own authored material (§6.0) — never an embedded unit tree (children\nare rows: `parent_unit_id` + `position` + `slot`). The internal `kind` tag is the\nAUTHORITATIVE discriminator and the source of the derived `content_kind` SQL column."
+    },
+    "UnitStatus": {
+      "enum": [
+        "rough",
+        "parsed",
+        "user_verified",
+        "stale"
+      ],
+      "title": "UnitStatus",
+      "description": "Per-unit crystallization state (§6.0/§2.4) — distinct from `MathExpression.parse_status`\n(surface renderability) and from `ObjectStatus` (object lifecycle).",
+      "type": "string"
+    },
+    "UnitType": {
+      "enum": [
+        "theorem",
+        "lemma",
+        "proposition",
+        "corollary",
+        "definition",
+        "conjecture",
+        "claim",
+        "question",
+        "proof",
+        "proof_step",
+        "motivation",
+        "intuition",
+        "idea",
+        "proof_idea",
+        "remark",
+        "observation",
+        "warning",
+        "analogy",
+        "application",
+        "open_issue",
+        "return_later",
+        "note",
+        "example"
+      ],
+      "title": "UnitType",
+      "description": "THE one user-facing math-flow label of a unit (§6.0). Carries *force and meaning*;\nform lives separately in `UnitContent.kind`. Absent (`Option::None`) = plain content.\nForms (list/group/embed/derivation/case_split) are deliberately NOT here — they are\ncontent kinds, never types (§6.0b).",
+      "type": "string"
     },
     "ValidationError": {
       "oneOf": [
@@ -1561,6 +5195,323 @@
             "code",
             "given",
             "current"
+          ]
+        },
+        {
+          "description": "A `links` row must set exactly one target arm. Slice 1's arms are\n`{target_object_id, unresolved_text}`; `given` is how many were set (§6.1a/§6.1b).",
+          "type": "object",
+          "properties": {
+            "given": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "link_target_not_exactly_one"
+            }
+          },
+          "required": [
+            "code",
+            "given"
+          ]
+        },
+        {
+          "description": "A deliberate edge (`from_content = false`) carries no object target — the typed\nknowledge graph stays object-only, no off-graph deliberate edges (§6.1a).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "off_graph_deliberate_edge"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "`target_unit_id` is set without `target_object_id` — a unit refinement requires\nits owning object target (§6.1a composite-FK discipline).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "unit_target_without_object"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "A typed graph edge resolved to a non-object target (notation/source/unresolved) —\nevery graph edge type requires an object target (§6.1a/§6.1b).",
+          "type": "object",
+          "properties": {
+            "link_type": {
+              "description": "Typed relationship of a `links` edge (§6.1b). Most are deliberate graph edges\n(object-target, §6.1a); `related`/content-derived rows may stay unresolved.",
+              "type": "string",
+              "enum": [
+                "related",
+                "proves",
+                "uses",
+                "source_for",
+                "example_of",
+                "counterexample_to",
+                "application_of",
+                "motivated_by",
+                "answers",
+                "generalizes",
+                "special_case_of",
+                "equivalent_to",
+                "questions",
+                "element_of",
+                "subset_of",
+                "equals"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "typed_edge_requires_object_target"
+            }
+          },
+          "required": [
+            "code",
+            "link_type"
+          ]
+        },
+        {
+          "description": "`target_selector` is set without `target_object_id` — a selector refines an object\ntarget, never substitutes for one (§6.1a).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "selector_without_object_target"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "The derived `content_kind` would disagree with the unit's `content` tag (one fact,\none home — the generated column must equal the union tag, §6.0b).",
+          "type": "object",
+          "properties": {
+            "column": {
+              "type": "string"
+            },
+            "content_tag": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "content_kind_mismatch"
+            }
+          },
+          "required": [
+            "code",
+            "column",
+            "content_tag"
+          ]
+        },
+        {
+          "description": "A unit's `slot` is not valid for its parent's content kind (§6.0b/§6.1a).",
+          "type": "object",
+          "properties": {
+            "slot": {
+              "type": "string"
+            },
+            "parent_kind": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "invalid_slot_for_parent_kind"
+            }
+          },
+          "required": [
+            "code",
+            "slot",
+            "parent_kind"
+          ]
+        },
+        {
+          "description": "`example_kind` is set on a unit whose `type` is not `example` (§6.0b).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "example_kind_without_example_type"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "A `*_detail.object_id` references an object of the wrong type (§6.1a\ntype-qualified references).",
+          "type": "object",
+          "properties": {
+            "expected": {
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+              "type": "string",
+              "enum": [
+                "note",
+                "theorem",
+                "lemma",
+                "proposition",
+                "corollary",
+                "conjecture",
+                "claim",
+                "definition",
+                "proof",
+                "example",
+                "question",
+                "source_excerpt",
+                "trail",
+                "annotation",
+                "journal_day"
+              ]
+            },
+            "given": {
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+              "type": "string",
+              "enum": [
+                "note",
+                "theorem",
+                "lemma",
+                "proposition",
+                "corollary",
+                "conjecture",
+                "claim",
+                "definition",
+                "proof",
+                "example",
+                "question",
+                "source_excerpt",
+                "trail",
+                "annotation",
+                "journal_day"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "detail_type_mismatch"
+            }
+          },
+          "required": [
+            "code",
+            "expected",
+            "given"
+          ]
+        },
+        {
+          "description": "The create path cannot produce this object type yet (reserved vocabulary whose\nowning machinery lands in a later slice, §6.1a/§13a).",
+          "type": "object",
+          "properties": {
+            "object_type": {
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+              "type": "string",
+              "enum": [
+                "note",
+                "theorem",
+                "lemma",
+                "proposition",
+                "corollary",
+                "conjecture",
+                "claim",
+                "definition",
+                "proof",
+                "example",
+                "question",
+                "source_excerpt",
+                "trail",
+                "annotation",
+                "journal_day"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "type_not_producible_yet"
+            }
+          },
+          "required": [
+            "code",
+            "object_type"
+          ]
+        },
+        {
+          "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
+          "type": "object",
+          "properties": {
+            "given": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "tagging_target_not_exactly_one"
+            }
+          },
+          "required": [
+            "code",
+            "given"
+          ]
+        },
+        {
+          "description": "An alias's `scope` and `scope_ref` are inconsistent (§6.1a scope ↔ scope_ref).",
+          "type": "object",
+          "properties": {
+            "scope": {
+              "description": "The scope an alias is valid in (§6.3b); paired with `scope_ref` (§6.1a consistency).",
+              "type": "string",
+              "enum": [
+                "global",
+                "space",
+                "source",
+                "trail",
+                "local"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "alias_scope_ref_mismatch"
+            }
+          },
+          "required": [
+            "code",
+            "scope"
+          ]
+        },
+        {
+          "description": "A `handles` row must set exactly one refinement of {unit, expression}; `given` is\nhow many were set (§6.3b/§6.1a).",
+          "type": "object",
+          "properties": {
+            "given": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "code": {
+              "type": "string",
+              "const": "handle_target_not_exactly_one"
+            }
+          },
+          "required": [
+            "code",
+            "given"
+          ]
+        },
+        {
+          "description": "`declared_by = ai` is structurally forbidden: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` (§3.9/§6.0).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "declared_by_ai"
+            }
+          },
+          "required": [
+            "code"
           ]
         }
       ],

@@ -261,9 +261,10 @@ fn create_enforces_origin_invariants() {
         );
     }
 
-    // unknown type → typed error with the offending value
-    let mut input = base_input;
-    input.object_type = "theorem".into();
+    // unknown type → typed error with the offending value (`theorem` is now valid
+    // vocabulary, so use a genuinely unknown one)
+    let mut input = base_input.clone();
+    input.object_type = "frobnicate".into();
     let ctx = CreateContext {
         provenance_id: "0197675f-71f4-7000-8000-000000000002".into(),
         origin: Origin::User,
@@ -273,5 +274,19 @@ fn create_enforces_origin_invariants() {
     assert_eq!(
         serde_json::to_value(&err).expect("serializes")["code"],
         "unknown_object_type"
+    );
+
+    // widened, producible vocabulary → creates (the slice-1 flip)
+    let mut input = base_input.clone();
+    input.object_type = "theorem".into();
+    create_object(&input, &ctx, space, now).expect("theorem is producible in slice 1");
+
+    // reserved vocabulary (valid on read, not producible yet) → typed error (§6.1a)
+    let mut input = base_input;
+    input.object_type = "trail".into();
+    let err = create_object(&input, &ctx, space, now).expect_err("must fail");
+    assert_eq!(
+        serde_json::to_value(&err).expect("serializes")["code"],
+        "type_not_producible_yet"
     );
 }

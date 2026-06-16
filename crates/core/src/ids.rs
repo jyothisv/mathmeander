@@ -43,3 +43,43 @@ id_newtype!(
     /// Identity of a provenance row (glue-minted UUIDv7).
     ProvenanceId
 );
+
+// ── Slice 1 canonical-object-core entities (arch doc §6) ──────────────────────
+// All client- or glue-minted UUIDv7, like the above; the core mints none of them.
+
+id_newtype!(
+    /// Identity of a content unit (`content_units` row, §6.0b) — what annotations
+    /// anchor to, AI candidates target, and edges point at.
+    UnitId
+);
+id_newtype!(
+    /// Identity of an edge (`links` row, §6.1b).
+    LinkId
+);
+id_newtype!(
+    /// Identity of a `MathExpression` (§6.3a). Minted in content, presentation-
+    /// independent, and unique workspace-wide (the copy-mints-fresh rule, §6.3a).
+    /// Lives inside serialized `UnitContent`, not its own table.
+    ExpressionId
+);
+id_newtype!(
+    /// Identity of an alias (`aliases` row, §6.3b) — a name for an object.
+    AliasId
+);
+id_newtype!(
+    /// Identity of a handle (`handles` row, §6.3b) — a user name for an intra-object
+    /// element (a unit or expression).
+    HandleId
+);
+id_newtype!(
+    /// Identity of a tag (`tags` row, §6.0b).
+    TagId
+);
+id_newtype!(
+    /// Identity of a tagging (`taggings` row, §6.0b) — a tag applied to a target.
+    TaggingId
+);
+id_newtype!(
+    /// Identity of a version checkpoint (`object_versions` row, §6.4).
+    ObjectVersionId
+);

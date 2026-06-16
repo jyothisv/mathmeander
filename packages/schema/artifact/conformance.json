@@ -7,14 +7,26 @@
   {
     "type": "ObjectType",
     "value": "theorem",
-    "valid": false,
-    "note": "formal family arrives in slice 1; not in the vocabulary yet"
+    "valid": true,
+    "note": "formal family lands in slice 1 — now valid vocabulary"
+  },
+  {
+    "type": "ObjectType",
+    "value": "journal_day",
+    "valid": true,
+    "note": "reserved vocabulary: valid on read, not producible (TypeNotProducibleYet)"
   },
   {
     "type": "ObjectType",
     "value": "Note",
     "valid": false,
     "note": "case-sensitive"
+  },
+  {
+    "type": "ObjectType",
+    "value": "proof_step",
+    "valid": false,
+    "note": "proof_step is a UNIT type, never an object type (§6.0b)"
   },
   {
     "type": "ObjectStatus",
@@ -489,5 +501,976 @@
     },
     "valid": false,
     "note": "ok without value"
+  },
+  {
+    "type": "UnitType",
+    "value": "theorem",
+    "valid": true
+  },
+  {
+    "type": "UnitType",
+    "value": "proof_step",
+    "valid": true
+  },
+  {
+    "type": "UnitType",
+    "value": "group",
+    "valid": false,
+    "note": "forms are content.kind values, never types (§6.0b)"
+  },
+  {
+    "type": "UnitType",
+    "value": "Theorem",
+    "valid": false,
+    "note": "case-sensitive"
+  },
+  {
+    "type": "UnitStatus",
+    "value": "rough",
+    "valid": true
+  },
+  {
+    "type": "UnitStatus",
+    "value": "user_verified",
+    "valid": true
+  },
+  {
+    "type": "UnitStatus",
+    "value": "draft",
+    "valid": false,
+    "note": "draft is an OBJECT status, not a unit status"
+  },
+  {
+    "type": "DeclaredBy",
+    "value": "user",
+    "valid": true
+  },
+  {
+    "type": "DeclaredBy",
+    "value": "deterministic",
+    "valid": true
+  },
+  {
+    "type": "DeclaredBy",
+    "value": "ai",
+    "valid": false,
+    "note": "declared_by can never be ai (§6.0)"
+  },
+  {
+    "type": "ExampleKind",
+    "value": "non_example",
+    "valid": true
+  },
+  {
+    "type": "ExampleKind",
+    "value": "counterexample",
+    "valid": false
+  },
+  {
+    "type": "LinkType",
+    "value": "proves",
+    "valid": true,
+    "note": "dec. E — proves added; the enum is source of truth"
+  },
+  {
+    "type": "LinkType",
+    "value": "element_of",
+    "valid": true,
+    "note": "reserved for type inference (§14) — declared, unused"
+  },
+  {
+    "type": "LinkType",
+    "value": "depends_on",
+    "valid": false,
+    "note": "not in the vocabulary (uses/proves carry these meanings)"
+  },
+  {
+    "type": "LinkStatus",
+    "value": "active",
+    "valid": true
+  },
+  {
+    "type": "LinkStatus",
+    "value": "pending",
+    "valid": false
+  },
+  {
+    "type": "AliasKind",
+    "value": "standard",
+    "valid": true
+  },
+  {
+    "type": "AliasKind",
+    "value": "nickname",
+    "valid": false
+  },
+  {
+    "type": "AliasScope",
+    "value": "trail",
+    "valid": true
+  },
+  {
+    "type": "AliasScope",
+    "value": "world",
+    "valid": false
+  },
+  {
+    "type": "HandleScope",
+    "value": "space",
+    "valid": true
+  },
+  {
+    "type": "HandleScope",
+    "value": "global",
+    "valid": false,
+    "note": "handle scope is object|space (alias scope has global)"
+  },
+  {
+    "type": "HandleStatus",
+    "value": "stale",
+    "valid": true
+  },
+  {
+    "type": "HandleStatus",
+    "value": "deprecated",
+    "valid": false
+  },
+  {
+    "type": "SurfaceFormat",
+    "value": "mathmeander",
+    "valid": true
+  },
+  {
+    "type": "SurfaceFormat",
+    "value": "typst",
+    "valid": true,
+    "note": "reserved, declared"
+  },
+  {
+    "type": "SurfaceFormat",
+    "value": "mathml",
+    "valid": false,
+    "note": "mathml is a render adapter target, not a surface format"
+  },
+  {
+    "type": "InputSyntax",
+    "value": "mixed",
+    "valid": true
+  },
+  {
+    "type": "InputSyntax",
+    "value": "unknown",
+    "valid": true
+  },
+  {
+    "type": "InputSyntax",
+    "value": "voice",
+    "valid": false
+  },
+  {
+    "type": "ParseStatus",
+    "value": "partially_resolved",
+    "valid": true
+  },
+  {
+    "type": "ParseStatus",
+    "value": "ok",
+    "valid": false
+  },
+  {
+    "type": "CharSpan",
+    "value": {
+      "start": 0,
+      "end": 5
+    },
+    "valid": true
+  },
+  {
+    "type": "CharSpan",
+    "value": {
+      "start": 3
+    },
+    "valid": false,
+    "note": "end missing"
+  },
+  {
+    "type": "CharSpan",
+    "value": {
+      "start": -1,
+      "end": 5
+    },
+    "valid": false,
+    "note": "offsets are u32"
+  },
+  {
+    "type": "MathExpression",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000c1",
+      "surface_text": "a/b",
+      "surface_format": "mathmeander",
+      "input_syntax": "latex",
+      "original_input": "\\frac{a}{b}",
+      "parse_status": "renderable",
+      "occurrences": []
+    },
+    "valid": true
+  },
+  {
+    "type": "MathExpression",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000c1",
+      "surface_text": "x",
+      "surface_format": "mathmeander",
+      "original_input": "x",
+      "parse_status": "renderable",
+      "occurrences": []
+    },
+    "valid": true,
+    "note": "input_syntax absent — tri-state (absent ≠ unknown)"
+  },
+  {
+    "type": "MathExpression",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000c1",
+      "surface_text": "x",
+      "surface_format": "mathmeander",
+      "original_input": "x",
+      "parse_status": "renderable"
+    },
+    "valid": false,
+    "note": "occurrences is required (always present, [] when none)"
+  },
+  {
+    "type": "MathExpression",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000c1",
+      "surface_format": "mathmeander",
+      "original_input": "x",
+      "parse_status": "renderable",
+      "occurrences": []
+    },
+    "valid": false,
+    "note": "surface_text missing"
+  },
+  {
+    "type": "Occurrence",
+    "value": {
+      "selector": {
+        "start": 0,
+        "end": 1
+      },
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "Occurrence",
+    "value": {
+      "selector": {
+        "start": 0,
+        "end": 1
+      }
+    },
+    "valid": true,
+    "note": "target absent — unresolved (the edge carries unresolved_text)"
+  },
+  {
+    "type": "Occurrence",
+    "value": {
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+      }
+    },
+    "valid": false,
+    "note": "selector missing"
+  },
+  {
+    "type": "OccurrenceTarget",
+    "value": {
+      "kind": "object",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": true
+  },
+  {
+    "type": "OccurrenceTarget",
+    "value": {
+      "kind": "notation",
+      "notation_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": false,
+    "note": "notation arm reserved until slice 2"
+  },
+  {
+    "type": "OccurrenceTarget",
+    "value": {
+      "kind": "object"
+    },
+    "valid": false,
+    "note": "object_id missing"
+  },
+  {
+    "type": "ContentLocator",
+    "value": {
+      "kind": "prose_span",
+      "start": 0,
+      "end": 3
+    },
+    "valid": true
+  },
+  {
+    "type": "ContentLocator",
+    "value": {
+      "kind": "expression_span",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "start": 0,
+      "end": 3
+    },
+    "valid": true
+  },
+  {
+    "type": "ContentLocator",
+    "value": {
+      "kind": "whole_unit"
+    },
+    "valid": true
+  },
+  {
+    "type": "ContentLocator",
+    "value": {
+      "kind": "prose_span",
+      "start": 0
+    },
+    "valid": false,
+    "note": "end missing"
+  },
+  {
+    "type": "ContentLocator",
+    "value": {
+      "kind": "char_span",
+      "start": 0,
+      "end": 3
+    },
+    "valid": false,
+    "note": "unknown tag"
+  },
+  {
+    "type": "TargetSelector",
+    "value": {
+      "kind": "expression_ref",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1"
+    },
+    "valid": true,
+    "note": "span optional"
+  },
+  {
+    "type": "TargetSelector",
+    "value": {
+      "kind": "expression_ref",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "span": {
+        "start": 1,
+        "end": 4
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "TargetSelector",
+    "value": {
+      "kind": "structural_path",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "term_path": [
+        0,
+        1
+      ]
+    },
+    "valid": false,
+    "note": "StructuralPath reserved, not declared in slice 1"
+  },
+  {
+    "type": "TargetSelector",
+    "value": {
+      "kind": "expression_ref"
+    },
+    "valid": false,
+    "note": "expression_id missing"
+  },
+  {
+    "type": "EmbedTarget",
+    "value": {
+      "kind": "object",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": true
+  },
+  {
+    "type": "EmbedTarget",
+    "value": {
+      "kind": "source_excerpt",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": false,
+    "note": "source_excerpt arm reserved until slice 3"
+  },
+  {
+    "type": "ReferenceTarget",
+    "value": {
+      "kind": "object",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": true
+  },
+  {
+    "type": "ReferenceTarget",
+    "value": {
+      "kind": "object"
+    },
+    "valid": false
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "mark",
+      "span": {
+        "start": 0,
+        "end": 4
+      },
+      "style": "emph"
+    },
+    "valid": true
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "math",
+      "span": {
+        "start": 5,
+        "end": 8
+      },
+      "expr": {
+        "id": "0197675f-71f4-7000-8000-0000000000c1",
+        "surface_text": "a/b",
+        "surface_format": "mathmeander",
+        "input_syntax": "latex",
+        "original_input": "\\frac{a}{b}",
+        "parse_status": "renderable",
+        "occurrences": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "reference",
+      "span": {
+        "start": 0,
+        "end": 2
+      },
+      "text": "BW",
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "reference",
+      "span": {
+        "start": 0,
+        "end": 2
+      },
+      "text": "BW"
+    },
+    "valid": true,
+    "note": "reference target optional (unresolved)"
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "mark",
+      "span": {
+        "start": 0,
+        "end": 4
+      }
+    },
+    "valid": false,
+    "note": "style missing"
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "italic",
+      "span": {
+        "start": 0,
+        "end": 4
+      }
+    },
+    "valid": false,
+    "note": "unknown tag"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "prose",
+      "text": "Compactness prevents escape.",
+      "inline": []
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "math",
+      "expr": {
+        "id": "0197675f-71f4-7000-8000-0000000000c1",
+        "surface_text": "a/b",
+        "surface_format": "mathmeander",
+        "input_syntax": "latex",
+        "original_input": "\\frac{a}{b}",
+        "parse_status": "renderable",
+        "occurrences": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "list",
+      "ordered": true
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "derivation"
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "case_split"
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "group"
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "embed",
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "prose",
+      "text": "hi"
+    },
+    "valid": false,
+    "note": "inline required (always present, [] when none)"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "list"
+    },
+    "valid": false,
+    "note": "ordered missing"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "matrix"
+    },
+    "valid": false,
+    "note": "unknown kind"
+  },
+  {
+    "type": "ExtractedStructureEnvelope",
+    "value": {
+      "kind": "hypothesis_conclusion_decomposition",
+      "schema_version": 1,
+      "generated_by": "llm:proposer-v2",
+      "base_object_revision": 4
+    },
+    "valid": true,
+    "note": "accepted_into optional (None until accepted)"
+  },
+  {
+    "type": "ExtractedStructureEnvelope",
+    "value": {
+      "kind": "x",
+      "schema_version": 1,
+      "generated_by": "y"
+    },
+    "valid": false,
+    "note": "base_object_revision missing"
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "parent_unit_id": null,
+      "position": 0,
+      "slot": null,
+      "type": "theorem",
+      "example_kind": null,
+      "status": "rough",
+      "declared_by": "user",
+      "extracted_structure": null,
+      "content": {
+        "kind": "prose",
+        "text": "Every bounded sequence…",
+        "inline": []
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": true
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "position": 0,
+      "status": "rough",
+      "declared_by": "user",
+      "content": {
+        "kind": "group"
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": true,
+    "note": "optional columns absent (type/slot/example_kind/parent/extracted_structure)"
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "position": 0,
+      "status": "rough",
+      "declared_by": "ai",
+      "content": {
+        "kind": "group"
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "declared_by = ai is not in the vocabulary (§6.0)"
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "position": 0,
+      "status": "rough",
+      "declared_by": "user",
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "content missing"
+  },
+  {
+    "type": "Link",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "target_object_id": "0197675f-71f4-7000-8000-0000000000a2",
+      "target_unit_id": null,
+      "unresolved_text": null,
+      "target_selector": null,
+      "type": "proves",
+      "status": "active",
+      "from_content": false,
+      "source_unit_id": null,
+      "content_locator": null,
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true
+  },
+  {
+    "type": "Link",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "unresolved_text": "[[Bolzano–Weierstrass]]",
+      "type": "related",
+      "status": "active",
+      "from_content": true,
+      "content_locator": {
+        "kind": "prose_span",
+        "start": 6,
+        "end": 28
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true,
+    "note": "unresolved arm; optional target columns absent"
+  },
+  {
+    "type": "Link",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "type": "uses",
+      "status": "active",
+      "from_content": false,
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "created_at missing"
+  },
+  {
+    "type": "Link",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "status": "active",
+      "from_content": false,
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": false,
+    "note": "type missing"
+  },
+  {
+    "type": "Alias",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000b",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "name": "BW",
+      "kind": "user",
+      "scope": "global",
+      "scope_ref": null
+    },
+    "valid": true
+  },
+  {
+    "type": "Alias",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000b",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "kind": "user",
+      "scope": "global"
+    },
+    "valid": false,
+    "note": "name missing"
+  },
+  {
+    "type": "Handle",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000c",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "name": "(★)",
+      "target_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "target_expression_id": null,
+      "status": "active",
+      "scope": "object",
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": true
+  },
+  {
+    "type": "Handle",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000c",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "name": "(★)",
+      "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "status": "active",
+      "scope": "object",
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "target_object_id missing (handles always bind the owning object)"
+  },
+  {
+    "type": "Tag",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000f1",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "name": "central"
+    },
+    "valid": true
+  },
+  {
+    "type": "Tag",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000f1",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1"
+    },
+    "valid": false,
+    "note": "name missing"
+  },
+  {
+    "type": "Tagging",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000d",
+      "tag_id": "0197675f-71f4-7000-8000-0000000000f1",
+      "tagged_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "tagged_unit_id": null,
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true
+  },
+  {
+    "type": "Tagging",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000d",
+      "tag_id": "0197675f-71f4-7000-8000-0000000000f1",
+      "tagged_object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": false,
+    "note": "created_at missing"
+  },
+  {
+    "type": "ObjectVersion",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000a",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "version_no": 1,
+      "snapshot": {
+        "id": "…",
+        "units": []
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": true
+  },
+  {
+    "type": "ObjectVersion",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-00000000000a",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "snapshot": {},
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "created_at": "2026-06-12T00:00:00Z"
+    },
+    "valid": false,
+    "note": "version_no missing"
+  },
+  {
+    "type": "DefinitionDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "term": "compact"
+    },
+    "valid": true
+  },
+  {
+    "type": "DefinitionDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": false,
+    "note": "term missing"
+  },
+  {
+    "type": "ProvenanceDerivation",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "derived_from_provenance_id": "0197675f-71f4-7000-8000-0000000000d2"
+    },
+    "valid": true
+  },
+  {
+    "type": "ProvenanceDerivation",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "derived_from_provenance_id missing"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "type_not_producible_yet",
+      "object_type": "trail"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "link_target_not_exactly_one",
+      "given": 2
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "off_graph_deliberate_edge"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "typed_edge_requires_object_target",
+      "link_type": "proves"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "detail_type_mismatch",
+      "expected": "definition",
+      "given": "theorem"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "alias_scope_ref_mismatch",
+      "scope": "source"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "declared_by_ai"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "tagging_target_not_exactly_one"
+    },
+    "valid": false,
+    "note": "missing variant field `given`"
   }
 ]

@@ -9,13 +9,20 @@ justified exception — documented variants and snapshots/logs only).
 `jsonb` column whose name is not listed here. Registering a column means: the core type
 exists, it is in the artifact, and generated zod validates it.
 
-| Column                                                   | Core type (artifact `$defs` name) | Kind | Since |
-| -------------------------------------------------------- | --------------------------------- | ---- | ----- |
-| _none yet — the walking skeleton has zero JSONB columns_ |                                   |      |       |
+| Column                              | Core type (artifact `$defs` name) | Kind         | Since   |
+| ----------------------------------- | --------------------------------- | ------------ | ------- |
+| `content_units.content`             | `UnitContent`                     | tagged union | slice 1 |
+| `content_units.extracted_structure` | `ExtractedStructureEnvelope`      | envelope     | slice 1 |
+| `links.content_locator`             | `ContentLocator`                  | tagged union | slice 1 |
+| `links.target_selector`             | `TargetSelector`                  | tagged union | slice 1 |
+| `object_versions.snapshot`          | (serialized `CanonicalObject`)    | snapshot/log | slice 1 |
 
-Expected future entries (slice 1+, per arch doc §6): `content_units.content` →
-`UnitContent`; `content_units.extracted_structure` → extracted-structure envelope;
-`links.content_locator` → `ContentLocator`; `links.target_selector` → `TargetSelector`;
-`annotation_targets.anchor` → `AnchorPayload`; `provenance.source_locator` →
-`SourceLocator`; `trail_steps.detail` → per-kind detail unions; snapshot/log columns
-(`object_versions.snapshot`, `ai_context_snapshots.*`, `search_documents` projections).
+`object_versions.snapshot` is the §6.1d snapshot/log exception (a serialized canonical
+object carried opaquely), not a tagged union — registered so the linter knows it is
+deliberate.
+
+Expected future entries (later slices, per arch doc §6): `annotation_targets.anchor` →
+`AnchorPayload`; `annotation_detail.primitives` → `AnnotationPrimitive[]`;
+`provenance.source_locator` → `SourceLocator`; `trail_steps.detail` → per-kind detail
+unions; the `review_items.candidate` sub-parts; snapshot/log columns
+(`ai_context_snapshots.*`, `search_documents` projections).
