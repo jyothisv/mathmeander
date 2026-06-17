@@ -43,12 +43,32 @@ struct Out {
 }
 
 impl Out {
+    /// Insert a separating space if the buffer's last char would FUSE with `next`'s first
+    /// char into a single token on re-lex (`fuses`). This is what keeps serialization a
+    /// fixpoint: a recovered `Error` leaf's text (always an operator string) can abut a
+    /// structural operator at a tight boundary — `Error("/")` numerator + the `Frac` `/`
+    /// → `"//"`, which the lexer would munch as one `SlashSlash`, changing the re-parse.
+    /// Run once per chunk; never inside a single pushed string (multi-char tokens / idents
+    /// / numbers are emitted as ONE push and must not be split).
+    fn separate_before(&mut self, next: &str) {
+        if let (Some(last), Some(first)) = (self.buf.chars().last(), next.chars().next())
+            && fuses(last, first)
+        {
+            self.buf.push(' ');
+            self.chars = self.chars.saturating_add(1);
+        }
+    }
+
     fn push(&mut self, s: &str) {
+        self.separate_before(s);
         self.buf.push_str(s);
         self.chars = self.chars.saturating_add(s.chars().count() as u32);
     }
 
     fn push_ident(&mut self, name: &str) {
+        // Separate first so the recorded span starts at the ident's REAL char offset (an
+        // inserted space shifts it); the `push` below re-checks but is then a no-op.
+        self.separate_before(name);
         let start = self.chars;
         self.push(name);
         self.sites.push(OccurrenceSite {
@@ -56,6 +76,24 @@ impl Out {
             span: CharSpan::new(start, self.chars),
         });
     }
+}
+
+/// Whether chars `a` then `b`, emitted adjacently, would lex as ONE token (or extend one)
+/// rather than two — so a separating space is needed. A sound superset of the lexer's
+/// maximal-munch rules (`lexer.rs` — keep in sync): the two-char operator prefixes, an
+/// identifier run, and a number run. Under today's serializer only `('/','/')` and
+/// `('-','>')` can actually occur (operator-text `Error`/`Symbol` leaves abutting a `Frac`
+/// `/` or a `Unary` `-`); the rest is defensive coverage for future serializer changes.
+fn fuses(a: char, b: char) -> bool {
+    let two_char_op = matches!(
+        (a, b),
+        ('/', '/') | ('<', '=') | ('>', '=') | ('!', '=') | (':', '=') | ('-', '>') | ('=', '>')
+    );
+    let ident_run = a.is_ascii_alphabetic() && b.is_ascii_alphabetic();
+    let number_run = (a.is_ascii_digit() && b.is_ascii_digit())
+        || (a.is_ascii_digit() && b == '.')
+        || (a == '.' && b.is_ascii_digit());
+    two_char_op || ident_run || number_run
 }
 
 fn emit(e: &Expr, out: &mut Out) {
@@ -138,6 +176,50 @@ fn emit(e: &Expr, out: &mut Out) {
             out.push(op);
             out.push(" ");
             emit(rhs, out);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fuses;
+    use crate::lexer::{Tok, lex};
+
+    /// Token KINDS (spans dropped) of `s`.
+    fn kinds(s: &str) -> Vec<Tok> {
+        lex(s).into_iter().map(|t| t.tok).collect()
+    }
+
+    /// `fuses` must be a COMPLETE model of the lexer's maximal munch: for every char pair the
+    /// lexer fuses across a boundary, `fuses` must return `true` — else the serializer could
+    /// emit a sequence that re-lexes to a different token stream, breaking the parse∘serialize
+    /// fixpoint (`normalize_fresh` idempotence). This drives that invariant FROM the lexer
+    /// itself (the munch authority) over the printable-ASCII alphabet, where all operator /
+    /// identifier / number fusion lives. So teaching the lexer a new operator (a future
+    /// `|->`, say) without teaching `serializer::fuses` is a RED BUILD, not a silent
+    /// idempotence regression — the "keep in sync" comment on `fuses` is now mechanical.
+    ///
+    /// Only the lexer⇒fuses direction is asserted: `fuses` MAY be a superset (a needless
+    /// separator is a harmless space, since whitespace is skipped on re-lex). Combining-mark
+    /// fusion is non-ASCII (outside this alphabet) and is covered by the lexer's
+    /// `absorb_combining` plus the `normalize_is_total_and_idempotent` proptest.
+    #[test]
+    fn fuses_covers_every_lexer_fusion() {
+        for a in 0x21u8..=0x7e {
+            for b in 0x21u8..=0x7e {
+                let (a, b) = (a as char, b as char);
+                // A space is whitespace-skipped, so `separated` is the no-fusion baseline; if
+                // adjacency changes the token stream, the lexer munched across the boundary.
+                let lexer_fuses = kinds(&format!("{a}{b}")) != kinds(&format!("{a} {b}"));
+                if lexer_fuses {
+                    assert!(
+                        fuses(a, b),
+                        "lexer fuses {a:?}+{b:?} but serializer::fuses() is false — the \
+                         serializer could emit a sequence that re-lexes differently and break \
+                         the parse∘serialize fixpoint. Teach fuses this pair."
+                    );
+                }
+            }
         }
     }
 }

@@ -192,6 +192,27 @@ fn deep_input_recovers_and_never_overflows() {
     }
 }
 
+/// The serializer must never emit adjacent pieces that FUSE into a different token on
+/// re-lex (a recovered `Error` leaf's operator text abutting a structural operator), which
+/// would break the parse∘serialize fixpoint. Regression for the proptest seed `"/\r/\0"`
+/// (`Error("/")` numerator + the `Frac` `/` → `"//"` → one `SlashSlash`) and the `Unary`
+/// `-` + `Error(">")` → `"->"` case.
+#[test]
+fn serializer_never_fuses_tokens() {
+    for s in ["/\r/\0", "- >", "x/ /", "1 -> 2 -"] {
+        let once = normalize_fresh(s).text;
+        let twice = normalize_fresh(&once).text;
+        assert_eq!(
+            once, twice,
+            "normalize not idempotent for {s:?}: {once:?} vs {twice:?}"
+        );
+        // `once` is a genuine fixed point: re-parsing + serializing reproduces it exactly.
+        assert_eq!(serialize(&parse(&once)), once, "not a fixpoint: {once:?}");
+    }
+    // The specific fusion: the two slashes come back separated so they never munch to `//`.
+    assert_eq!(normalize_fresh("/\r/\0").text, "/ /\u{0}");
+}
+
 proptest! {
     /// Totality + the fixpoint law: `normalize_fresh` never panics on ANY input, and
     /// re-normalizing its canonical output is a no-op (parse∘serialize fixpoint).

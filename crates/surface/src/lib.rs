@@ -32,6 +32,7 @@ pub mod rewrite;
 pub mod serializer;
 pub mod span;
 pub mod status;
+pub mod syntax;
 
 pub mod migrate;
 
@@ -41,6 +42,7 @@ pub use path::StructuralPath;
 pub use rewrite::{RemapOutcome, SurfaceEdit, rewrite_with_remap};
 pub use span::{ByteSpan, CharSpan};
 pub use status::{InputSyntax, ParseStatus, SurfaceFormat};
+pub use syntax::{SyntaxAdapter, adapter_for, transcode};
 
 /// Version of the `mathmeander` GRAMMAR (arch doc §6.3a) — independent of the canonical
 /// model's `schema_version`. Pinning the precedence table and the slash/fraction rule
