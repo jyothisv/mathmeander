@@ -21,6 +21,7 @@ pub mod error;
 pub mod ids;
 pub mod migrate;
 pub mod model;
+pub mod ops;
 pub mod patch;
 #[cfg(feature = "schema-artifact")]
 pub mod schema_artifact;

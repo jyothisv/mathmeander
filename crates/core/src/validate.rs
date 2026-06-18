@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::error::ValidationError;
 use crate::ids::{ObjectId, ProvenanceId, SpaceId};
-use crate::model::{CanonicalObject, ObjectStatus, ObjectType, Origin, Provenance};
+use crate::model::{
+    CanonicalObject, Inline, Link, LinkType, ObjectStatus, ObjectType, Origin, Provenance, Tagging,
+};
 use crate::patch::Patch;
 
 /// Boundary caps, mirrored in the generated zod (via the artifact) only as documentation;
@@ -180,4 +182,73 @@ pub fn apply_title_patch(
     next.revision = current.revision + 1;
     next.updated_at = now;
     Ok(next)
+}
+
+/// The §6.1a `links` invariants a relational schema can't fully FK-check, so the core owns
+/// them (arch doc §6.1a/§6.1b). 1a DECLARED the error vocabulary; the constructing ops live
+/// in slice 1c, so the enforcement lands here, with them. Every edge an op emits
+/// (`insert_reference`, `resolve_occurrence`, the `materialize_object` derived-from edge)
+/// runs through this gate.
+///
+/// `related` is the one type that may stay unresolved (carry `unresolved_text`); every other
+/// `link_type` is a typed graph edge that requires an object target (model.rs `LinkType`).
+pub fn validate_link(link: &Link) -> Result<(), ValidationError> {
+    // Exactly one of the slice-1 target arms {object, unresolved_text}.
+    let arms =
+        u32::from(link.target_object_id.is_some()) + u32::from(link.unresolved_text.is_some());
+    if arms != 1 {
+        return Err(ValidationError::LinkTargetNotExactlyOne { given: arms });
+    }
+    // A deliberate edge (from_content = false) must be on-graph (object target).
+    if !link.from_content && link.target_object_id.is_none() {
+        return Err(ValidationError::OffGraphDeliberateEdge);
+    }
+    // A typed graph edge requires an object target; `related` is the only exception.
+    if link.link_type != LinkType::Related && link.target_object_id.is_none() {
+        return Err(ValidationError::TypedEdgeRequiresObjectTarget {
+            link_type: link.link_type,
+        });
+    }
+    // Unit / selector refinements refine an object target — never substitute for one.
+    if link.target_unit_id.is_some() && link.target_object_id.is_none() {
+        return Err(ValidationError::UnitTargetWithoutObject);
+    }
+    if link.target_selector.is_some() && link.target_object_id.is_none() {
+        return Err(ValidationError::SelectorWithoutObjectTarget);
+    }
+    // A content-derived edge must record WHERE in content it came from (§6.1b).
+    if link.from_content && (link.source_unit_id.is_none() || link.content_locator.is_none()) {
+        return Err(ValidationError::ContentEdgeMissingAnchor);
+    }
+    Ok(())
+}
+
+/// The §6.0b `taggings` invariant: a tagging targets exactly one of {object, unit}. Mirrors
+/// `validate_link` so every tagging an op emits (split/merge propagation) is gated.
+pub fn validate_tagging(tagging: &Tagging) -> Result<(), ValidationError> {
+    let arms =
+        u32::from(tagging.tagged_object_id.is_some()) + u32::from(tagging.tagged_unit_id.is_some());
+    if arms != 1 {
+        return Err(ValidationError::TaggingTargetNotExactlyOne { given: arms });
+    }
+    Ok(())
+}
+
+/// The §6.0 inline-atom contract: `Math`/`Reference` (content-bearing atoms) MUST have a
+/// zero-width span — their surface lives in their own field, not in the prose `text` (single
+/// source of truth, §2.2). `Mark` (a formatting overlay) may be a region. Enforced mechanically
+/// so a future op/editor can't reintroduce width (which would corrupt prose offsets on rewrite,
+/// §6.3a). The ops that touch a prose unit's inline run this; 1d's load path runs it over all
+/// content.
+pub fn validate_inline(inline: &Inline) -> Result<(), ValidationError> {
+    let (kind, span) = match inline {
+        Inline::Math { span, .. } => ("math", span),
+        Inline::Reference { span, .. } => ("reference", span),
+        Inline::Mark { .. } => return Ok(()),
+    };
+    if span.start == span.end {
+        Ok(())
+    } else {
+        Err(ValidationError::InlineAtomNotZeroWidth { kind: kind.into() })
+    }
 }

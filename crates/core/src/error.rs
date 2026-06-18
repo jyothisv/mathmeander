@@ -120,6 +120,72 @@ pub enum ValidationError {
     /// canonical units; acceptance enters as `user` (§3.9/§6.0).
     #[error("declared_by can never be ai (AI proposals are review_items)")]
     DeclaredByAi,
+
+    // ── Slice 1c canonical-operation errors ───────────────────────────────────
+    // Raised by the pure ops (`ops.rs`). The ops are TOTAL: every reachable failure is
+    // one of these typed values, never a panic. Glue dispositions (1d `CORE_CODE_STATUS`):
+    // stale-read / bad-request → 422; the two id-bookkeeping ones are glue bugs → 500.
+    /// An op named a resolution/target kind whose machinery has not landed yet — e.g.
+    /// resolving an occurrence to `notation` before the notation registry exists (slice 2).
+    #[error("target kind {kind} is not available yet")]
+    TargetKindNotAvailableYet { kind: String },
+
+    /// An op referenced a unit id that is not in the supplied content (stale read / bad id).
+    #[error("unit {unit_id} not found in content")]
+    UnitNotFound { unit_id: String },
+
+    /// An op referenced an expression id that is not in the target unit's content.
+    #[error("expression {expression_id} not found in unit content")]
+    ExpressionNotFound { expression_id: String },
+
+    /// An occurrence index is past the end of the expression's occurrence list.
+    #[error("occurrence index {given} out of range (len {len})")]
+    OccurrenceOutOfRange { given: u32, len: u32 },
+
+    /// `split_unit` was asked to split a unit whose content kind has no split semantics in
+    /// slice 1 (only `prose` is splittable).
+    #[error("content kind {kind} cannot be split")]
+    UnsplittableContentKind { kind: String },
+
+    /// `merge_units` was asked to merge units that are not mergeable (non-adjacent, different
+    /// parent/object, or a non-prose content kind).
+    #[error("units cannot be merged: {reason}")]
+    UnmergeableUnits { reason: String },
+
+    /// A list of fresh ids did not match the count it had to cover (e.g. `new_tagging_ids`
+    /// vs the taggings to propagate). A glue minting bug, not a client error.
+    #[error("id count mismatch: expected {expected}, given {given}")]
+    IdCountMismatch { expected: u32, given: u32 },
+
+    /// `materialize_object` was given an id remap that did not cover every {kind} in the
+    /// source content — copying with a partial map would alias ids across objects. Glue bug.
+    #[error("id remap is incomplete for {kind}")]
+    RemapIncomplete { kind: String },
+
+    /// `split_unit` was asked to split past the end of the unit's prose text.
+    #[error("split offset {given} out of range (len {len})")]
+    SplitOffsetOutOfRange { given: u32, len: u32 },
+
+    /// An inline atom (`math`/`reference`) carries a non-zero-width span — the prose-atom
+    /// contract requires `span.start == span.end` (its content lives in its own field, §6.0).
+    /// A glue/editor bug, not a client error.
+    #[error("inline {kind} atom must have a zero-width span")]
+    InlineAtomNotZeroWidth { kind: String },
+
+    /// A content-derived edge (`from_content = true`) must record WHERE it came from —
+    /// both `source_unit_id` and `content_locator` (§6.1b).
+    #[error("a content-derived edge requires source_unit_id and content_locator")]
+    ContentEdgeMissingAnchor,
+
+    /// `resolve_occurrence` was asked to resolve an occurrence that is already resolved —
+    /// re-resolving would overwrite the target and double-emit the edge (§6.3a).
+    #[error("occurrence is already resolved")]
+    OccurrenceAlreadyResolved,
+
+    /// `materialize_object`'s source content contains a duplicate {kind} id — copying would
+    /// alias the duplicates onto one fresh id via the remap. A glue/data bug.
+    #[error("duplicate {kind} id in source content")]
+    DuplicateSourceId { kind: String },
 }
 
 /// Errors crossing the FFI result envelope: a domain validation failure, or input that

@@ -23,6 +23,12 @@ use crate::model::{
     ProvenanceDerivation, ReferenceTarget, SurfaceFormat, Tag, Tagging, TargetSelector, Unit,
     UnitContent, UnitStatus, UnitType,
 };
+use crate::ops::{
+    ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
+    MergeUnitsInput, OpContext, OpOutcome, ResolveOccurrenceInput, ResolveTarget,
+    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
+    UnitIdRemap,
+};
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
 /// Version of the ARTIFACT FORMAT itself (not the canonical-model schema_version).
@@ -94,6 +100,40 @@ pub fn artifact_json() -> String {
         "ProvenanceDerivation",
         inline_schema_for::<ProvenanceDerivation>(),
     );
+    // Slice 1c canonical operations (§6.0a) — carriers, the outcome bundle, and op DTOs
+    defs.insert("MathContent", inline_schema_for::<MathContent>());
+    defs.insert("OpContext", inline_schema_for::<OpContext>());
+    defs.insert("OpOutcome", inline_schema_for::<OpOutcome>());
+    defs.insert(
+        "ExpressionIdRemap",
+        inline_schema_for::<ExpressionIdRemap>(),
+    );
+    defs.insert("UnitIdRemap", inline_schema_for::<UnitIdRemap>());
+    defs.insert("SetUnitTypeInput", inline_schema_for::<SetUnitTypeInput>());
+    defs.insert("SplitUnitInput", inline_schema_for::<SplitUnitInput>());
+    defs.insert("MergeUnitsInput", inline_schema_for::<MergeUnitsInput>());
+    defs.insert(
+        "ToggleExpressionPlacementInput",
+        inline_schema_for::<ToggleExpressionPlacementInput>(),
+    );
+    defs.insert(
+        "RewriteSurfaceInput",
+        inline_schema_for::<RewriteSurfaceInput>(),
+    );
+    defs.insert("LinkDraft", inline_schema_for::<LinkDraft>());
+    defs.insert(
+        "InsertReferenceInput",
+        inline_schema_for::<InsertReferenceInput>(),
+    );
+    defs.insert("ResolveTarget", inline_schema_for::<ResolveTarget>());
+    defs.insert(
+        "ResolveOccurrenceInput",
+        inline_schema_for::<ResolveOccurrenceInput>(),
+    );
+    defs.insert(
+        "MaterializeObjectInput",
+        inline_schema_for::<MaterializeObjectInput>(),
+    );
     // Request DTOs
     defs.insert(
         "CreateObjectInput",
@@ -153,6 +193,54 @@ fn sample_expr() -> Value {
         "original_input": "\\frac{a}{b}",
         "parse_status": "renderable",
         "occurrences": []
+    })
+}
+
+/// A `Unit` value with one inline math element, reused by the slice-1c composite cases
+/// (`MathContent`/`OpOutcome`) so they can't drift from the real `Unit`/`MathExpression`
+/// shapes. (Positives for deep composites are built from sub-samples; the Rust verdict test
+/// re-parses them, so any shape drift goes red rather than silent.)
+fn sample_unit() -> Value {
+    json!({
+        "id": "0197675f-71f4-7000-8000-0000000000b1",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "parent_unit_id": null, "position": 0, "slot": null, "type": "theorem",
+        "example_kind": null, "status": "rough", "declared_by": "user",
+        "extracted_structure": null,
+        "content": { "kind": "prose", "text": "By x ...",
+                     "inline": [ { "kind": "math", "span": { "start": 3, "end": 3 },
+                                   "expr": sample_expr() } ] },
+        "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    })
+}
+
+/// A `MathContent` value (the slice-1c working aggregate).
+fn sample_math_content() -> Value {
+    json!({
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [ sample_unit() ]
+    })
+}
+
+/// An `ObjectVersion` value (the per-op snapshot).
+fn sample_object_version() -> Value {
+    json!({
+        "id": "0197675f-71f4-7000-8000-00000000000a",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "version_no": 4, "snapshot": { "object_id": "…", "revision": 4, "units": [] },
+        "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+        "created_at": "2026-06-12T00:00:00Z"
+    })
+}
+
+/// A `LinkDraft` value (object arm; optional refinement columns absent).
+fn sample_link_draft() -> Value {
+    json!({
+        "id": "0197675f-71f4-7000-8000-0000000000a3",
+        "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "target_object_id": "0197675f-71f4-7000-8000-0000000000a2",
+        "link_type": "proves", "from_content": false
     })
 }
 
@@ -362,6 +450,8 @@ pub fn conformance_json() -> String {
           "note": "dec. E — proves added; the enum is source of truth" },
         { "type": "LinkType", "value": "element_of", "valid": true,
           "note": "reserved for type inference (§14) — declared, unused" },
+        { "type": "LinkType", "value": "derived_from", "valid": true,
+          "note": "dec. — materialize copy-and-edge points back at the origin (slice 1c)" },
         { "type": "LinkType", "value": "depends_on", "valid": false,
           "note": "not in the vocabulary (uses/proves carry these meanings)" },
         { "type": "LinkStatus", "value": "active", "valid": true },
@@ -466,13 +556,14 @@ pub fn conformance_json() -> String {
         { "type": "Inline",
           "value": { "kind": "mark", "span": { "start": 0, "end": 4 }, "style": "emph" }, "valid": true },
         { "type": "Inline",
-          "value": { "kind": "math", "span": { "start": 5, "end": 8 }, "expr": sample_expr() }, "valid": true },
+          "value": { "kind": "math", "span": { "start": 5, "end": 5 }, "expr": sample_expr() }, "valid": true,
+          "note": "inline math is a zero-width atom (content in expr, not prose text)" },
         { "type": "Inline",
-          "value": { "kind": "reference", "span": { "start": 0, "end": 2 }, "text": "BW",
+          "value": { "kind": "reference", "span": { "start": 0, "end": 0 }, "text": "BW",
                      "target": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a1" } },
           "valid": true },
         { "type": "Inline",
-          "value": { "kind": "reference", "span": { "start": 0, "end": 2 }, "text": "BW" },
+          "value": { "kind": "reference", "span": { "start": 0, "end": 0 }, "text": "BW" },
           "valid": true, "note": "reference target optional (unresolved)" },
         { "type": "Inline", "value": { "kind": "mark", "span": { "start": 0, "end": 4 } }, "valid": false,
           "note": "style missing" },
@@ -659,6 +750,179 @@ pub fn conformance_json() -> String {
         { "type": "ValidationError",
           "value": { "code": "tagging_target_not_exactly_one" }, "valid": false,
           "note": "missing variant field `given`" },
+
+        // ════════════════ Slice 1c canonical operations ════════════════
+        // Shape only (serde ≡ zod). The §6.1a semantic invariants are CORE validation, not
+        // transport shape, so a shape-valid-but-invariant-violating value is "valid" here.
+
+        // ── Carriers ──
+        { "type": "OpContext",
+          "value": { "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+                     "version_id": "0197675f-71f4-7000-8000-00000000000a" }, "valid": true },
+        { "type": "OpContext",
+          "value": { "provenance_id": "0197675f-71f4-7000-8000-0000000000d1" }, "valid": false,
+          "note": "version_id missing" },
+        { "type": "MathContent", "value": sample_math_content(), "valid": true },
+        { "type": "MathContent",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000a1", "revision": 0 },
+          "valid": false, "note": "units missing (always present, [] when none)" },
+        { "type": "ExpressionIdRemap",
+          "value": { "from": "0197675f-71f4-7000-8000-0000000000c1",
+                     "to": "0197675f-71f4-7000-8000-0000000000c2" }, "valid": true },
+        { "type": "ExpressionIdRemap",
+          "value": { "from": "0197675f-71f4-7000-8000-0000000000c1" }, "valid": false,
+          "note": "to missing" },
+        { "type": "UnitIdRemap",
+          "value": { "from": "0197675f-71f4-7000-8000-0000000000b1",
+                     "to": "0197675f-71f4-7000-8000-0000000000b2" }, "valid": true },
+        { "type": "UnitIdRemap",
+          "value": { "to": "0197675f-71f4-7000-8000-0000000000b2" }, "valid": false,
+          "note": "from missing" },
+
+        // ── OpOutcome (deep composite; positive built from real sub-samples) ──
+        { "type": "OpOutcome",
+          "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
+                     "expression_id_remap": [], "version_snapshot": sample_object_version(),
+                     "new_objects": [], "taggings_propagated": [] }, "valid": true },
+        { "type": "OpOutcome",
+          "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
+                     "expression_id_remap": [], "new_objects": [], "taggings_propagated": [] },
+          "valid": false, "note": "version_snapshot missing (every op snapshots)" },
+
+        // ── SetUnitTypeInput (the Patch tri-state) ──
+        { "type": "SetUnitTypeInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+          "valid": true, "note": "unit_type absent = leave unchanged" },
+        { "type": "SetUnitTypeInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "unit_type": null }, "valid": true, "note": "null = clear to plain content" },
+        { "type": "SetUnitTypeInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "unit_type": "lemma" }, "valid": true },
+        { "type": "SetUnitTypeInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "unit_type": "group" }, "valid": false,
+          "note": "group is a content kind, never a unit type (§6.0b)" },
+        { "type": "SetUnitTypeInput", "value": { "expected_revision": 2 }, "valid": false,
+          "note": "unit_id missing" },
+
+        // ── SplitUnitInput / MergeUnitsInput ──
+        { "type": "SplitUnitInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "at": 4, "new_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "propagate_taggings": [], "new_tagging_ids": [] }, "valid": true },
+        { "type": "SplitUnitInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "new_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "propagate_taggings": [], "new_tagging_ids": [] }, "valid": false,
+          "note": "at missing" },
+        { "type": "MergeUnitsInput",
+          "value": { "expected_revision": 2, "first_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "second_unit_id": "0197675f-71f4-7000-8000-0000000000b2" }, "valid": true },
+        { "type": "MergeUnitsInput",
+          "value": { "expected_revision": 2, "first_unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+          "valid": false, "note": "second_unit_id missing" },
+
+        // ── ToggleExpressionPlacementInput / RewriteSurfaceInput ──
+        { "type": "ToggleExpressionPlacementInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+                     "display_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "trailing_unit_id": "0197675f-71f4-7000-8000-0000000000b3" }, "valid": true },
+        { "type": "ToggleExpressionPlacementInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "display_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "trailing_unit_id": "0197675f-71f4-7000-8000-0000000000b3" }, "valid": false,
+          "note": "expression_id missing" },
+        { "type": "RewriteSurfaceInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+                     "from": "x", "to": "y" }, "valid": true },
+        { "type": "RewriteSurfaceInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "expression_id": "0197675f-71f4-7000-8000-0000000000c1", "from": "x" },
+          "valid": false, "note": "to missing" },
+
+        // ── LinkDraft / InsertReferenceInput ──
+        { "type": "LinkDraft", "value": sample_link_draft(), "valid": true,
+          "note": "optional refinement columns absent" },
+        { "type": "LinkDraft",
+          "value": { "id": "0197675f-71f4-7000-8000-0000000000a3", "link_type": "related",
+                     "from_content": true }, "valid": false, "note": "source_object_id missing" },
+        { "type": "InsertReferenceInput",
+          "value": { "expected_revision": 2, "link": sample_link_draft() }, "valid": true },
+        { "type": "InsertReferenceInput", "value": { "expected_revision": 2 }, "valid": false,
+          "note": "link missing" },
+
+        // ── ResolveTarget (deliberate notation asymmetry) ──
+        { "type": "ResolveTarget",
+          "value": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a2" },
+          "valid": true },
+        { "type": "ResolveTarget",
+          "value": { "kind": "notation", "notation_id": "ntn-1" }, "valid": true,
+          "note": "notation is SHAPE-valid here (unlike OccurrenceTarget); rejected at RUNTIME with target_kind_not_available_yet (slice 2)" },
+        { "type": "ResolveTarget", "value": { "kind": "object" }, "valid": false,
+          "note": "object_id missing" },
+        { "type": "ResolveTarget", "value": { "kind": "symbol" }, "valid": false,
+          "note": "unknown kind" },
+        { "type": "ResolveOccurrenceInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "expression_id": "0197675f-71f4-7000-8000-0000000000c1", "occurrence_index": 0,
+                     "link_id": "0197675f-71f4-7000-8000-0000000000a3",
+                     "target": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a2" } },
+          "valid": true },
+        { "type": "ResolveOccurrenceInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "expression_id": "0197675f-71f4-7000-8000-0000000000c1", "occurrence_index": 0,
+                     "link_id": "0197675f-71f4-7000-8000-0000000000a3" }, "valid": false,
+          "note": "target missing" },
+
+        // ── MaterializeObjectInput ──
+        { "type": "MaterializeObjectInput",
+          "value": { "expected_revision": 2, "source_object": sample_object(),
+                     "source_content": sample_math_content(),
+                     "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "new_provenance_id": "0197675f-71f4-7000-8000-0000000000d9",
+                     "edge_link_id": "0197675f-71f4-7000-8000-0000000000a8",
+                     "expr_id_map": [], "unit_id_map": [] }, "valid": true },
+        { "type": "MaterializeObjectInput",
+          "value": { "expected_revision": 2, "source_object": sample_object(),
+                     "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "new_provenance_id": "0197675f-71f4-7000-8000-0000000000d9",
+                     "edge_link_id": "0197675f-71f4-7000-8000-0000000000a8",
+                     "expr_id_map": [], "unit_id_map": [] }, "valid": false,
+          "note": "source_content missing" },
+
+        // ── ValidationError (the new slice-1c op codes) ──
+        { "type": "ValidationError",
+          "value": { "code": "target_kind_not_available_yet", "kind": "notation" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "unit_not_found", "unit_id": "u-1" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "expression_not_found", "expression_id": "e-1" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "occurrence_out_of_range", "given": 3, "len": 1 }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "unsplittable_content_kind", "kind": "math" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "unmergeable_units", "reason": "units are not adjacent" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "id_count_mismatch", "expected": 2, "given": 1 }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "remap_incomplete", "kind": "expression" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "remap_incomplete" }, "valid": false, "note": "missing variant field `kind`" },
+        // 1c review-fix codes
+        { "type": "ValidationError",
+          "value": { "code": "split_offset_out_of_range", "given": 9, "len": 4 }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "inline_atom_not_zero_width", "kind": "math" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "content_edge_missing_anchor" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "occurrence_already_resolved" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "duplicate_source_id", "kind": "unit" }, "valid": true },
     ]);
 
     let mut out = serde_json::to_string_pretty(&cases).expect("conformance serializes");
@@ -742,6 +1006,38 @@ mod tests {
                 }
                 "ProvenanceDerivation" => {
                     serde_json::from_value::<ProvenanceDerivation>(value.clone()).is_ok()
+                }
+                // ── Slice 1c canonical operations ──
+                "MathContent" => serde_json::from_value::<MathContent>(value.clone()).is_ok(),
+                "OpContext" => serde_json::from_value::<OpContext>(value.clone()).is_ok(),
+                "OpOutcome" => serde_json::from_value::<OpOutcome>(value.clone()).is_ok(),
+                "ExpressionIdRemap" => {
+                    serde_json::from_value::<ExpressionIdRemap>(value.clone()).is_ok()
+                }
+                "UnitIdRemap" => serde_json::from_value::<UnitIdRemap>(value.clone()).is_ok(),
+                "SetUnitTypeInput" => {
+                    serde_json::from_value::<SetUnitTypeInput>(value.clone()).is_ok()
+                }
+                "SplitUnitInput" => serde_json::from_value::<SplitUnitInput>(value.clone()).is_ok(),
+                "MergeUnitsInput" => {
+                    serde_json::from_value::<MergeUnitsInput>(value.clone()).is_ok()
+                }
+                "ToggleExpressionPlacementInput" => {
+                    serde_json::from_value::<ToggleExpressionPlacementInput>(value.clone()).is_ok()
+                }
+                "RewriteSurfaceInput" => {
+                    serde_json::from_value::<RewriteSurfaceInput>(value.clone()).is_ok()
+                }
+                "LinkDraft" => serde_json::from_value::<LinkDraft>(value.clone()).is_ok(),
+                "InsertReferenceInput" => {
+                    serde_json::from_value::<InsertReferenceInput>(value.clone()).is_ok()
+                }
+                "ResolveTarget" => serde_json::from_value::<ResolveTarget>(value.clone()).is_ok(),
+                "ResolveOccurrenceInput" => {
+                    serde_json::from_value::<ResolveOccurrenceInput>(value.clone()).is_ok()
+                }
+                "MaterializeObjectInput" => {
+                    serde_json::from_value::<MaterializeObjectInput>(value.clone()).is_ok()
                 }
                 other => panic!("conformance corpus names unknown type {other}"),
             };

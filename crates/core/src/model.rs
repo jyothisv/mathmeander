@@ -256,6 +256,10 @@ pub enum LinkType {
     SpecialCaseOf,
     EquivalentTo,
     Questions,
+    /// A copied/derived object points back at its origin (§6.1b). Produced by the
+    /// `materialize_object` copy-and-edge stand-in (slice 1c); general enough to cover
+    /// future non-copy derivations (re-home vs origin-reference is slice 2, §18.5).
+    DerivedFrom,
     // Reserved for math semantic / type inference (§6.3a/§14): membership ∈, subset ⊆,
     // equality =. Declared so the vocabulary is stable; no operation produces them yet.
     ElementOf,
@@ -420,22 +424,31 @@ pub enum ReferenceTarget {
 }
 
 /// An inline element of prose (§6.0): minimal formatting, inline math, or a mention.
-/// Inline `$…$` math is an ELEMENT of prose, not its own unit (else one sentence explodes
-/// into units). Each element carries a `span` indexing into the prose `text` (the same
-/// char-offset discipline expressions use). Rich formatting waits for the editor (slice 2);
-/// MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.
+///
+/// **The span contract** — `span` always char-indexes into the prose `text`, but two shapes:
+///   • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):
+///     its surface lives in that field, NOT in the prose `text`, so there is a single source of
+///     truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and
+///     `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.
+///   • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`
+///     (formatting). It may be non-empty.
+/// Inline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into
+/// units); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The
+/// zero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),
+/// so a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor
+/// (slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Inline {
-    Mark {
-        span: CharSpan,
-        style: String,
-    },
+    /// A formatting region over prose `text` — `span` may be non-empty (the marked range).
+    Mark { span: CharSpan, style: String },
+    /// Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.
     Math {
         span: CharSpan,
         expr: MathExpression,
     },
+    /// A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.
     Reference {
         span: CharSpan,
         /// The literal reference surface ("Bolzano–Weierstrass") — kept verbatim; the

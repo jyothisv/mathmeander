@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e1136c26781aeae2c86edc86f492afd02b0c052f4566ef1b46192d682cb6013e # shrinks to (content, ids) = (MathContent { object_id: ObjectId(00000000-0000-7000-8000-000000000001), revision: 1, units: [Unit { id: UnitId(00000000-0000-7000-8000-000000000002), object_id: ObjectId(00000000-0000-7000-8000-000000000001), parent_unit_id: None, position: 0, slot: None, unit_type: None, example_kind: None, status: Rough, declared_by: User, extracted_structure: None, content: Prose { text: "ab", inline: [Math { span: CharSpan { start: 0, end: 1 }, expr: MathExpression { id: ExpressionId(00000000-0000-7000-8000-0000000017d4), surface_text: "x", surface_format: Mathmeander, input_syntax: None, original_input: "x", parse_status: Renderable, occurrences: [] } }] }, provenance_id: ProvenanceId(00000000-0000-7000-8000-000000000009) }, Unit { id: UnitId(00000000-0000-7000-8000-000000000003), object_id: ObjectId(00000000-0000-7000-8000-000000000001), parent_unit_id: None, position: 1, slot: None, unit_type: None, example_kind: None, status: Rough, declared_by: User, extracted_structure: None, content: Prose { text: "cd", inline: [] }, provenance_id: ProvenanceId(00000000-0000-7000-8000-000000000009) }] }, [ExpressionId(00000000-0000-7000-8000-0000000017d4)])

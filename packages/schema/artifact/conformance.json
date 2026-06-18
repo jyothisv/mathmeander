@@ -580,6 +580,12 @@
   },
   {
     "type": "LinkType",
+    "value": "derived_from",
+    "valid": true,
+    "note": "dec. — materialize copy-and-edge points back at the origin (slice 1c)"
+  },
+  {
+    "type": "LinkType",
     "value": "depends_on",
     "valid": false,
     "note": "not in the vocabulary (uses/proves carry these meanings)"
@@ -950,7 +956,7 @@
       "kind": "math",
       "span": {
         "start": 5,
-        "end": 8
+        "end": 5
       },
       "expr": {
         "id": "0197675f-71f4-7000-8000-0000000000c1",
@@ -962,7 +968,8 @@
         "occurrences": []
       }
     },
-    "valid": true
+    "valid": true,
+    "note": "inline math is a zero-width atom (content in expr, not prose text)"
   },
   {
     "type": "Inline",
@@ -970,7 +977,7 @@
       "kind": "reference",
       "span": {
         "start": 0,
-        "end": 2
+        "end": 0
       },
       "text": "BW",
       "target": {
@@ -986,7 +993,7 @@
       "kind": "reference",
       "span": {
         "start": 0,
-        "end": 2
+        "end": 0
       },
       "text": "BW"
     },
@@ -1472,5 +1479,665 @@
     },
     "valid": false,
     "note": "missing variant field `given`"
+  },
+  {
+    "type": "OpContext",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+      "version_id": "0197675f-71f4-7000-8000-00000000000a"
+    },
+    "valid": true
+  },
+  {
+    "type": "OpContext",
+    "value": {
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "version_id missing"
+  },
+  {
+    "type": "MathContent",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "revision": 3,
+      "units": [
+        {
+          "id": "0197675f-71f4-7000-8000-0000000000b1",
+          "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+          "parent_unit_id": null,
+          "position": 0,
+          "slot": null,
+          "type": "theorem",
+          "example_kind": null,
+          "status": "rough",
+          "declared_by": "user",
+          "extracted_structure": null,
+          "content": {
+            "kind": "prose",
+            "text": "By x ...",
+            "inline": [
+              {
+                "kind": "math",
+                "span": {
+                  "start": 3,
+                  "end": 3
+                },
+                "expr": {
+                  "id": "0197675f-71f4-7000-8000-0000000000c1",
+                  "surface_text": "a/b",
+                  "surface_format": "mathmeander",
+                  "input_syntax": "latex",
+                  "original_input": "\\frac{a}{b}",
+                  "parse_status": "renderable",
+                  "occurrences": []
+                }
+              }
+            ]
+          },
+          "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "type": "MathContent",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "revision": 0
+    },
+    "valid": false,
+    "note": "units missing (always present, [] when none)"
+  },
+  {
+    "type": "ExpressionIdRemap",
+    "value": {
+      "from": "0197675f-71f4-7000-8000-0000000000c1",
+      "to": "0197675f-71f4-7000-8000-0000000000c2"
+    },
+    "valid": true
+  },
+  {
+    "type": "ExpressionIdRemap",
+    "value": {
+      "from": "0197675f-71f4-7000-8000-0000000000c1"
+    },
+    "valid": false,
+    "note": "to missing"
+  },
+  {
+    "type": "UnitIdRemap",
+    "value": {
+      "from": "0197675f-71f4-7000-8000-0000000000b1",
+      "to": "0197675f-71f4-7000-8000-0000000000b2"
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitIdRemap",
+    "value": {
+      "to": "0197675f-71f4-7000-8000-0000000000b2"
+    },
+    "valid": false,
+    "note": "from missing"
+  },
+  {
+    "type": "OpOutcome",
+    "value": {
+      "content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "links_upserted": [],
+      "links_staled": [],
+      "expression_id_remap": [],
+      "version_snapshot": {
+        "id": "0197675f-71f4-7000-8000-00000000000a",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "version_no": 4,
+        "snapshot": {
+          "object_id": "…",
+          "revision": 4,
+          "units": []
+        },
+        "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+        "created_at": "2026-06-12T00:00:00Z"
+      },
+      "new_objects": [],
+      "taggings_propagated": []
+    },
+    "valid": true
+  },
+  {
+    "type": "OpOutcome",
+    "value": {
+      "content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "links_upserted": [],
+      "links_staled": [],
+      "expression_id_remap": [],
+      "new_objects": [],
+      "taggings_propagated": []
+    },
+    "valid": false,
+    "note": "version_snapshot missing (every op snapshots)"
+  },
+  {
+    "type": "SetUnitTypeInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": true,
+    "note": "unit_type absent = leave unchanged"
+  },
+  {
+    "type": "SetUnitTypeInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "unit_type": null
+    },
+    "valid": true,
+    "note": "null = clear to plain content"
+  },
+  {
+    "type": "SetUnitTypeInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "unit_type": "lemma"
+    },
+    "valid": true
+  },
+  {
+    "type": "SetUnitTypeInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "unit_type": "group"
+    },
+    "valid": false,
+    "note": "group is a content kind, never a unit type (§6.0b)"
+  },
+  {
+    "type": "SetUnitTypeInput",
+    "value": {
+      "expected_revision": 2
+    },
+    "valid": false,
+    "note": "unit_id missing"
+  },
+  {
+    "type": "SplitUnitInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "at": 4,
+      "new_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "propagate_taggings": [],
+      "new_tagging_ids": []
+    },
+    "valid": true
+  },
+  {
+    "type": "SplitUnitInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "new_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "propagate_taggings": [],
+      "new_tagging_ids": []
+    },
+    "valid": false,
+    "note": "at missing"
+  },
+  {
+    "type": "MergeUnitsInput",
+    "value": {
+      "expected_revision": 2,
+      "first_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "second_unit_id": "0197675f-71f4-7000-8000-0000000000b2"
+    },
+    "valid": true
+  },
+  {
+    "type": "MergeUnitsInput",
+    "value": {
+      "expected_revision": 2,
+      "first_unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": false,
+    "note": "second_unit_id missing"
+  },
+  {
+    "type": "ToggleExpressionPlacementInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "display_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "trailing_unit_id": "0197675f-71f4-7000-8000-0000000000b3"
+    },
+    "valid": true
+  },
+  {
+    "type": "ToggleExpressionPlacementInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "display_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "trailing_unit_id": "0197675f-71f4-7000-8000-0000000000b3"
+    },
+    "valid": false,
+    "note": "expression_id missing"
+  },
+  {
+    "type": "RewriteSurfaceInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "from": "x",
+      "to": "y"
+    },
+    "valid": true
+  },
+  {
+    "type": "RewriteSurfaceInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "from": "x"
+    },
+    "valid": false,
+    "note": "to missing"
+  },
+  {
+    "type": "LinkDraft",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "target_object_id": "0197675f-71f4-7000-8000-0000000000a2",
+      "link_type": "proves",
+      "from_content": false
+    },
+    "valid": true,
+    "note": "optional refinement columns absent"
+  },
+  {
+    "type": "LinkDraft",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000a3",
+      "link_type": "related",
+      "from_content": true
+    },
+    "valid": false,
+    "note": "source_object_id missing"
+  },
+  {
+    "type": "InsertReferenceInput",
+    "value": {
+      "expected_revision": 2,
+      "link": {
+        "id": "0197675f-71f4-7000-8000-0000000000a3",
+        "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "target_object_id": "0197675f-71f4-7000-8000-0000000000a2",
+        "link_type": "proves",
+        "from_content": false
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "InsertReferenceInput",
+    "value": {
+      "expected_revision": 2
+    },
+    "valid": false,
+    "note": "link missing"
+  },
+  {
+    "type": "ResolveTarget",
+    "value": {
+      "kind": "object",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a2"
+    },
+    "valid": true
+  },
+  {
+    "type": "ResolveTarget",
+    "value": {
+      "kind": "notation",
+      "notation_id": "ntn-1"
+    },
+    "valid": true,
+    "note": "notation is SHAPE-valid here (unlike OccurrenceTarget); rejected at RUNTIME with target_kind_not_available_yet (slice 2)"
+  },
+  {
+    "type": "ResolveTarget",
+    "value": {
+      "kind": "object"
+    },
+    "valid": false,
+    "note": "object_id missing"
+  },
+  {
+    "type": "ResolveTarget",
+    "value": {
+      "kind": "symbol"
+    },
+    "valid": false,
+    "note": "unknown kind"
+  },
+  {
+    "type": "ResolveOccurrenceInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "occurrence_index": 0,
+      "link_id": "0197675f-71f4-7000-8000-0000000000a3",
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a2"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "ResolveOccurrenceInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "occurrence_index": 0,
+      "link_id": "0197675f-71f4-7000-8000-0000000000a3"
+    },
+    "valid": false,
+    "note": "target missing"
+  },
+  {
+    "type": "MaterializeObjectInput",
+    "value": {
+      "expected_revision": 2,
+      "source_object": {
+        "id": "0197675f-71f4-7000-8000-000000000001",
+        "type": "note",
+        "title": "Cauchy sequences",
+        "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+        "status": "draft",
+        "schema_version": 1,
+        "revision": 1,
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "created_at": "2026-06-12T00:00:00Z",
+        "updated_at": "2026-06-12T00:00:00Z"
+      },
+      "source_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "new_provenance_id": "0197675f-71f4-7000-8000-0000000000d9",
+      "edge_link_id": "0197675f-71f4-7000-8000-0000000000a8",
+      "expr_id_map": [],
+      "unit_id_map": []
+    },
+    "valid": true
+  },
+  {
+    "type": "MaterializeObjectInput",
+    "value": {
+      "expected_revision": 2,
+      "source_object": {
+        "id": "0197675f-71f4-7000-8000-000000000001",
+        "type": "note",
+        "title": "Cauchy sequences",
+        "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+        "status": "draft",
+        "schema_version": 1,
+        "revision": 1,
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "created_at": "2026-06-12T00:00:00Z",
+        "updated_at": "2026-06-12T00:00:00Z"
+      },
+      "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "new_provenance_id": "0197675f-71f4-7000-8000-0000000000d9",
+      "edge_link_id": "0197675f-71f4-7000-8000-0000000000a8",
+      "expr_id_map": [],
+      "unit_id_map": []
+    },
+    "valid": false,
+    "note": "source_content missing"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "target_kind_not_available_yet",
+      "kind": "notation"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "unit_not_found",
+      "unit_id": "u-1"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "expression_not_found",
+      "expression_id": "e-1"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "occurrence_out_of_range",
+      "given": 3,
+      "len": 1
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "unsplittable_content_kind",
+      "kind": "math"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "unmergeable_units",
+      "reason": "units are not adjacent"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "id_count_mismatch",
+      "expected": 2,
+      "given": 1
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "remap_incomplete",
+      "kind": "expression"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "remap_incomplete"
+    },
+    "valid": false,
+    "note": "missing variant field `kind`"
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "split_offset_out_of_range",
+      "given": 9,
+      "len": 4
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "inline_atom_not_zero_width",
+      "kind": "math"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "content_edge_missing_anchor"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "occurrence_already_resolved"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "duplicate_source_id",
+      "kind": "unit"
+    },
+    "valid": true
   }
 ]

@@ -14,6 +14,22 @@ use mathmeander_core::validate::{
     create_object,
 };
 
+// ── Slice 1c canonical-operation imports (the expression-id stability matrix) ──
+use mathmeander_core::error::ValidationError;
+use mathmeander_core::ids::{ExpressionId, LinkId, ObjectVersionId, TagId, TaggingId, UnitId};
+use mathmeander_core::model::{
+    CharSpan, ContentLocator, DeclaredBy, Inline, Link, LinkStatus, LinkType, MathExpression,
+    Occurrence, OccurrenceTarget, ParseStatus, SurfaceFormat, Tagging, Unit, UnitContent,
+    UnitStatus, UnitType,
+};
+use mathmeander_core::ops::{
+    ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
+    MergeUnitsInput, OpContext, ResolveOccurrenceInput, ResolveTarget, RewriteSurfaceInput,
+    SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput, UnitIdRemap,
+    insert_reference, materialize_object, merge_units, resolve_occurrence, rewrite_surface,
+    set_unit_type, split_unit, toggle_expression_placement,
+};
+
 fn arb_uuid() -> impl Strategy<Value = Uuid> {
     any::<u128>().prop_map(Uuid::from_u128)
 }
@@ -25,6 +41,13 @@ fn arb_uuid_v7() -> impl Strategy<Value = Uuid> {
         let bits = (bits & !(0b11 << 62)) | (0b10 << 62);
         Uuid::from_u128(bits)
     })
+}
+
+/// A uuid whose version is forced to 4 — never v7. Generating directly (vs `arb_uuid()` +
+/// `prop_assume!(v != 7)`) keeps the test from exhausting proptest's global reject budget at
+/// high case counts.
+fn arb_uuid_non_v7() -> impl Strategy<Value = Uuid> {
+    any::<u128>().prop_map(|bits| Uuid::from_u128((bits & !(0xF << 76)) | (0x4 << 76)))
 }
 
 fn arb_datetime() -> impl Strategy<Value = DateTime<Utc>> {
@@ -204,8 +227,7 @@ proptest! {
 
     /// Non-v7 ids are rejected with the TYPED error (the §6.3 client-mintable check).
     #[test]
-    fn create_rejects_non_v7_ids(id in arb_uuid(), provenance_id in arb_uuid_v7(), now in arb_datetime()) {
-        prop_assume!(id.get_version_num() != 7);
+    fn create_rejects_non_v7_ids(id in arb_uuid_non_v7(), provenance_id in arb_uuid_v7(), now in arb_datetime()) {
         let input = CreateObjectInput {
             id: id.to_string(),
             object_type: "note".into(),
@@ -289,4 +311,1107 @@ fn create_enforces_origin_invariants() {
         serde_json::to_value(&err).expect("serializes")["code"],
         "type_not_producible_yet"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Slice 1c — the expression-id stability matrix (arch doc §6.3a/§13a)
+//
+// The load-bearing invariant: split/merge/toggle PRESERVE expression ids (empty remap);
+// only materialize_object mints fresh ones (a populated remap). Plus: rewrite_surface
+// re-anchors-or-stales (never wrong) while keeping `id`+`original_input` verbatim; the ops
+// are TOTAL (typed errors, never panics); and `expected_revision` is echoed, never gated.
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// A v7 uuid with a caller-chosen low payload (distinct tags ⇒ distinct ids).
+fn v7(tag: u128) -> Uuid {
+    let bits = (tag & !(0xF << 76)) | (0x7 << 76);
+    let bits = (bits & !(0b11 << 62)) | (0b10 << 62);
+    Uuid::from_u128(bits)
+}
+
+fn op_ctx() -> OpContext {
+    OpContext {
+        provenance_id: ProvenanceId(v7(100)),
+        version_id: ObjectVersionId(v7(101)),
+    }
+}
+
+fn op_now() -> DateTime<Utc> {
+    DateTime::from_timestamp(1_780_000_000, 0).expect("in range")
+}
+
+fn an_expr(id: ExpressionId, surface: &str, occurrences: Vec<Occurrence>) -> MathExpression {
+    MathExpression {
+        id,
+        surface_text: surface.to_string(),
+        surface_format: SurfaceFormat::Mathmeander,
+        input_syntax: None,
+        original_input: surface.to_string(),
+        parse_status: ParseStatus::Renderable,
+        occurrences,
+    }
+}
+
+fn a_prose_unit(
+    id: UnitId,
+    object_id: ObjectId,
+    position: u32,
+    text: &str,
+    inline: Vec<Inline>,
+) -> Unit {
+    Unit {
+        id,
+        object_id,
+        parent_unit_id: None,
+        position,
+        slot: None,
+        unit_type: None,
+        example_kind: None,
+        status: UnitStatus::Rough,
+        declared_by: DeclaredBy::User,
+        extracted_structure: None,
+        content: UnitContent::Prose {
+            text: text.to_string(),
+            inline,
+        },
+        provenance_id: ProvenanceId(v7(9)),
+    }
+}
+
+fn a_math_unit(id: UnitId, object_id: ObjectId, position: u32, expr: MathExpression) -> Unit {
+    Unit {
+        id,
+        object_id,
+        parent_unit_id: None,
+        position,
+        slot: None,
+        unit_type: None,
+        example_kind: None,
+        status: UnitStatus::Rough,
+        declared_by: DeclaredBy::User,
+        extracted_structure: None,
+        content: UnitContent::Math { expr },
+        provenance_id: ProvenanceId(v7(9)),
+    }
+}
+
+fn an_object(id: ObjectId) -> CanonicalObject {
+    CanonicalObject {
+        id,
+        object_type: ObjectType::Note,
+        title: None,
+        raw_source: None,
+        status: ObjectStatus::Draft,
+        schema_version: mathmeander_core::CURRENT_SCHEMA_VERSION,
+        revision: 1,
+        provenance_id: ProvenanceId(v7(50)),
+        space_id: SpaceId(v7(51)),
+        created_at: op_now(),
+        updated_at: op_now(),
+        extra: serde_json::Map::new(),
+    }
+}
+
+/// Every expression id in the content, sorted — the multiset the stability laws compare.
+fn expr_id_multiset(content: &MathContent) -> Vec<ExpressionId> {
+    let mut ids = Vec::new();
+    for u in &content.units {
+        match &u.content {
+            UnitContent::Math { expr } => ids.push(expr.id),
+            UnitContent::Prose { inline, .. } => {
+                for el in inline {
+                    if let Inline::Math { expr, .. } = el {
+                        ids.push(expr.id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    ids.sort_by_key(|e| e.0);
+    ids
+}
+
+fn expr_of(content: &MathContent, id: ExpressionId) -> &MathExpression {
+    for u in &content.units {
+        match &u.content {
+            UnitContent::Math { expr } if expr.id == id => return expr,
+            UnitContent::Prose { inline, .. } => {
+                for el in inline {
+                    if let Inline::Math { expr, .. } = el
+                        && expr.id == id
+                    {
+                        return expr;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("expression {id} not found in content");
+}
+
+fn err_code(e: &ValidationError) -> String {
+    serde_json::to_value(e).expect("error serializes")["code"]
+        .as_str()
+        .expect("code is a string")
+        .to_string()
+}
+
+/// Structural well-formedness after an op: per-parent positions are gap-free 0..n, every inline
+/// span is within its prose `text` bounds, and every `Math`/`Reference` atom is zero-width (the
+/// §6.0 contract). The single invariant the structural-op tests assert.
+fn assert_content_well_formed(content: &MathContent) {
+    use std::collections::HashMap;
+    // Positions: gap-free 0..n within each parent.
+    let mut by_parent: HashMap<Option<UnitId>, Vec<u32>> = HashMap::new();
+    for u in &content.units {
+        by_parent
+            .entry(u.parent_unit_id)
+            .or_default()
+            .push(u.position);
+    }
+    for (parent, mut ps) in by_parent {
+        ps.sort_unstable();
+        let expected: Vec<u32> = (0..ps.len() as u32).collect();
+        assert_eq!(
+            ps, expected,
+            "positions not gap-free 0..n under parent {parent:?}"
+        );
+    }
+    // Inline spans: in-bounds; atoms zero-width.
+    for u in &content.units {
+        if let UnitContent::Prose { text, inline } = &u.content {
+            let len = text.chars().count() as u32;
+            for el in inline {
+                let (span, is_atom) = match el {
+                    Inline::Mark { span, .. } => (*span, false),
+                    Inline::Math { span, .. } | Inline::Reference { span, .. } => (*span, true),
+                };
+                assert!(
+                    span.start <= span.end && span.end <= len,
+                    "inline span {span:?} out of bounds for text len {len}"
+                );
+                if is_atom {
+                    assert_eq!(
+                        span.start, span.end,
+                        "inline atom must be zero-width: {span:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ── Strategies ──────────────────────────────────────────────────────────────
+
+prop_compose! {
+    /// A single prose unit (id v7(2), object v7(1)) with 0..4 inline-math elements, each a
+    /// distinct expression id — plus that id list, to compare before/after a split.
+    fn arb_inline_math_prose()(
+        text_len in 1usize..12,
+        starts in proptest::collection::vec(0u32..12, 0..4),
+    ) -> (MathContent, Vec<ExpressionId>) {
+        let text: String = "abcdefghijkl".chars().take(text_len).collect();
+        let tl = text.chars().count() as u32;
+        let mut inline = Vec::new();
+        let mut ids = Vec::new();
+        for (i, raw) in starts.iter().enumerate() {
+            let eid = ExpressionId(v7(6000 + i as u128));
+            let start = (*raw).min(tl); // zero-width atom position, anywhere in [0, len]
+            ids.push(eid);
+            inline.push(Inline::Math { span: CharSpan::new(start, start), expr: an_expr(eid, "x", vec![]) });
+        }
+        let unit = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, &text, inline);
+        (MathContent { object_id: ObjectId(v7(1)), revision: 5, units: vec![unit] }, ids)
+    }
+}
+
+prop_compose! {
+    /// Two adjacent prose siblings (v7(2) @0, v7(3) @1), each with 0..3 inline maths.
+    fn arb_two_prose()(k1 in 0usize..3, k2 in 0usize..3) -> (MathContent, Vec<ExpressionId>) {
+        let mut ids = Vec::new();
+        let mut ctr = 6100u128;
+        let mut inline1 = Vec::new();
+        for _ in 0..k1 {
+            let e = ExpressionId(v7(ctr));
+            ctr += 1;
+            ids.push(e);
+            inline1.push(Inline::Math { span: CharSpan::new(0, 0), expr: an_expr(e, "x", vec![]) });
+        }
+        let mut inline2 = Vec::new();
+        for _ in 0..k2 {
+            let e = ExpressionId(v7(ctr));
+            ctr += 1;
+            ids.push(e);
+            inline2.push(Inline::Math { span: CharSpan::new(0, 0), expr: an_expr(e, "x", vec![]) });
+        }
+        let u1 = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "ab", inline1);
+        let u2 = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "cd", inline2);
+        (MathContent { object_id: ObjectId(v7(1)), revision: 1, units: vec![u1, u2] }, ids)
+    }
+}
+
+prop_compose! {
+    /// A prose unit (v7(2)) holding exactly one inline math (id v7(70)).
+    fn arb_prose_with_one_math()(text_len in 1usize..8, start in 0u32..8) -> MathContent {
+        let text: String = "abcdefgh".chars().take(text_len).collect();
+        let tl = text.chars().count() as u32;
+        let s = start.min(tl); // zero-width atom position
+        let unit = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, &text,
+            vec![Inline::Math { span: CharSpan::new(s, s), expr: an_expr(ExpressionId(v7(70)), "x", vec![]) }]);
+        MathContent { object_id: ObjectId(v7(1)), revision: 1, units: vec![unit] }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum UnitSpec {
+    Math,
+    Prose(usize),
+}
+
+fn arb_unit_spec() -> impl Strategy<Value = UnitSpec> {
+    prop_oneof![Just(UnitSpec::Math), (0usize..3).prop_map(UnitSpec::Prose)]
+}
+
+prop_compose! {
+    /// Source content for materialize: 1..5 units, unique unit ids, unique expression ids,
+    /// contiguous positions — a copy-able aggregate.
+    fn arb_source_content()(specs in proptest::collection::vec(arb_unit_spec(), 1..5)) -> MathContent {
+        let mut units = Vec::new();
+        let mut expr_ctr = 5000u128;
+        for (i, spec) in specs.iter().enumerate() {
+            let uid = UnitId(v7(1000 + i as u128));
+            let unit = match spec {
+                UnitSpec::Math => {
+                    let e = ExpressionId(v7(expr_ctr));
+                    expr_ctr += 1;
+                    a_math_unit(uid, ObjectId(v7(1)), i as u32, an_expr(e, "x", vec![]))
+                }
+                UnitSpec::Prose(k) => {
+                    let mut inline = Vec::new();
+                    for _ in 0..*k {
+                        let e = ExpressionId(v7(expr_ctr));
+                        expr_ctr += 1;
+                        inline.push(Inline::Math { span: CharSpan::new(0, 0), expr: an_expr(e, "x", vec![]) });
+                    }
+                    a_prose_unit(uid, ObjectId(v7(1)), i as u32, "ab", inline)
+                }
+            };
+            units.push(unit);
+        }
+        MathContent { object_id: ObjectId(v7(1)), revision: 1, units }
+    }
+}
+
+// ── Expression-id stability (split / merge / toggle PRESERVE; materialize MINTS) ──
+
+proptest! {
+    /// Splitting a prose unit preserves every expression id (empty remap), keeps positions
+    /// gap-free, and bumps the revision. Out-of-range `at` returns a typed error (not Ok).
+    #[test]
+    fn split_preserves_expression_ids((content, ids) in arb_inline_math_prose(), at in 0u32..15) {
+        let mut expected = ids.clone();
+        expected.sort_by_key(|e| e.0);
+        let input = SplitUnitInput {
+            expected_revision: 5,
+            unit_id: UnitId(v7(2)),
+            at,
+            new_unit_id: UnitId(v7(3)),
+            propagate_taggings: vec![],
+            new_tagging_ids: vec![],
+        };
+        if let Ok(out) = split_unit(content, &input, &op_ctx(), op_now()) {
+            prop_assert!(out.expression_id_remap.is_empty());
+            prop_assert_eq!(expr_id_multiset(&out.content), expected);
+            prop_assert_eq!(out.content.units.len(), 2);
+            assert_content_well_formed(&out.content);
+            prop_assert_eq!(out.content.revision, 6);
+        }
+    }
+
+    /// Merging two adjacent prose siblings preserves every expression id (empty remap),
+    /// collapses to one unit at position 0, and bumps the revision.
+    #[test]
+    fn merge_preserves_expression_ids((content, ids) in arb_two_prose()) {
+        let mut expected = ids.clone();
+        expected.sort_by_key(|e| e.0);
+        let input = MergeUnitsInput {
+            expected_revision: 1,
+            first_unit_id: UnitId(v7(2)),
+            second_unit_id: UnitId(v7(3)),
+        };
+        let out = merge_units(content, &[], &input, &op_ctx(), op_now()).expect("adjacent prose merge");
+        prop_assert!(out.expression_id_remap.is_empty());
+        prop_assert_eq!(expr_id_multiset(&out.content), expected);
+        prop_assert_eq!(out.content.units.len(), 1);
+        assert_content_well_formed(&out.content);
+        prop_assert_eq!(out.content.revision, 2);
+    }
+
+    /// Toggling an inline expression to display preserves its id (empty remap) and keeps
+    /// positions gap-free; the expression now lives in a standalone `Math` unit.
+    #[test]
+    fn toggle_inline_to_display_preserves_id(content in arb_prose_with_one_math()) {
+        let e = ExpressionId(v7(70));
+        let input = ToggleExpressionPlacementInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            display_unit_id: UnitId(v7(3)),
+            trailing_unit_id: UnitId(v7(4)),
+        };
+        let out = toggle_expression_placement(content, &input, &op_ctx(), op_now()).expect("toggle");
+        prop_assert!(out.expression_id_remap.is_empty());
+        prop_assert_eq!(expr_id_multiset(&out.content), vec![e]);
+        let has_display = out
+            .content
+            .units
+            .iter()
+            .any(|u| matches!(&u.content, UnitContent::Math { expr } if expr.id == e));
+        prop_assert!(has_display);
+        assert_content_well_formed(&out.content);
+    }
+
+    /// materialize_object mints FRESH expression ids: the copy's ids are disjoint from the
+    /// source's, the remap is the full applied bijection, the source is untouched, and the
+    /// copy carries exactly one `derived_from` edge back to the origin.
+    #[test]
+    fn materialize_mints_fresh_expression_ids(source in arb_source_content()) {
+        let src_exprs = expr_id_multiset(&source);
+        let expr_id_map: Vec<ExpressionIdRemap> = src_exprs
+            .iter()
+            .enumerate()
+            .map(|(i, e)| ExpressionIdRemap { from: *e, to: ExpressionId(v7(9000 + i as u128)) })
+            .collect();
+        let unit_id_map: Vec<UnitIdRemap> = source
+            .units
+            .iter()
+            .enumerate()
+            .map(|(i, u)| UnitIdRemap { from: u.id, to: UnitId(v7(8000 + i as u128)) })
+            .collect();
+        let input = MaterializeObjectInput {
+            expected_revision: 1,
+            source_object: an_object(ObjectId(v7(1))),
+            source_content: source.clone(),
+            new_object_id: ObjectId(v7(2)),
+            new_provenance_id: ProvenanceId(v7(102)),
+            edge_link_id: LinkId(v7(103)),
+            expr_id_map,
+            unit_id_map,
+        };
+        let out = materialize_object(&input, &op_ctx(), op_now()).expect("total maps");
+        let new_exprs = expr_id_multiset(&out.content);
+        for e in &new_exprs {
+            prop_assert!(!src_exprs.contains(e), "copied id collides with source");
+        }
+        prop_assert_eq!(new_exprs.len(), src_exprs.len());
+        prop_assert_eq!(out.expression_id_remap.len(), src_exprs.len());
+        for r in &out.expression_id_remap {
+            prop_assert!(src_exprs.contains(&r.from));
+            prop_assert!(!src_exprs.contains(&r.to));
+        }
+        prop_assert_eq!(&input.source_content, &source); // source untouched
+        prop_assert_eq!(out.new_objects.len(), 1);
+        prop_assert_eq!(out.links_upserted.len(), 1);
+        prop_assert_eq!(out.links_upserted[0].link_type, LinkType::DerivedFrom);
+        prop_assert_eq!(out.content.revision, 1);
+    }
+
+    /// Totality: ops return typed errors (never panic) on hostile ids / offsets / indices.
+    #[test]
+    fn ops_never_panic_on_hostile_input(uid in arb_uuid(), at in any::<u32>(), idx in any::<u32>()) {
+        let e = ExpressionId(v7(70));
+        let content = || MathContent {
+            object_id: ObjectId(v7(1)),
+            revision: 1,
+            units: vec![
+                a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "ab", vec![]),
+                a_math_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, an_expr(e, "x", vec![Occurrence { selector: CharSpan::new(0, 1), target: None }])),
+            ],
+        };
+        let _ = set_unit_type(content(), &SetUnitTypeInput { expected_revision: 1, unit_id: UnitId(uid), unit_type: Patch::Set(UnitType::Lemma) }, &op_ctx(), op_now());
+        let _ = split_unit(content(), &SplitUnitInput { expected_revision: 1, unit_id: UnitId(uid), at, new_unit_id: UnitId(v7(50)), propagate_taggings: vec![], new_tagging_ids: vec![] }, &op_ctx(), op_now());
+        let _ = resolve_occurrence(content(), &ResolveOccurrenceInput { expected_revision: 1, unit_id: UnitId(v7(3)), expression_id: e, occurrence_index: idx, link_id: LinkId(v7(80)), target: ResolveTarget::Object { object_id: ObjectId(v7(9)) } }, &op_ctx(), op_now());
+        prop_assert!(true); // reaching here ⇒ no panic
+    }
+}
+
+// ── rewrite_surface, insert_reference, resolve_occurrence, materialize (targeted) ──
+
+#[test]
+fn rewrite_surface_remaps_then_stales() {
+    let e = ExpressionId(v7(70));
+    let mk_content = || MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![a_math_unit(
+            UnitId(v7(2)),
+            ObjectId(v7(1)),
+            0,
+            an_expr(
+                e,
+                "x + y",
+                vec![Occurrence {
+                    selector: CharSpan::new(0, 1),
+                    target: None,
+                }],
+            ),
+        )],
+    };
+    let link = Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(1)),
+        target_object_id: Some(ObjectId(v7(9))),
+        target_unit_id: None,
+        unresolved_text: None,
+        target_selector: None,
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: true,
+        source_unit_id: Some(UnitId(v7(2))),
+        content_locator: Some(ContentLocator::ExpressionSpan {
+            expression_id: e,
+            start: 0,
+            end: 1,
+        }),
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    };
+
+    // Structure-preserving rename x → z: the anchor re-anchors, never stales.
+    let out = rewrite_surface(
+        mk_content(),
+        std::slice::from_ref(&link),
+        &RewriteSurfaceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            from: "x".into(),
+            to: "z".into(),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    let me = expr_of(&out.content, e);
+    assert_eq!(me.id, e, "expression id preserved");
+    assert_eq!(me.original_input, "x + y", "original_input verbatim");
+    assert_eq!(me.surface_text, "z + y");
+    assert!(out.links_staled.is_empty());
+    assert_eq!(out.links_upserted.len(), 1);
+    assert_eq!(out.links_upserted[0].status, LinkStatus::Active);
+    assert!(matches!(
+        out.links_upserted[0].content_locator,
+        Some(ContentLocator::ExpressionSpan {
+            start: 0,
+            end: 1,
+            ..
+        })
+    ));
+
+    // Rename to a keyword: `f → frac` reshapes `f(a, b)` into a built-up fraction with no head
+    // occurrence, so the head anchor can't be re-placed → the edge stales (never wrong, §6.1b).
+    let e2 = ExpressionId(v7(71));
+    let stale_content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![a_math_unit(
+            UnitId(v7(2)),
+            ObjectId(v7(1)),
+            0,
+            an_expr(
+                e2,
+                "f(a, b)",
+                vec![Occurrence {
+                    selector: CharSpan::new(0, 1),
+                    target: None,
+                }],
+            ),
+        )],
+    };
+    let stale_link = Link {
+        content_locator: Some(ContentLocator::ExpressionSpan {
+            expression_id: e2,
+            start: 0,
+            end: 1,
+        }),
+        ..link.clone()
+    };
+    let out2 = rewrite_surface(
+        stale_content,
+        std::slice::from_ref(&stale_link),
+        &RewriteSurfaceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e2,
+            from: "f".into(),
+            to: "frac".into(),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    let me2 = expr_of(&out2.content, e2);
+    assert_eq!(me2.id, e2);
+    assert_eq!(
+        me2.original_input, "f(a, b)",
+        "original_input verbatim even on stale"
+    );
+    assert_eq!(out2.links_staled, vec![LinkId(v7(80))]);
+    assert!(
+        out2.links_upserted.is_empty(),
+        "a staled edge is reported in links_staled only, never also upserted"
+    );
+}
+
+#[test]
+fn toggle_display_to_inline_preserves_id() {
+    let e = ExpressionId(v7(70));
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![
+            a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "ab", vec![]),
+            a_math_unit(
+                UnitId(v7(3)),
+                ObjectId(v7(1)),
+                1,
+                an_expr(e, "x + y", vec![]),
+            ),
+        ],
+    };
+    let out = toggle_expression_placement(
+        content,
+        &ToggleExpressionPlacementInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(3)),
+            expression_id: e,
+            display_unit_id: UnitId(v7(9)),
+            trailing_unit_id: UnitId(v7(10)),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert!(out.expression_id_remap.is_empty());
+    assert_eq!(expr_id_multiset(&out.content), vec![e]);
+    assert_eq!(out.content.units.len(), 1);
+    assert!(matches!(
+        &out.content.units[0].content,
+        UnitContent::Prose { inline, .. } if inline.iter().any(|el| matches!(el, Inline::Math { expr, .. } if expr.id == e))
+    ));
+    assert_content_well_formed(&out.content);
+}
+
+#[test]
+fn expected_revision_is_echoed_not_gated() {
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 7,
+        units: vec![a_prose_unit(
+            UnitId(v7(2)),
+            ObjectId(v7(1)),
+            0,
+            "ab",
+            vec![],
+        )],
+    };
+    let mk = |rev| SetUnitTypeInput {
+        expected_revision: rev,
+        unit_id: UnitId(v7(2)),
+        unit_type: Patch::Set(UnitType::Lemma),
+    };
+    let a = set_unit_type(content.clone(), &mk(0), &op_ctx(), op_now()).unwrap();
+    let b = set_unit_type(content.clone(), &mk(u32::MAX), &op_ctx(), op_now()).unwrap();
+    // Identical delta regardless of expected_revision; the new revision derives from content.
+    assert_eq!(a.content, b.content);
+    assert_eq!(a.content.revision, 8);
+}
+
+#[test]
+fn set_unit_type_clears_orphaned_example_kind() {
+    let mut unit = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "ab", vec![]);
+    unit.unit_type = Some(UnitType::Example);
+    unit.example_kind = Some(mathmeander_core::model::ExampleKind::Worked);
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+    let out = set_unit_type(
+        content,
+        &SetUnitTypeInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            unit_type: Patch::Set(UnitType::Lemma),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    // type is no longer `example` ⇒ example_kind is cleared (no orphan, §6.0b).
+    assert_eq!(out.content.units[0].unit_type, Some(UnitType::Lemma));
+    assert_eq!(out.content.units[0].example_kind, None);
+}
+
+#[test]
+fn insert_reference_enforces_link_invariants() {
+    let content = || MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![],
+    };
+    // Valid: a deliberate edge with an object target.
+    let out = insert_reference(
+        content(),
+        &InsertReferenceInput {
+            expected_revision: 1,
+            link: LinkDraft {
+                id: LinkId(v7(80)),
+                source_object_id: ObjectId(v7(1)),
+                target_object_id: Some(ObjectId(v7(9))),
+                target_unit_id: None,
+                unresolved_text: None,
+                target_selector: None,
+                link_type: LinkType::Proves,
+                from_content: false,
+                source_unit_id: None,
+                content_locator: None,
+            },
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("valid link");
+    assert_eq!(out.links_upserted.len(), 1);
+    assert_eq!(out.links_upserted[0].status, LinkStatus::Active);
+
+    // Invalid: a typed edge (proves) with no object target (only unresolved_text).
+    let err = insert_reference(
+        content(),
+        &InsertReferenceInput {
+            expected_revision: 1,
+            link: LinkDraft {
+                id: LinkId(v7(81)),
+                source_object_id: ObjectId(v7(1)),
+                target_object_id: None,
+                target_unit_id: None,
+                unresolved_text: Some("[[X]]".into()),
+                target_selector: None,
+                link_type: LinkType::Proves,
+                from_content: true,
+                source_unit_id: None,
+                content_locator: None,
+            },
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "typed_edge_requires_object_target");
+}
+
+#[test]
+fn resolve_occurrence_object_notation_and_bounds() {
+    let e = ExpressionId(v7(70));
+    let mk = || MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![a_math_unit(
+            UnitId(v7(2)),
+            ObjectId(v7(1)),
+            0,
+            an_expr(
+                e,
+                "x",
+                vec![Occurrence {
+                    selector: CharSpan::new(0, 1),
+                    target: None,
+                }],
+            ),
+        )],
+    };
+    // Object arm: resolves the occurrence + emits the edge.
+    let out = resolve_occurrence(
+        mk(),
+        &ResolveOccurrenceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            occurrence_index: 0,
+            link_id: LinkId(v7(80)),
+            target: ResolveTarget::Object {
+                object_id: ObjectId(v7(9)),
+            },
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_eq!(out.links_upserted.len(), 1);
+    let me = expr_of(&out.content, e);
+    assert!(
+        matches!(me.occurrences[0].target, Some(OccurrenceTarget::Object { object_id }) if object_id == ObjectId(v7(9)))
+    );
+
+    // Notation arm: not available yet.
+    let err = resolve_occurrence(
+        mk(),
+        &ResolveOccurrenceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            occurrence_index: 0,
+            link_id: LinkId(v7(80)),
+            target: ResolveTarget::Notation {
+                notation_id: "n".into(),
+            },
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "target_kind_not_available_yet");
+
+    // Out-of-range occurrence index.
+    let err2 = resolve_occurrence(
+        mk(),
+        &ResolveOccurrenceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            occurrence_index: 5,
+            link_id: LinkId(v7(80)),
+            target: ResolveTarget::Object {
+                object_id: ObjectId(v7(9)),
+            },
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err2), "occurrence_out_of_range");
+}
+
+#[test]
+fn materialize_requires_total_id_maps() {
+    let e = ExpressionId(v7(70));
+    let source = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![a_math_unit(
+            UnitId(v7(2)),
+            ObjectId(v7(1)),
+            0,
+            an_expr(e, "x", vec![]),
+        )],
+    };
+    // Unit map present, expression map EMPTY ⇒ RemapIncomplete (copying would alias ids).
+    let input = MaterializeObjectInput {
+        expected_revision: 1,
+        source_object: an_object(ObjectId(v7(1))),
+        source_content: source,
+        new_object_id: ObjectId(v7(2)),
+        new_provenance_id: ProvenanceId(v7(102)),
+        edge_link_id: LinkId(v7(103)),
+        expr_id_map: vec![],
+        unit_id_map: vec![UnitIdRemap {
+            from: UnitId(v7(2)),
+            to: UnitId(v7(50)),
+        }],
+    };
+    let err = materialize_object(&input, &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "remap_incomplete");
+}
+
+// ── Inline-atom contract coverage (the review's blind-spot class) ──
+
+#[test]
+fn split_through_a_mark_splits_the_mark() {
+    // Prose "abcdef" with a bold Mark over [1,5); splitting at 3 splits the mark into
+    // Mark[1,3) (left) + Mark[0,2) (right) — lossless, total, no straddle error.
+    let unit = a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "abcdef",
+        vec![Inline::Mark {
+            span: CharSpan::new(1, 5),
+            style: "emph".into(),
+        }],
+    );
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+    let out = split_unit(
+        content,
+        &SplitUnitInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            at: 3,
+            new_unit_id: UnitId(v7(3)),
+            propagate_taggings: vec![],
+            new_tagging_ids: vec![],
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_eq!(out.content.units.len(), 2);
+    assert_content_well_formed(&out.content);
+    // units[0] is the left half (inserted second goes at idx+1), units[1] the right.
+    match &out.content.units[0].content {
+        UnitContent::Prose { text, inline } => {
+            assert_eq!(text.as_str(), "abc");
+            assert_eq!(inline.len(), 1);
+            assert!(
+                matches!(&inline[0], Inline::Mark { span, .. } if *span == CharSpan::new(1, 3))
+            );
+        }
+        _ => panic!("left not prose"),
+    }
+    match &out.content.units[1].content {
+        UnitContent::Prose { text, inline } => {
+            assert_eq!(text.as_str(), "def");
+            assert_eq!(inline.len(), 1);
+            assert!(
+                matches!(&inline[0], Inline::Mark { span, .. } if *span == CharSpan::new(0, 2))
+            );
+        }
+        _ => panic!("right not prose"),
+    }
+}
+
+#[test]
+fn rewrite_on_inline_math_leaves_prose_intact() {
+    // The contract dissolves "Blocker 1": rewriting an inline-math atom's surface changes only
+    // the expression — the enclosing prose text and ALL inline spans are untouched (the atom is
+    // zero-width, so the prose char sequence is unaffected even when the surface grows).
+    let e = ExpressionId(v7(70));
+    let unit = a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "see  here",
+        vec![
+            Inline::Mark {
+                span: CharSpan::new(0, 3),
+                style: "emph".into(),
+            },
+            Inline::Math {
+                span: CharSpan::new(4, 4),
+                expr: an_expr(e, "x + y", vec![]),
+            },
+        ],
+    );
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+    let out = rewrite_surface(
+        content,
+        &[],
+        &RewriteSurfaceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            from: "x".into(),
+            to: "longername".into(),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    match &out.content.units[0].content {
+        UnitContent::Prose { text, inline } => {
+            assert_eq!(text.as_str(), "see  here", "prose text untouched");
+            assert_eq!(inline.len(), 2);
+            assert!(
+                matches!(&inline[0], Inline::Mark { span, .. } if *span == CharSpan::new(0, 3))
+            );
+            match &inline[1] {
+                Inline::Math { span, expr } => {
+                    assert_eq!(*span, CharSpan::new(4, 4), "enclosing atom span untouched");
+                    assert_eq!(expr.id, e, "expression id preserved");
+                    assert_eq!(expr.original_input, "x + y", "original_input verbatim");
+                    assert_eq!(expr.surface_text, "longername + y", "surface updated");
+                }
+                _ => panic!("expected inline math"),
+            }
+        }
+        _ => panic!("expected prose"),
+    }
+    assert_content_well_formed(&out.content);
+}
+
+#[test]
+fn toggle_promote_then_demote_round_trips() {
+    // Mid-text inline math: promote splits the prose around the atom into [before, display, after];
+    // demote joins them back and reinserts the atom at the join — reversible by construction.
+    let e = ExpressionId(v7(70));
+    let unit = a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "abcd",
+        vec![Inline::Math {
+            span: CharSpan::new(2, 2),
+            expr: an_expr(e, "x + y", vec![]),
+        }],
+    );
+    let start = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+
+    let promoted = toggle_expression_placement(
+        start,
+        &ToggleExpressionPlacementInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            display_unit_id: UnitId(v7(3)),
+            trailing_unit_id: UnitId(v7(4)),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_eq!(promoted.content.units.len(), 3, "before / display / after");
+    assert_content_well_formed(&promoted.content);
+    assert_eq!(expr_id_multiset(&promoted.content), vec![e]);
+    assert!(
+        promoted
+            .content
+            .units
+            .iter()
+            .any(|u| matches!(&u.content, UnitContent::Math { expr } if expr.id == e))
+    );
+
+    let demoted = toggle_expression_placement(
+        promoted.content,
+        &ToggleExpressionPlacementInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(3)), // the display math unit
+            expression_id: e,
+            display_unit_id: UnitId(v7(8)), // unused on demote
+            trailing_unit_id: UnitId(v7(9)),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_content_well_formed(&demoted.content);
+    assert_eq!(expr_id_multiset(&demoted.content), vec![e]);
+    assert_eq!(
+        demoted.content.units.len(),
+        1,
+        "joined back to one prose unit"
+    );
+    match &demoted.content.units[0].content {
+        UnitContent::Prose { text, inline } => {
+            assert_eq!(text.as_str(), "abcd", "before+after rejoined");
+            assert_eq!(inline.len(), 1);
+            assert!(
+                matches!(&inline[0], Inline::Math { span, expr } if *span == CharSpan::new(2, 2) && expr.id == e),
+                "atom reinserted at the join, id preserved"
+            );
+        }
+        _ => panic!("expected prose"),
+    }
+}
+
+#[test]
+fn split_propagates_taggings_to_the_new_unit() {
+    let unit = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "abcd", vec![]);
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+    let tagging = Tagging {
+        id: TaggingId(v7(200)),
+        tag_id: TagId(v7(201)),
+        tagged_object_id: None,
+        tagged_unit_id: Some(UnitId(v7(2))),
+        created_at: op_now(),
+    };
+    let out = split_unit(
+        content,
+        &SplitUnitInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            at: 2,
+            new_unit_id: UnitId(v7(3)),
+            propagate_taggings: vec![tagging],
+            new_tagging_ids: vec![TaggingId(v7(202))],
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_eq!(out.taggings_propagated.len(), 1);
+    let t = &out.taggings_propagated[0];
+    assert_eq!(t.id, TaggingId(v7(202)), "re-id'd from new_tagging_ids");
+    assert_eq!(t.tag_id, TagId(v7(201)), "same tag");
+    assert_eq!(
+        t.tagged_unit_id,
+        Some(UnitId(v7(3))),
+        "copied onto the new unit"
+    );
+    assert_eq!(t.tagged_object_id, None);
+}
+
+#[test]
+fn split_renumbers_per_parent() {
+    // A top-level unit (v7(2)) and two of its children; splitting the first child renumbers ONLY
+    // the children (per-parent gap-free), leaving the top-level unit's position alone.
+    let parent_id = UnitId(v7(2));
+    let mut child_a = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 0, "abcd", vec![]);
+    child_a.parent_unit_id = Some(parent_id);
+    let mut child_b = a_prose_unit(UnitId(v7(4)), ObjectId(v7(1)), 1, "wxyz", vec![]);
+    child_b.parent_unit_id = Some(parent_id);
+    let parent = a_prose_unit(parent_id, ObjectId(v7(1)), 0, "parent", vec![]);
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![parent, child_a, child_b],
+    };
+    let out = split_unit(
+        content,
+        &SplitUnitInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(3)),
+            at: 2,
+            new_unit_id: UnitId(v7(5)),
+            propagate_taggings: vec![],
+            new_tagging_ids: vec![],
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    assert_content_well_formed(&out.content); // per-parent gap-free 0..n
+    let p = out
+        .content
+        .units
+        .iter()
+        .find(|u| u.id == parent_id)
+        .unwrap();
+    assert_eq!(p.parent_unit_id, None);
+    assert_eq!(p.position, 0, "top-level parent position unaffected");
+    let mut child_pos: Vec<u32> = out
+        .content
+        .units
+        .iter()
+        .filter(|u| u.parent_unit_id == Some(parent_id))
+        .map(|u| u.position)
+        .collect();
+    child_pos.sort_unstable();
+    assert_eq!(child_pos, vec![0, 1, 2], "three children renumbered 0..3");
 }
