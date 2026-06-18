@@ -14,9 +14,9 @@ use mathmeander_core::mathpack::{
     MathpackGraph, MathpackMeta, import_mathpack, serialize_mathpack,
 };
 use mathmeander_core::model::{
-    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, DeclaredBy, Inline, Link, LinkStatus,
-    LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence, Origin,
-    ParseStatus, Provenance, SurfaceFormat, Tagging, Unit, UnitContent, UnitStatus,
+    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, DeclaredBy, EmbedTarget, Inline, Link,
+    LinkStatus, LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
+    Origin, ParseStatus, Provenance, SurfaceFormat, Tagging, Unit, UnitContent, UnitStatus,
 };
 use mathmeander_core::ops::MathContent;
 
@@ -308,6 +308,52 @@ fn import_rejects_width_bearing_inline_atom() {
     });
     let err = import_mathpack(value).expect_err("rejected");
     assert_eq!(err_code(&err), "inline_atom_not_zero_width");
+}
+
+/// Slice 2a: a re-homed host carries `Embed{target: Object}`; the pack's transitive closure must
+/// include that object. There is no SQL FK for embed targets (they live in content), so the core
+/// owns this referential check on the untrusted import path (§9.y/§6.5 — a gone embed target is
+/// never silent).
+#[test]
+fn import_rejects_embed_target_missing() {
+    let object = an_object(0xa1);
+    let mut embed = a_prose_unit(0xb1, object.id, 0, "");
+    embed.content = UnitContent::Embed {
+        target: EmbedTarget::Object {
+            object_id: ObjectId(v7(0xdead)), // absent from the pack
+        },
+    };
+    let content = MathContent {
+        object_id: object.id,
+        revision: object.revision,
+        units: vec![embed],
+    };
+    let value = pack_value(graph_with(vec![object], vec![content]));
+    let err = import_mathpack(value).expect_err("rejected");
+    assert_eq!(err_code(&err), "embed_target_missing");
+}
+
+/// Slice 2a: re-home MOVES a unit (it must leave its old object). A pack with the same unit id in
+/// two objects' content violates one home (§6.0b) — SQL's composite FK can't catch it across a whole
+/// pack, so the core does.
+#[test]
+fn import_rejects_unit_in_two_objects() {
+    let obj_a = an_object(0xa1);
+    let obj_b = an_object(0xa2);
+    // Same unit id (0xb1) appears under both objects.
+    let content_a = MathContent {
+        object_id: obj_a.id,
+        revision: obj_a.revision,
+        units: vec![a_prose_unit(0xb1, obj_a.id, 0, "x")],
+    };
+    let content_b = MathContent {
+        object_id: obj_b.id,
+        revision: obj_b.revision,
+        units: vec![a_prose_unit(0xb1, obj_b.id, 0, "x")],
+    };
+    let value = pack_value(graph_with(vec![obj_a, obj_b], vec![content_a, content_b]));
+    let err = import_mathpack(value).expect_err("rejected");
+    assert_eq!(err_code(&err), "unit_in_multiple_objects");
 }
 
 /// A link setting BOTH target arms (object + unresolved_text) violates exactly-one-target.

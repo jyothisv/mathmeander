@@ -32,10 +32,10 @@ use crate::model::{
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
-    ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
-    MergeUnitsInput, OpContext, OpOutcome, ResolveOccurrenceInput, ResolveTarget,
-    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
-    UnitIdRemap,
+    DissolveObjectInput, ExpressionIdRemap, InsertReferenceInput, LinkDraft,
+    MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput,
+    ResolveOccurrenceInput, ResolveTarget, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ToggleExpressionPlacementInput, UnitIdRemap,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
@@ -141,6 +141,14 @@ pub fn artifact_json() -> String {
     defs.insert(
         "MaterializeObjectInput",
         inline_schema_for::<MaterializeObjectInput>(),
+    );
+    defs.insert(
+        "RehomeSubtreeInput",
+        inline_schema_for::<RehomeSubtreeInput>(),
+    );
+    defs.insert(
+        "DissolveObjectInput",
+        inline_schema_for::<DissolveObjectInput>(),
     );
     // Slice 1d projections + packaging (§6.3b numbering, §10 .mathpack)
     defs.insert("NumberingPolicy", inline_schema_for::<NumberingPolicy>());
@@ -841,13 +849,27 @@ pub fn conformance_json() -> String {
           "note": "from missing" },
 
         // ── OpOutcome (deep composite; positive built from real sub-samples) ──
+        // Single-object write: the §2a two-object channels are null/empty (the real wire shape —
+        // `host_content` serializes as null for `None`, never omitted).
         { "type": "OpOutcome",
           "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
                      "expression_id_remap": [], "version_snapshot": sample_object_version(),
-                     "new_objects": [], "taggings_propagated": [] }, "valid": true },
+                     "new_objects": [], "taggings_propagated": [],
+                     "host_content": null, "host_version_snapshot": null, "objects_removed": [] },
+          "valid": true },
+        // Two-object write (`rehome_subtree`): the host channels are populated alongside the new
+        // object's `content`/`version_snapshot`.
         { "type": "OpOutcome",
           "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
-                     "expression_id_remap": [], "new_objects": [], "taggings_propagated": [] },
+                     "expression_id_remap": [], "version_snapshot": sample_object_version(),
+                     "new_objects": [], "taggings_propagated": [],
+                     "host_content": sample_math_content(),
+                     "host_version_snapshot": sample_object_version(), "objects_removed": [] },
+          "valid": true },
+        { "type": "OpOutcome",
+          "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
+                     "expression_id_remap": [], "new_objects": [], "taggings_propagated": [],
+                     "objects_removed": [] },
           "valid": false, "note": "version_snapshot missing (every op snapshots)" },
 
         // ── SetUnitTypeInput (the Patch tri-state) ──
@@ -954,6 +976,39 @@ pub fn conformance_json() -> String {
                      "expr_id_map": [], "unit_id_map": [] }, "valid": false,
           "note": "source_content missing" },
 
+        // ── RehomeSubtreeInput / DissolveObjectInput (slice 2a — the §9.y ownership ops) ──
+        { "type": "RehomeSubtreeInput",
+          "value": { "expected_revision": 1, "host_object": sample_object(),
+                     "host_content": sample_math_content(),
+                     "subtree_root": "0197675f-71f4-7000-8000-0000000000b1",
+                     "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "type": "theorem",
+                     "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+                     "new_version_id": "0197675f-71f4-7000-8000-0000000000c9" }, "valid": true },
+        { "type": "RehomeSubtreeInput",
+          "value": { "expected_revision": 1, "host_object": sample_object(),
+                     "host_content": sample_math_content(),
+                     "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "type": "theorem",
+                     "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+                     "new_version_id": "0197675f-71f4-7000-8000-0000000000c9" }, "valid": false,
+          "note": "subtree_root missing" },
+        { "type": "DissolveObjectInput",
+          "value": { "expected_revision": 2, "expected_dissolved_revision": 1,
+                     "host_content": sample_math_content(),
+                     "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+                     "dissolved_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "dissolved_content": sample_math_content(),
+                     "inbound_references": [] }, "valid": true },
+        { "type": "DissolveObjectInput",
+          "value": { "expected_revision": 2,
+                     "host_content": sample_math_content(),
+                     "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+                     "dissolved_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+                     "dissolved_content": sample_math_content(),
+                     "inbound_references": [] }, "valid": false,
+          "note": "expected_dissolved_revision missing (the second gate)" },
+
         // ── ValidationError (the new slice-1c op codes) ──
         { "type": "ValidationError",
           "value": { "code": "target_kind_not_available_yet", "kind": "notation" }, "valid": true },
@@ -990,6 +1045,19 @@ pub fn conformance_json() -> String {
           "value": { "code": "occurrence_already_resolved" }, "valid": true },
         { "type": "ValidationError",
           "value": { "code": "duplicate_source_id", "kind": "unit" }, "valid": true },
+        // 2a ownership codes (§9.y)
+        { "type": "ValidationError",
+          "value": { "code": "dissolution_blocked", "references": ["0197675f-71f4-7000-8000-0000000000a8"] },
+          "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "embed_target_missing", "object_id": "0197675f-71f4-7000-8000-0000000000a9" },
+          "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "unit_in_multiple_objects", "unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+          "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "dissolve_input_inconsistent", "reason": "dissolved_content.object_id mismatch" },
+          "valid": true },
 
         // ════════════════ Slice 1d — numbering + .mathpack ════════════════
         // Shape only (serde ≡ zod). Semantic facts (counts matching the graph, name-beats-number
@@ -1081,7 +1149,8 @@ pub fn conformance_json() -> String {
           "value": { "ok": true, "value": { "content": sample_math_content(), "links_upserted": [],
                      "links_staled": [], "expression_id_remap": [],
                      "version_snapshot": sample_object_version(), "new_objects": [],
-                     "taggings_propagated": [] } }, "valid": true },
+                     "taggings_propagated": [], "host_content": null,
+                     "host_version_snapshot": null, "objects_removed": [] } }, "valid": true },
         { "type": "OpOutcomeResult",
           "value": { "ok": false,
                      "error": { "kind": "validation", "code": "unit_not_found", "unit_id": "u-1" } },
@@ -1227,6 +1296,12 @@ mod tests {
                 }
                 "MaterializeObjectInput" => {
                     serde_json::from_value::<MaterializeObjectInput>(value.clone()).is_ok()
+                }
+                "RehomeSubtreeInput" => {
+                    serde_json::from_value::<RehomeSubtreeInput>(value.clone()).is_ok()
+                }
+                "DissolveObjectInput" => {
+                    serde_json::from_value::<DissolveObjectInput>(value.clone()).is_ok()
                 }
                 // ── Slice 1d numbering + .mathpack ──
                 "NumberingPolicy" => {

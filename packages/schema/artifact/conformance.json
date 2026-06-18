@@ -1650,7 +1650,128 @@
         "created_at": "2026-06-12T00:00:00Z"
       },
       "new_objects": [],
-      "taggings_propagated": []
+      "taggings_propagated": [],
+      "host_content": null,
+      "host_version_snapshot": null,
+      "objects_removed": []
+    },
+    "valid": true
+  },
+  {
+    "type": "OpOutcome",
+    "value": {
+      "content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "links_upserted": [],
+      "links_staled": [],
+      "expression_id_remap": [],
+      "version_snapshot": {
+        "id": "0197675f-71f4-7000-8000-00000000000a",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "version_no": 4,
+        "snapshot": {
+          "object_id": "…",
+          "revision": 4,
+          "units": []
+        },
+        "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+        "created_at": "2026-06-12T00:00:00Z"
+      },
+      "new_objects": [],
+      "taggings_propagated": [],
+      "host_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "host_version_snapshot": {
+        "id": "0197675f-71f4-7000-8000-00000000000a",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "version_no": 4,
+        "snapshot": {
+          "object_id": "…",
+          "revision": 4,
+          "units": []
+        },
+        "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+        "created_at": "2026-06-12T00:00:00Z"
+      },
+      "objects_removed": []
     },
     "valid": true
   },
@@ -1702,7 +1823,8 @@
       "links_staled": [],
       "expression_id_remap": [],
       "new_objects": [],
-      "taggings_propagated": []
+      "taggings_propagated": [],
+      "objects_removed": []
     },
     "valid": false,
     "note": "version_snapshot missing (every op snapshots)"
@@ -2036,6 +2158,324 @@
     "note": "source_content missing"
   },
   {
+    "type": "RehomeSubtreeInput",
+    "value": {
+      "expected_revision": 1,
+      "host_object": {
+        "id": "0197675f-71f4-7000-8000-000000000001",
+        "type": "note",
+        "title": "Cauchy sequences",
+        "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+        "status": "draft",
+        "schema_version": 1,
+        "revision": 1,
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "created_at": "2026-06-12T00:00:00Z",
+        "updated_at": "2026-06-12T00:00:00Z"
+      },
+      "host_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "subtree_root": "0197675f-71f4-7000-8000-0000000000b1",
+      "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "type": "theorem",
+      "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+      "new_version_id": "0197675f-71f4-7000-8000-0000000000c9"
+    },
+    "valid": true
+  },
+  {
+    "type": "RehomeSubtreeInput",
+    "value": {
+      "expected_revision": 1,
+      "host_object": {
+        "id": "0197675f-71f4-7000-8000-000000000001",
+        "type": "note",
+        "title": "Cauchy sequences",
+        "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+        "status": "draft",
+        "schema_version": 1,
+        "revision": 1,
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "created_at": "2026-06-12T00:00:00Z",
+        "updated_at": "2026-06-12T00:00:00Z"
+      },
+      "host_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "new_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "type": "theorem",
+      "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+      "new_version_id": "0197675f-71f4-7000-8000-0000000000c9"
+    },
+    "valid": false,
+    "note": "subtree_root missing"
+  },
+  {
+    "type": "DissolveObjectInput",
+    "value": {
+      "expected_revision": 2,
+      "expected_dissolved_revision": 1,
+      "host_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+      "dissolved_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "dissolved_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "inbound_references": []
+    },
+    "valid": true
+  },
+  {
+    "type": "DissolveObjectInput",
+    "value": {
+      "expected_revision": 2,
+      "host_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
+      "dissolved_object_id": "0197675f-71f4-7000-8000-0000000000a9",
+      "dissolved_content": {
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "revision": 3,
+        "units": [
+          {
+            "id": "0197675f-71f4-7000-8000-0000000000b1",
+            "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+            "parent_unit_id": null,
+            "position": 0,
+            "slot": null,
+            "type": "theorem",
+            "example_kind": null,
+            "status": "rough",
+            "declared_by": "user",
+            "extracted_structure": null,
+            "content": {
+              "kind": "prose",
+              "text": "By x ...",
+              "inline": [
+                {
+                  "kind": "math",
+                  "span": {
+                    "start": 3,
+                    "end": 3
+                  },
+                  "expr": {
+                    "id": "0197675f-71f4-7000-8000-0000000000c1",
+                    "surface_text": "a/b",
+                    "surface_format": "mathmeander",
+                    "input_syntax": "latex",
+                    "original_input": "\\frac{a}{b}",
+                    "parse_status": "renderable",
+                    "occurrences": []
+                  }
+                }
+              ]
+            },
+            "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+          }
+        ]
+      },
+      "inbound_references": []
+    },
+    "valid": false,
+    "note": "expected_dissolved_revision missing (the second gate)"
+  },
+  {
     "type": "ValidationError",
     "value": {
       "code": "target_kind_not_available_yet",
@@ -2165,6 +2605,40 @@
     "value": {
       "code": "duplicate_source_id",
       "kind": "unit"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "dissolution_blocked",
+      "references": [
+        "0197675f-71f4-7000-8000-0000000000a8"
+      ]
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "embed_target_missing",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a9"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "unit_in_multiple_objects",
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "dissolve_input_inconsistent",
+      "reason": "dissolved_content.object_id mismatch"
     },
     "valid": true
   },
@@ -2878,7 +3352,10 @@
           "created_at": "2026-06-12T00:00:00Z"
         },
         "new_objects": [],
-        "taggings_propagated": []
+        "taggings_propagated": [],
+        "host_content": null,
+        "host_version_snapshot": null,
+        "objects_removed": []
       }
     },
     "valid": true

@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::error::{CoreError, ValidationError};
 use crate::ids::SpaceId;
 use crate::model::{
-    Alias, CanonicalObject, DefinitionDetail, Handle, Link, ObjectVersion, Provenance,
+    Alias, CanonicalObject, DefinitionDetail, EmbedTarget, Handle, Link, ObjectVersion, Provenance,
     ProvenanceDerivation, Tag, Tagging, UnitContent,
 };
 use crate::ops::MathContent;
@@ -282,17 +282,38 @@ fn derive_counts(graph: &MathpackGraph) -> MathpackCounts {
 ///
 /// Scope: INTRA-ROW invariants only — full inline well-formedness (in-bounds spans + zero-width
 /// atoms, `validate_prose_inline`), exactly-one link / tagging target + content-edge anchors
-/// (`validate_link` / `validate_tagging`). REFERENTIAL integrity — does a `target_unit_id` /
-/// `provenance_id` / `content.object_id` resolve WITHIN the pack — is the database's job at INSERT
-/// (composite FKs, Pass 2), not here.
+/// (`validate_link` / `validate_tagging`). Most REFERENTIAL integrity — does a `target_unit_id` /
+/// `provenance_id` resolve WITHIN the pack — is the database's job at INSERT (composite FKs, Pass 2),
+/// not here. The TWO exceptions the core owns, because SQL has no FK for them (§6.1a/§9.y): an
+/// `Embed{target: Object}` target must resolve within the pack (embed targets live in content, not a
+/// typed FK column), and **one home (§6.0b)** — a unit belongs to exactly one object's content (a
+/// re-homed unit must not linger in two objects). Refuses loudly (§2.2).
 pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
+    let object_ids: std::collections::HashSet<_> = graph.objects.iter().map(|o| o.id).collect();
+    let mut seen_units: std::collections::HashSet<_> = std::collections::HashSet::new();
     for content in &graph.content {
         for unit in &content.units {
+            // One home (§6.0b): a unit lives in exactly one object's content.
+            if !seen_units.insert(unit.id) {
+                return Err(ValidationError::UnitInMultipleObjects {
+                    unit_id: unit.id.to_string(),
+                }
+                .into());
+            }
             match &unit.content {
                 // Prose: outer inline spans + zero-width atoms + each inline math's occurrences.
                 UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
                 // Display math: the placed expression's occurrence selectors.
                 UnitContent::Math { expr } => validate_expression(expr)?,
+                // Embed: its object target must be present in the pack (no SQL FK for it, §9.y).
+                UnitContent::Embed {
+                    target: EmbedTarget::Object { object_id },
+                } if !object_ids.contains(object_id) => {
+                    return Err(ValidationError::EmbedTargetMissing {
+                        object_id: object_id.to_string(),
+                    }
+                    .into());
+                }
                 _ => {}
             }
         }

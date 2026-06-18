@@ -1,15 +1,18 @@
-//! Unit-level canonical operations (arch doc §6.0a/§6.3a) — slice 1c. The PURE transforms
+//! Unit-level canonical operations (arch doc §6.0a/§6.3a) — slices 1c/2a. The PURE transforms
 //! over an object's content: split/merge units, set a unit's type, toggle an expression
 //! between inline and display, rewrite a surface (re-anchoring edges), insert/resolve
-//! references, and materialize a copy. Each is `fn(content, …) -> Result<OpOutcome,
-//! ValidationError>`; time and freshly-minted ids are PASSED IN (the core mints nothing,
-//! reads no clock, §5).
+//! references, COPY an object, and the §9.y greedy-capture pair `rehome_subtree`/`dissolve_object`.
+//! Each is `fn(content, …) -> Result<OpOutcome, ValidationError>`; time and freshly-minted ids are
+//! PASSED IN (the core mints nothing, reads no clock, §5).
 //!
 //! Two load-bearing invariants live here from the first commit (they can't be retrofitted —
 //! arch doc §13a build-order):
-//!   • **Expression-id stability.** Split/merge/toggle move `MathExpression`s by value, so
-//!     their `id`s are PRESERVED (empty `expression_id_remap`); only `materialize_object`
-//!     mints fresh ids (a populated remap). The matrix proptest (`tests/properties.rs`) gates it.
+//!   • **Expression-id stability.** Split/merge/toggle MOVE `MathExpression`s by value, so their
+//!     `id`s are PRESERVED (empty `expression_id_remap`) — and so does `rehome_subtree`, which moves
+//!     a whole subtree between objects keeping ids intact (backlinks/anchors must survive). ONLY the
+//!     COPY path (`materialize_object`) mints fresh ids (a populated remap), because a copy is a new
+//!     identity. The matrix proptest (`tests/properties.rs`) gates copy; `tests/ownership.rs` gates
+//!     re-home's preservation.
 //!   • **Before-anchors keystone (§6.3a).** Re-canonicalizing a surface that already has
 //!     anchors goes ONLY through `rewrite_with_remap` (which is GIVEN the anchors and remaps
 //!     them); `rewrite_surface` here is its sole caller. This module never calls
@@ -36,11 +39,13 @@ use serde::{Deserialize, Serialize};
 use mathmeander_surface::{SurfaceEdit, rewrite_with_remap};
 
 use crate::error::ValidationError;
-use crate::ids::{ExpressionId, LinkId, ObjectVersionId, ProvenanceId, TagId, TaggingId, UnitId};
+use crate::ids::{
+    ExpressionId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, TagId, TaggingId, UnitId,
+};
 use crate::model::{
-    CanonicalObject, CharSpan, ContentLocator, Inline, Link, LinkStatus, LinkType, MathExpression,
-    ObjectStatus, ObjectVersion, Occurrence, OccurrenceTarget, Tagging, TargetSelector, Unit,
-    UnitContent, UnitType,
+    CanonicalObject, CharSpan, ContentLocator, DeclaredBy, EmbedTarget, Inline, Link, LinkStatus,
+    LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
+    OccurrenceTarget, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::patch::Patch;
 use crate::validate::{validate_inline, validate_link, validate_tagging};
@@ -90,6 +95,13 @@ pub struct OpContext {
 
 /// Everything an op produces, for the glue to persist in one transaction. Vectors are empty
 /// for ops that don't touch that facet (e.g. only `materialize_object` fills `new_objects`).
+///
+/// **Single- vs two-object writes.** Most ops mutate ONE object: `content` + `version_snapshot`
+/// describe it, and `host_content`/`host_version_snapshot` stay `None`. `rehome_subtree` (§9.y
+/// greedy capture) is a TWO-object write: `content`/`version_snapshot`/`new_objects` describe the
+/// NEW object the subtree moved into, and `host_content`/`host_version_snapshot` describe the host
+/// it left (now carrying one `Embed`). `dissolve_object` is the inverse: `content` is the surviving
+/// host (subtree folded back), `objects_removed` names the object that disappeared.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 pub struct OpOutcome {
@@ -100,14 +112,23 @@ pub struct OpOutcome {
     /// Edges whose anchor could not be re-placed → the glue marks them stale, never drops
     /// (§6.1b). A staled edge is reported here ONLY (an id), not also in `links_upserted`.
     pub links_staled: Vec<LinkId>,
-    /// Old→new expression ids; EMPTY unless ids were re-minted (materialize only).
+    /// Old→new expression ids; EMPTY unless ids were re-minted (the `materialize_object` copy).
     pub expression_id_remap: Vec<ExpressionIdRemap>,
-    /// The append-only history checkpoint for this write (§6.4).
+    /// The append-only history checkpoint for the `content` object (§6.4).
     pub version_snapshot: ObjectVersion,
-    /// Newly created objects (materialize's copy); empty otherwise.
+    /// Newly created objects (the `materialize_object` copy; `rehome_subtree`'s new object);
+    /// empty otherwise.
     pub new_objects: Vec<CanonicalObject>,
     /// Taggings copied (split) or re-pointed (merge).
     pub taggings_propagated: Vec<Tagging>,
+    /// The MUTATED HOST of a two-object write (`rehome_subtree`): the surface the subtree left,
+    /// now carrying one `Embed{target: Object}`. `None` for single-object ops (one home, §6.0b).
+    pub host_content: Option<MathContent>,
+    /// The host's history checkpoint, paired with `host_content`. `None` for single-object ops.
+    pub host_version_snapshot: Option<ObjectVersion>,
+    /// Objects that DISAPPEAR with this write (`dissolve_object` folds an object's content back
+    /// into its host and removes the object). Empty otherwise.
+    pub objects_removed: Vec<ObjectId>,
 }
 
 impl OpOutcome {
@@ -123,6 +144,9 @@ impl OpOutcome {
             version_snapshot,
             new_objects: Vec::new(),
             taggings_propagated: Vec::new(),
+            host_content: None,
+            host_version_snapshot: None,
+            objects_removed: Vec::new(),
         }
     }
 }
@@ -131,13 +155,24 @@ impl OpOutcome {
 /// (content is revision-bumped before this runs); the snapshot is the content aggregate,
 /// carried opaquely (the §6 JSONB log exception).
 fn snapshot(content: &MathContent, ctx: &OpContext, now: DateTime<Utc>) -> ObjectVersion {
+    snapshot_with(content, ctx.version_id, ctx.provenance_id, now)
+}
+
+/// `snapshot` with an explicitly chosen checkpoint + provenance id — for a TWO-object write
+/// (`rehome_subtree`), where the host uses `ctx`'s ids and the new object needs its own.
+fn snapshot_with(
+    content: &MathContent,
+    version_id: ObjectVersionId,
+    provenance_id: ProvenanceId,
+    now: DateTime<Utc>,
+) -> ObjectVersion {
     ObjectVersion {
-        id: ctx.version_id,
+        id: version_id,
         object_id: content.object_id,
         version_no: content.revision,
         // Serializing our own in-memory type (cf. `api::*Result::to_json`) — never fails.
         snapshot: serde_json::to_value(content).expect("MathContent serializes to JSON"),
-        provenance_id: ctx.provenance_id,
+        provenance_id,
         created_at: now,
     }
 }
@@ -261,21 +296,74 @@ pub struct ResolveOccurrenceInput {
     pub target: ResolveTarget,
 }
 
-/// `materialize_object` payload — the copy-and-edge stand-in (decision C). The glue pre-mints
-/// the new object/provenance/edge ids and TOTAL id remaps over `source_content` (every unit and
-/// every expression must have an entry, else `RemapIncomplete` — a partial map would alias ids
-/// across objects).
+/// `materialize_object` payload — the COPY path (deliberate duplication / paste-as-reference,
+/// §18.7; not the greedy-capture materialize, which is `rehome_subtree`). The glue pre-mints the new
+/// object/provenance/edge ids and TOTAL id remaps over `source_content` (every unit and every
+/// expression must have an entry, else `RemapIncomplete` — a partial map would alias ids across
+/// objects). Re-mints every id and leaves the source UNTOUCHED.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 pub struct MaterializeObjectInput {
     pub expected_revision: u32,
     pub source_object: CanonicalObject,
     pub source_content: MathContent,
-    pub new_object_id: crate::ids::ObjectId,
+    pub new_object_id: ObjectId,
     pub new_provenance_id: ProvenanceId,
     pub edge_link_id: LinkId,
     pub expr_id_map: Vec<ExpressionIdRemap>,
     pub unit_id_map: Vec<UnitIdRemap>,
+}
+
+/// `rehome_subtree` payload — the REAL greedy-capture materialize (§9.y; the product's binding
+/// storage contract, §18.5). MOVES a declared subtree (the root unit + its `parent_unit_id`
+/// descendants) OUT of the host into a new object, **PRESERVING every unit and expression id** (the
+/// inverse of the copy path's re-mint) so backlinks/handles/anchors keep resolving, and leaves one
+/// `Embed{target: Object}` in the host where the root was. The glue pre-mints the new object id, the
+/// embed unit id, and the new object's version-checkpoint id (the host's checkpoint is
+/// `ctx.version_id`). No id remap. `expected_revision` rides only for the glue's host gate (§6.4 —
+/// the core never reads it).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct RehomeSubtreeInput {
+    pub expected_revision: u32,
+    pub host_object: CanonicalObject,
+    pub host_content: MathContent,
+    /// The declared unit to materialize; it and its descendants move into the new object.
+    pub subtree_root: UnitId,
+    pub new_object_id: ObjectId,
+    /// The materialized object's type (e.g. `theorem`) — must be producible (§13a/§6.1a).
+    #[serde(rename = "type")]
+    pub new_object_type: ObjectType,
+    /// The `Embed{target: Object}` unit minted to stand where the subtree was in the host.
+    pub embed_unit_id: UnitId,
+    /// The new object's history-checkpoint id (the host's is `ctx.version_id`).
+    pub new_version_id: ObjectVersionId,
+}
+
+/// `dissolve_object` payload — the inverse of `rehome_subtree` (§9.y reversibility). Folds an
+/// embedded object's content back into its host (ids preserved), removing the embed and the object.
+/// `inbound_references` is the glue-loaded list of edges/handles depending on the object's identity
+/// (the core counts nothing — it stays pure of the reference query, §6.1b); a NON-EMPTY list makes
+/// dissolution a reviewable refusal (`DissolutionBlocked`), never a silent move (§9.y).
+///
+/// A destructive write carries TWO concurrency gates (unlike the creative `rehome_subtree`, which
+/// mints a fresh object and needs only the host gate): `expected_revision` gates the HOST and
+/// `expected_dissolved_revision` gates the object being DESTROYED, so a concurrent edit to either
+/// between load and dissolve loses the race (409) rather than being silently dropped (§6.4). Both
+/// ride for the glue's conditional writes; the core reads neither.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct DissolveObjectInput {
+    pub expected_revision: u32,
+    /// The expected revision of the object being DESTROYED — the second gate (§6.4).
+    pub expected_dissolved_revision: u32,
+    pub host_content: MathContent,
+    /// The `Embed{target: Object{dissolved_object_id}}` unit in the host to replace.
+    pub embed_unit_id: UnitId,
+    pub dissolved_object_id: ObjectId,
+    pub dissolved_content: MathContent,
+    /// Ids of inbound references the glue found (edges/handles). Non-empty → reviewable refusal.
+    pub inbound_references: Vec<String>,
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -694,12 +782,13 @@ pub fn resolve_occurrence(
     Ok(outcome)
 }
 
-/// Materialize a copy of an object's content into a new object, with an edge back to the
-/// origin (the copy-and-edge stand-in, decision C). EVERY copied expression id is re-minted
-/// (`expr_id_map`) and every unit re-homed (`unit_id_map`); a partial map is a hard error
+/// Copy an object's content into a NEW object, with a `DerivedFrom` edge back to the origin — the
+/// **copy path** (deliberate duplication / paste-as-reference, §18.7; *not* the greedy-capture
+/// materialize, which is `rehome_subtree` and PRESERVES ids). EVERY copied expression id is
+/// re-minted (`expr_id_map`) and every unit re-homed (`unit_id_map`); a partial map is a hard error
 /// (`RemapIncomplete`) and a duplicate source id is `DuplicateSourceId` — both would alias ids
-/// across objects (§6.3a). The new object copies the source's metadata (incl. `extra`, §2.2)
-/// with fresh identity; taggings are NOT propagated (a copy starts untagged — stand-in scope).
+/// across objects (§6.3a). The new object copies the source's metadata (incl. `extra`, §2.2) with
+/// fresh identity; the SOURCE IS UNTOUCHED; taggings are NOT propagated (a copy starts untagged).
 pub fn materialize_object(
     input: &MaterializeObjectInput,
     ctx: &OpContext,
@@ -812,11 +901,236 @@ pub fn materialize_object(
         expression_id_remap: applied_remap,
         version_snapshot,
         new_objects: vec![new_object],
-        // Deliberately empty: a copy-and-edge stand-in starts UNTAGGED (tags are personal
-        // organization of the original; tag inheritance is the slice-2 ownership model). This is a
-        // product choice, not the unknown-field omission the review flagged for `extra` (copied above).
+        // Deliberately empty: a copy starts UNTAGGED (tags are personal organization of the
+        // original; re-home, by contrast, carries them — a moved unit keeps its taggings via its
+        // preserved id). A product choice, not the unknown-field omission flagged for `extra`.
         taggings_propagated: Vec::new(),
+        host_content: None, // single-object write (the source is untouched)
+        host_version_snapshot: None,
+        objects_removed: Vec::new(),
     })
+}
+
+/// Materialize a declared subtree into a new object by RE-HOMING it — the §9.y greedy-capture
+/// materialize and the product's binding storage contract (§18.5). Unlike the copy path
+/// (`materialize_object`), this MOVES the units: ids are PRESERVED (not re-minted), so every
+/// backlink / handle / anchor into the subtree keeps resolving, and the new object then OWNS that
+/// content and its own version history (one fact, one home, §18.10). The host keeps showing the
+/// material through one `Embed{target: Object}` left where the subtree's root was — the object's
+/// "appearance" (§18.18). A TWO-object outcome: `content`/`new_objects`/`version_snapshot` describe
+/// the new object; `host_content`/`host_version_snapshot` describe the mutated host.
+///
+/// What this op does NOT do (left to the glue, since they are relational, §6.1a): re-point the
+/// COMPOSITE-FK rows that anchor into the moved subtree. Both ENDS of a `links` edge are composite
+/// FKs `(unit_id, object_id)`, so the glue must re-home, for every moved unit:
+///   • **target-side** — a `links.target_unit_id`/`target_object_id` pointing INTO the subtree, and a
+///     `handles.target_object_id` for a unit-anchored OR expression-anchored handle on a moved unit;
+///   • **source-side** — a `links.source_unit_id`/`source_object_id` whose source IS a moved unit:
+///     content-derived edges (`from_content = true`, minted by `resolve_occurrence` with
+///     `source_object_id = host`) move their source end to the new object too.
+/// Unit-level `taggings` need NO re-point (their FK is on `tagged_unit_id` alone, so they ride the
+/// preserved ids — tag survival is a free property of re-homing). The op leaves `content`
+/// (expression ids, occurrence selectors, the locators those edges reference) byte-identical, so the
+/// glue's re-point is a pure home-rewrite. All in the one move transaction.
+pub fn rehome_subtree(
+    input: &RehomeSubtreeInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    // The materialized object must be a producible type — the formal family, never the reserved
+    // surface/source/annotation types whose detail machinery hasn't landed (§13a/§6.1a).
+    if !input.new_object_type.is_producible() {
+        return Err(ValidationError::TypeNotProducibleYet {
+            object_type: input.new_object_type,
+        });
+    }
+
+    let mut host = input.host_content.clone();
+    // The subtree = the root unit + every transitive `parent_unit_id` descendant.
+    let moving = subtree_closure(&host, input.subtree_root)?;
+
+    // The root's slot in the host: the embed takes its exact place (same parent, position, AND slot —
+    // a subtree declared inside a `case_split`/proof body keeps its container-internal role).
+    let (root_parent, root_position, root_slot) = {
+        let root = host
+            .units
+            .iter()
+            .find(|u| u.id == input.subtree_root)
+            .expect("subtree_closure verified the root exists");
+        (root.parent_unit_id, root.position, root.slot.clone())
+    };
+
+    // Partition: the moved units leave the host and re-home onto the new object (ids preserved).
+    let mut moved: Vec<Unit> = Vec::new();
+    let mut remaining: Vec<Unit> = Vec::new();
+    for u in host.units.drain(..) {
+        if moving.contains(&u.id) {
+            moved.push(u);
+        } else {
+            remaining.push(u);
+        }
+    }
+    for u in &mut moved {
+        u.object_id = input.new_object_id;
+        if u.id == input.subtree_root {
+            u.parent_unit_id = None; // the root becomes a top-level unit of the new object
+        }
+    }
+
+    // The host keeps the rest plus one embed standing where the subtree's root was.
+    let embed = Unit {
+        id: input.embed_unit_id,
+        object_id: host.object_id,
+        parent_unit_id: root_parent,
+        position: root_position,
+        slot: root_slot,
+        unit_type: None,
+        example_kind: None,
+        status: UnitStatus::Parsed,
+        // The embed is a STRUCTURAL consequence of the user's type declaration, not a typed unit
+        // the user authored — `deterministic`, never a `type` (§9.y; `ai` is forbidden anyway).
+        declared_by: DeclaredBy::Deterministic,
+        extracted_structure: None,
+        content: UnitContent::Embed {
+            target: EmbedTarget::Object {
+                object_id: input.new_object_id,
+            },
+        },
+        provenance_id: ctx.provenance_id,
+    };
+    remaining.push(embed);
+    host.units = remaining;
+    host.revision = host.revision.saturating_add(1);
+    renumber_siblings(&mut host, root_parent);
+
+    // The new object owns the moved subtree; the former-root layer rebases to a gap-free 0..n.
+    let mut new_content = MathContent {
+        object_id: input.new_object_id,
+        revision: 1,
+        units: moved,
+    };
+    renumber_siblings(&mut new_content, None);
+
+    let new_object = CanonicalObject {
+        id: input.new_object_id,
+        object_type: input.new_object_type,
+        title: None, // a materialized theorem has no title; its label is numbering/aliases (§6.3b)
+        raw_source: None,
+        status: ObjectStatus::Draft,
+        schema_version: crate::CURRENT_SCHEMA_VERSION,
+        revision: 1,
+        provenance_id: ctx.provenance_id,
+        space_id: input.host_object.space_id,
+        created_at: now,
+        updated_at: now,
+        extra: serde_json::Map::new(),
+    };
+
+    let new_version = snapshot_with(&new_content, input.new_version_id, ctx.provenance_id, now);
+    let host_version = snapshot(&host, ctx, now);
+
+    Ok(OpOutcome {
+        content: new_content,
+        links_upserted: Vec::new(), // the embed IS the connection — no DerivedFrom edge (cf. copy)
+        links_staled: Vec::new(),
+        expression_id_remap: Vec::new(), // ids PRESERVED — the inverse of the copy path's re-mint
+        version_snapshot: new_version,
+        new_objects: vec![new_object],
+        taggings_propagated: Vec::new(), // unit taggings ride preserved ids; glue re-points handles/links
+        host_content: Some(host),
+        host_version_snapshot: Some(host_version),
+        objects_removed: Vec::new(),
+    })
+}
+
+/// Dissolve a materialized object back into its host — the inverse of `rehome_subtree` (§9.y
+/// reversibility / the backspace-past-empty gesture). Folds the object's content back into the host
+/// where its `Embed` sat (ids PRESERVED), removes the embed, and reports the object as removed. If
+/// inbound references depend on the object's identity (`inbound_references` non-empty — the glue
+/// loaded them, the core stays pure of the query), dissolution is a REVIEWABLE REFUSAL
+/// (`DissolutionBlocked`), never a silent content move (§9.y:1118). The host is the surviving object
+/// (`content`); `objects_removed` names the object that disappears.
+pub fn dissolve_object(
+    input: &DissolveObjectInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    // Inbound references make this a reviewable operation, not a silent dissolve (§9.y).
+    if !input.inbound_references.is_empty() {
+        return Err(ValidationError::DissolutionBlocked {
+            references: input.inbound_references.clone(),
+        });
+    }
+
+    // Destructive: never trust `dissolved_content` (mirrors the copy path's `DuplicateSourceId`).
+    // The content must belong to the object being dissolved, else the glue would fold a FOREIGN
+    // object's units into the host.
+    if input.dissolved_content.object_id != input.dissolved_object_id {
+        return Err(ValidationError::DissolveInputInconsistent {
+            reason: format!(
+                "dissolved_content.object_id {} != dissolved_object_id {}",
+                input.dissolved_content.object_id, input.dissolved_object_id
+            ),
+        });
+    }
+
+    let mut host = input.host_content.clone();
+
+    // The embed marks where the object's content folds back in (its parent + position).
+    let embed_idx = host
+        .units
+        .iter()
+        .position(|u| u.id == input.embed_unit_id)
+        .ok_or(ValidationError::UnitNotFound {
+            unit_id: input.embed_unit_id.to_string(),
+        })?;
+    // It must be an embed OF the object we are dissolving — a present-but-wrong embed is a glue
+    // precondition bug (distinct from a genuinely absent embed, which is `UnitNotFound` above).
+    match &host.units[embed_idx].content {
+        UnitContent::Embed {
+            target: EmbedTarget::Object { object_id },
+        } if *object_id == input.dissolved_object_id => {}
+        _ => {
+            return Err(ValidationError::DissolveInputInconsistent {
+                reason: format!(
+                    "unit {} is not an embed of object {}",
+                    input.embed_unit_id, input.dissolved_object_id
+                ),
+            });
+        }
+    }
+
+    // Id-collision guard: a folded unit must not already live in the host (one home, §6.0b) — the
+    // destructive mirror of materialize's duplicate-source guard.
+    let host_ids: std::collections::HashSet<UnitId> = host.units.iter().map(|u| u.id).collect();
+    for u in &input.dissolved_content.units {
+        if u.id != input.embed_unit_id && host_ids.contains(&u.id) {
+            return Err(ValidationError::UnitInMultipleObjects {
+                unit_id: u.id.to_string(),
+            });
+        }
+    }
+
+    let embed = host.units.remove(embed_idx);
+    let fold_parent = embed.parent_unit_id;
+
+    // Fold the object's units back into the host at the embed's slot (ids preserved). The former
+    // top-level units re-attach under the embed's parent; deeper units keep their intra-object
+    // parents (preserved ids, now living in the host). object_id flips back to the host.
+    for mut u in input.dissolved_content.units.iter().cloned() {
+        if u.parent_unit_id.is_none() {
+            u.parent_unit_id = fold_parent;
+            u.position = embed.position; // ties broken by vector order, then renumbered below
+        }
+        u.object_id = host.object_id;
+        host.units.push(u);
+    }
+    host.revision = host.revision.saturating_add(1);
+    renumber_siblings(&mut host, fold_parent);
+
+    let mut outcome = OpOutcome::new(host, ctx, now);
+    outcome.objects_removed = vec![input.dissolved_object_id];
+    Ok(outcome)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1143,6 +1457,39 @@ fn renumber_siblings(content: &mut MathContent, parent: Option<UnitId>) {
     for (new_pos, &i) in idxs.iter().enumerate() {
         content.units[i].position = new_pos as u32;
     }
+}
+
+/// The set of unit ids in the subtree rooted at `root` — the root plus every transitive
+/// `parent_unit_id` descendant in `content` (the `rehome_subtree`/`dissolve_object` closure). Errors
+/// if `root` is not a unit of `content`. Unit ids are distinct within an object (the DB PK), so the
+/// growing-set fixpoint is correct and cycle-safe: it only ever absorbs reachable units and is
+/// bounded by the unit count, so a malformed `parent_unit_id` cycle cannot hang it.
+fn subtree_closure(
+    content: &MathContent,
+    root: UnitId,
+) -> Result<std::collections::HashSet<UnitId>, ValidationError> {
+    if !content.units.iter().any(|u| u.id == root) {
+        return Err(ValidationError::UnitNotFound {
+            unit_id: root.to_string(),
+        });
+    }
+    let mut set = std::collections::HashSet::new();
+    set.insert(root);
+    loop {
+        let mut grew = false;
+        for u in &content.units {
+            if let Some(p) = u.parent_unit_id
+                && set.contains(&p)
+                && set.insert(u.id)
+            {
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    Ok(set)
 }
 
 fn content_kind_tag(c: &UnitContent) -> &'static str {

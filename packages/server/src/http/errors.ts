@@ -80,10 +80,17 @@ export const CORE_CODE_STATUS: Record<string, number> = {
   inline_span_out_of_bounds: 422,
   occurrence_span_out_of_bounds: 422,
 
+  // ── Ownership (slice 2a): client-attributable referential breaks on the untrusted import
+  //    path + the reviewable dissolution refusal → 422 ──
+  embed_target_missing: 422, // an imported pack's embed names an object absent from the pack
+  unit_in_multiple_objects: 422, // an imported pack puts one unit under two objects (one home, §6.0b)
+  dissolution_blocked: 422, // inbound references depend on the object — review, don't silently move (§9.y)
+
   // ── Glue id-bookkeeping the client cannot cause via a well-formed request → 500 ──
   id_count_mismatch: 500,
   remap_incomplete: 500,
   duplicate_source_id: 500,
+  dissolve_input_inconsistent: 500, // glue handed dissolve mismatched embed/content (a precondition bug)
 
   // ── §6.1a invariants no slice-1d endpoint can currently trip (fail-closed until their
   //    endpoints land in later slices) → 500 ──

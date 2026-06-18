@@ -11,9 +11,9 @@ use crate::mathpack::{Mathpack, MathpackGraph, MathpackImport, MathpackMeta};
 use crate::model::{Alias, CanonicalObject, Handle, Link, Provenance, Tagging, Unit};
 use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
-    InsertReferenceInput, MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext,
-    OpOutcome, ResolveOccurrenceInput, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
-    ToggleExpressionPlacementInput,
+    DissolveObjectInput, InsertReferenceInput, MaterializeObjectInput, MathContent,
+    MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput,
+    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
@@ -328,13 +328,37 @@ pub fn resolve_occurrence(
     OpOutcomeResult::from_result(result).to_json()
 }
 
-/// Materialize a copy-and-edge stand-in object (input carries the source) → `OpOutcomeResult` JSON.
+/// Copy an object (the copy path; input carries the source) → `OpOutcomeResult` JSON.
 pub fn materialize_object(input_json: &str, ctx_json: &str, now_iso: &str) -> String {
     let result = (|| {
         let input: MaterializeObjectInput = parse_input("materialize_object input", input_json)?;
         let ctx: OpContext = parse_input("op context", ctx_json)?;
         let now = parse_now(now_iso)?;
         Ok(crate::ops::materialize_object(&input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Re-home a declared subtree into a new object — the §9.y greedy-capture materialize (input
+/// carries the host content) → `OpOutcomeResult` JSON (a two-object outcome).
+pub fn rehome_subtree(input_json: &str, ctx_json: &str, now_iso: &str) -> String {
+    let result = (|| {
+        let input: RehomeSubtreeInput = parse_input("rehome_subtree input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::rehome_subtree(&input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Dissolve a materialized object back into its host — the inverse of `rehome_subtree` (input
+/// carries the host + dissolved content + glue-loaded inbound refs) → `OpOutcomeResult` JSON.
+pub fn dissolve_object(input_json: &str, ctx_json: &str, now_iso: &str) -> String {
+    let result = (|| {
+        let input: DissolveObjectInput = parse_input("dissolve_object input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::dissolve_object(&input, &ctx, now)?)
     })();
     OpOutcomeResult::from_result(result).to_json()
 }

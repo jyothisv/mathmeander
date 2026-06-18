@@ -208,6 +208,35 @@ pub enum ValidationError {
     /// alias the duplicates onto one fresh id via the remap. A glue/data bug.
     #[error("duplicate {kind} id in source content")]
     DuplicateSourceId { kind: String },
+
+    /// `dissolve_object` was asked to dissolve a materialized object that inbound references
+    /// depend on (edges/handles/review items, §9.y:1118). Dissolution becomes a REVIEWABLE
+    /// operation, never a silent content move: the referencing ids are surfaced so the UI can
+    /// offer deprecate / keep / detach. (Whether a reference exists is the glue's query; the core
+    /// only decides, given the list — staying pure of the DB, §6.1b.)
+    #[error("dissolution blocked: {} inbound reference(s) depend on this object", references.len())]
+    DissolutionBlocked { references: Vec<String> },
+
+    /// An `Embed{target: Object}` in imported content names an object absent from the pack — a
+    /// referential break SQL can't FK-check (embed targets live in content, not a typed column),
+    /// so the core owns it on the untrusted import path (§9.y/§6.5: a gone embed target is never
+    /// silent). Re-home produces these embeds; the pack's transitive closure must include the target.
+    #[error("embed targets object {object_id}, which is absent from the pack")]
+    EmbedTargetMissing { object_id: String },
+
+    /// A unit id appears in more than one object's content — a violation of one home (§6.0b): a
+    /// re-homed unit must leave its old object, never linger in two. SQL's composite FK can't catch
+    /// this across a whole imported pack, so the core does. Also raised by `dissolve_object` when the
+    /// content being folded back would collide with a unit already in the host.
+    #[error("unit {unit_id} appears in more than one object (one home, §6.0b)")]
+    UnitInMultipleObjects { unit_id: String },
+
+    /// `dissolve_object` was handed inconsistent inputs by the glue — the `dissolved_content` does
+    /// not belong to `dissolved_object_id`, or the unit at `embed_unit_id` is not an `Embed` of that
+    /// object. A precondition the glue assembles, so it can only mean a glue bug (a destructive op
+    /// must mirror the copy path's `DuplicateSourceId` defensiveness — it never trusts its content).
+    #[error("inconsistent dissolve input: {reason}")]
+    DissolveInputInconsistent { reason: String },
 }
 
 /// Errors crossing the FFI result envelope: a domain validation failure, or input that

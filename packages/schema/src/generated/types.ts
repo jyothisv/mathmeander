@@ -18,6 +18,7 @@ import {
   DeclaredBySchema,
   DefinitionDetailSchema,
   DisplayLabelsSchema,
+  DissolveObjectInputSchema,
   EmbedTargetSchema,
   ExampleKindSchema,
   ExpressionIdRemapSchema,
@@ -61,6 +62,7 @@ import {
   ProvenanceSchema,
   ProvenanceDerivationSchema,
   ReferenceTargetSchema,
+  RehomeSubtreeInputSchema,
   ResolveOccurrenceInputSchema,
   ResolveTargetSchema,
   RewriteSurfaceInputSchema,
@@ -95,6 +97,7 @@ export type CreatedObject = z.infer<typeof CreatedObjectSchema>;
 export type DeclaredBy = z.infer<typeof DeclaredBySchema>;
 export type DefinitionDetail = z.infer<typeof DefinitionDetailSchema>;
 export type DisplayLabels = z.infer<typeof DisplayLabelsSchema>;
+export type DissolveObjectInput = z.infer<typeof DissolveObjectInputSchema>;
 export type EmbedTarget = z.infer<typeof EmbedTargetSchema>;
 export type ExampleKind = z.infer<typeof ExampleKindSchema>;
 export type ExpressionIdRemap = z.infer<typeof ExpressionIdRemapSchema>;
@@ -138,6 +141,7 @@ export type ParseStatus = z.infer<typeof ParseStatusSchema>;
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 export type ProvenanceDerivation = z.infer<typeof ProvenanceDerivationSchema>;
 export type ReferenceTarget = z.infer<typeof ReferenceTargetSchema>;
+export type RehomeSubtreeInput = z.infer<typeof RehomeSubtreeInputSchema>;
 export type ResolveOccurrenceInput = z.infer<typeof ResolveOccurrenceInputSchema>;
 export type ResolveTarget = z.infer<typeof ResolveTargetSchema>;
 export type RewriteSurfaceInput = z.infer<typeof RewriteSurfaceInputSchema>;
