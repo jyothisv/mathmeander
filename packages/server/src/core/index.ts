@@ -17,6 +17,8 @@ import {
   insertReference as addonInsertReference,
   resolveOccurrence as addonResolveOccurrence,
   materializeObject as addonMaterializeObject,
+  rehomeSubtree as addonRehomeSubtree,
+  dissolveObject as addonDissolveObject,
   projectNumbering as addonProjectNumbering,
   exportMathpack as addonExportMathpack,
   importMathpack as addonImportMathpack,
@@ -46,6 +48,8 @@ import {
   type InsertReferenceInput,
   type ResolveOccurrenceInput,
   type MaterializeObjectInput,
+  type RehomeSubtreeInput,
+  type DissolveObjectInput,
   type Tagging,
   type Link,
   type Unit,
@@ -256,6 +260,28 @@ export function materializeObject(
     JSON.parse(
       addonMaterializeObject(JSON.stringify(input), JSON.stringify(ctx), now.toISOString()),
     ),
+  );
+}
+
+/** Re-home a declared subtree into a new object — the §9.y greedy-capture materialize. */
+export function rehomeSubtree(
+  input: RehomeSubtreeInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(addonRehomeSubtree(JSON.stringify(input), JSON.stringify(ctx), now.toISOString())),
+  );
+}
+
+/** Dissolve a materialized object back into its host — the inverse of `rehomeSubtree`. */
+export function dissolveObject(
+  input: DissolveObjectInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(addonDissolveObject(JSON.stringify(input), JSON.stringify(ctx), now.toISOString())),
   );
 }
 

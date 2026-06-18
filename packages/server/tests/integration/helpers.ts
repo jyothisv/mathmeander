@@ -156,3 +156,105 @@ export async function seedObjectWithProse(
   await seedContent(stack.db, objectId, [unit], provenance);
   return { objectId, unitId, provenanceId };
 }
+
+export interface TheoremHost {
+  hostId: string;
+  rootId: string; // the theorem Group (the subtree root)
+  stmtId: string; // the statement prose (child of root) — carries one inline-math atom
+  mathId: string; // a display-math child of root
+  exprId: string; // the display-math child's expression id
+  inlineExprId: string; // the statement's INLINE-math expression id (the prose-carrier case)
+  beforeId: string; // a plain prose unit before the theorem
+  afterId: string; // a plain prose unit after the theorem
+  provenanceId: string;
+}
+
+/**
+ * Seed a host `note` with a realistic multi-unit theorem subtree — a `Group` root (`type=theorem`)
+ * over a statement prose child + a display-math child, flanked by plain prose before/after. The
+ * §9.y re-home fixture: positions are gap-free, the host is at revision 1 (create stamps 1;
+ * seedContent adds content without bumping). Auxiliary rows (taggings/links/handles) are inserted by
+ * the test via SQL, since no endpoint authors them yet.
+ */
+export async function seedTheoremHost(stack: TestStack, token: string): Promise<TheoremHost> {
+  const hostId = uuidv7();
+  const created = await stack.app.inject({
+    method: 'POST',
+    url: '/api/objects',
+    headers: bearer(token),
+    payload: { id: hostId, type: 'note', title: 'host', raw_source: '' },
+  });
+  if (created.statusCode !== 201) {
+    throw new Error(`seed create failed: ${created.statusCode} ${created.body}`);
+  }
+
+  const rootId = uuidv7();
+  const stmtId = uuidv7();
+  const mathId = uuidv7();
+  const exprId = uuidv7();
+  const inlineExprId = uuidv7();
+  const beforeId = uuidv7();
+  const afterId = uuidv7();
+  const provenanceId = uuidv7();
+  const provenance: Provenance = {
+    id: provenanceId,
+    origin: 'system',
+    occurred_at: new Date().toISOString(),
+  };
+  const base = (
+    id: string,
+  ): Pick<Unit, 'id' | 'object_id' | 'status' | 'declared_by' | 'provenance_id'> => ({
+    id,
+    object_id: hostId,
+    status: 'rough',
+    declared_by: 'user',
+    provenance_id: provenanceId,
+  });
+  const units: Unit[] = [
+    { ...base(beforeId), position: 0, content: { kind: 'prose', text: 'Before.', inline: [] } },
+    { ...base(rootId), position: 1, type: 'theorem', content: { kind: 'group' } },
+    {
+      ...base(stmtId),
+      parent_unit_id: rootId,
+      position: 0,
+      content: {
+        kind: 'prose',
+        text: 'Every compact metric space is complete.',
+        // one inline-math atom (zero-width, in-bounds) — the prose-carrier expression-id case
+        inline: [
+          {
+            kind: 'math',
+            span: { start: 0, end: 0 },
+            expr: {
+              id: inlineExprId,
+              surface_text: 'd',
+              surface_format: 'mathmeander',
+              original_input: 'd',
+              parse_status: 'renderable',
+              occurrences: [],
+            },
+          },
+        ],
+      },
+    },
+    {
+      ...base(mathId),
+      parent_unit_id: rootId,
+      position: 1,
+      content: {
+        kind: 'math',
+        expr: {
+          id: exprId,
+          surface_text: 'x',
+          surface_format: 'mathmeander',
+          original_input: 'x',
+          parse_status: 'renderable',
+          occurrences: [],
+        },
+      },
+    },
+    { ...base(afterId), position: 2, content: { kind: 'prose', text: 'After.', inline: [] } },
+  ];
+  await seedContent(stack.db, hostId, units, provenance);
+  return { hostId, rootId, stmtId, mathId, exprId, inlineExprId, beforeId, afterId, provenanceId };
+}

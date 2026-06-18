@@ -523,7 +523,7 @@ ALTER TABLE ONLY public.handles
 --
 
 ALTER TABLE ONLY public.handles
-    ADD CONSTRAINT handles_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id);
+    ADD CONSTRAINT handles_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
 
 
 --
@@ -547,7 +547,7 @@ ALTER TABLE ONLY public.links
 --
 
 ALTER TABLE ONLY public.links
-    ADD CONSTRAINT links_source_unit_id_source_object_id_fkey FOREIGN KEY (source_unit_id, source_object_id) REFERENCES public.content_units(id, object_id);
+    ADD CONSTRAINT links_source_unit_id_source_object_id_fkey FOREIGN KEY (source_unit_id, source_object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
 
 
 --
@@ -563,7 +563,7 @@ ALTER TABLE ONLY public.links
 --
 
 ALTER TABLE ONLY public.links
-    ADD CONSTRAINT links_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id);
+    ADD CONSTRAINT links_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
 
 
 --
@@ -651,7 +651,7 @@ ALTER TABLE ONLY public.taggings
 --
 
 ALTER TABLE ONLY public.taggings
-    ADD CONSTRAINT taggings_tagged_unit_id_fkey FOREIGN KEY (tagged_unit_id) REFERENCES public.content_units(id);
+    ADD CONSTRAINT taggings_tagged_unit_id_fkey FOREIGN KEY (tagged_unit_id) REFERENCES public.content_units(id) DEFERRABLE;
 
 
 --
@@ -675,4 +675,5 @@ ALTER TABLE ONLY public.tags
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('0001'),
-    ('0002');
+    ('0002'),
+    ('0003');

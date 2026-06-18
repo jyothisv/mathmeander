@@ -154,6 +154,20 @@ pub fn materialize_object(input_json: String, ctx_json: String, now_iso: String)
     mathmeander_core::api::materialize_object(&input_json, &ctx_json, &now_iso)
 }
 
+/// Re-home a declared subtree into a new object (the §9.y greedy-capture materialize; input carries
+/// the host) → `OpOutcomeResult` JSON (a two-object outcome).
+#[napi]
+pub fn rehome_subtree(input_json: String, ctx_json: String, now_iso: String) -> String {
+    mathmeander_core::api::rehome_subtree(&input_json, &ctx_json, &now_iso)
+}
+
+/// Dissolve a materialized object back into its host (input carries host + dissolved content + inbound
+/// refs) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn dissolve_object(input_json: String, ctx_json: String, now_iso: String) -> String {
+    mathmeander_core::api::dissolve_object(&input_json, &ctx_json, &now_iso)
+}
+
 // ── Slice 1d projections + packaging. ──
 
 /// Project display labels (policy passed in) → `NumberingResult` JSON.

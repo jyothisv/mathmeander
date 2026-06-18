@@ -161,8 +161,90 @@ export async function loadCurrentTaggings(db: Queryable, objectId: string): Prom
   return res.rows.map(rowToTagging);
 }
 
-/** The single-object subgraph for `.mathpack` export (one MathpackGraph; empty for absent kinds). */
+/** A light object-row read (no subgraph) — e.g. re-home needs the host's `space_id` to stamp T. */
+export async function loadObject(
+  db: Queryable,
+  spaceId: string,
+  objectId: string,
+): Promise<CanonicalObject | null> {
+  const res = await db.query<ObjectRow>(
+    `SELECT id, type, title, raw_source, status, schema_version, revision, provenance_id, space_id,
+            created_at, updated_at
+     FROM objects WHERE id = $1 AND space_id = $2`,
+    [objectId, spaceId],
+  );
+  const row = res.rows[0];
+  return row ? rowToObject(row) : null;
+}
+
+/** The object_ids an `Embed{target: Object}` in this graph's content points at. */
+function embedTargetIds(graph: MathpackGraph): string[] {
+  const ids: string[] = [];
+  for (const content of graph.content) {
+    for (const unit of content.units) {
+      const c = unit.content;
+      if (c.kind === 'embed' && c.target.kind === 'object') ids.push(c.target.object_id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The `.mathpack` subgraph for an object, following `Embed{target: Object}` units TRANSITIVELY so a
+ * host's pack includes every embedded object (re-home leaves embeds, §9.y) — the core's
+ * `embed_target_missing` import gate is then satisfiable. A visited set guards malformed embed
+ * cycles; the per-object pieces are merged and the trust-spine (provenance/derivations) + tags are
+ * deduped by id. Written generally so deeper nesting (Pass C) needs no rewrite.
+ */
 export async function loadObjectSubgraph(
+  db: Queryable,
+  spaceId: string,
+  objectId: string,
+): Promise<MathpackGraph | null> {
+  const root = await loadOneSubgraph(db, spaceId, objectId);
+  if (!root) return null;
+
+  const merged = root;
+  const seen = new Set<string>([objectId]);
+  const queue = embedTargetIds(root).filter((id) => !seen.has(id));
+  while (queue.length > 0) {
+    const next = queue.shift()!;
+    if (seen.has(next)) continue;
+    seen.add(next);
+    const sub = await loadOneSubgraph(db, spaceId, next);
+    if (!sub) continue; // a missing target is the core's import gate to flag, not a load error
+    mergeSubgraph(merged, sub);
+    for (const id of embedTargetIds(sub)) if (!seen.has(id)) queue.push(id);
+  }
+  return merged;
+}
+
+/** Merge `sub` into `into`, deduping by id where two objects can cite the same row (the trust spine). */
+function mergeSubgraph(into: MathpackGraph, sub: MathpackGraph): void {
+  into.objects.push(...sub.objects);
+  into.content.push(...sub.content);
+  into.links.push(...sub.links);
+  into.aliases.push(...sub.aliases);
+  into.handles.push(...sub.handles);
+  into.object_versions.push(...sub.object_versions);
+  into.definition_details.push(...sub.definition_details);
+  const tagIds = new Set(into.tags.map((t) => t.id));
+  for (const t of sub.tags) if (!tagIds.has(t.id)) into.tags.push(t);
+  const taggingIds = new Set(into.taggings.map((t) => t.id));
+  for (const t of sub.taggings) if (!taggingIds.has(t.id)) into.taggings.push(t);
+  const provIds = new Set(into.provenance.map((p) => p.id));
+  for (const p of sub.provenance) if (!provIds.has(p.id)) into.provenance.push(p);
+  const derivKeys = new Set(
+    into.provenance_derivations.map((d) => `${d.provenance_id}|${d.derived_from_provenance_id}`),
+  );
+  for (const d of sub.provenance_derivations) {
+    const k = `${d.provenance_id}|${d.derived_from_provenance_id}`;
+    if (!derivKeys.has(k)) into.provenance_derivations.push(d);
+  }
+}
+
+/** One object's subgraph (no embed-following) — the building block of the transitive loader. */
+async function loadOneSubgraph(
   db: Queryable,
   spaceId: string,
   objectId: string,
@@ -262,21 +344,53 @@ export async function loadObjectSubgraph(
 class RevisionConflict extends Error {}
 
 /**
- * Persist an op's `OpOutcome` in ONE transaction, FK-safe. Source-mutating ops gate on the
- * conditional revision UPDATE (lost race → rollback → `{ won: false }`); `materialize_object`
- * (outcome.new_objects non-empty) inserts a fresh object instead (no gate). GENERATED columns are
- * never written. `provenance` is the op's row (stamps emitted edges / version / new unit rows).
+ * Thrown when dissolve's IN-TRANSACTION re-check finds an external inbound reference that appeared
+ * after the route's pre-read (the §9.y TOCTOU). Caught → `{ won: false, blockedReferences }` → 422.
+ */
+class DissolutionRaced extends Error {
+  constructor(readonly references: string[]) {
+    super('dissolution blocked by a concurrently-added reference');
+  }
+}
+
+type PersistOpts = {
+  provenance: Provenance;
+  expectedRevision: number;
+  /** The DESTROYED object's gate — required for dissolve (the second of its two CAS gates). */
+  expectedDissolvedRevision?: number | undefined;
+  now: Date;
+};
+
+/**
+ * Persist an op's `OpOutcome` in ONE transaction, FK-safe, dispatching on outcome SHAPE:
+ *   • `host_content` present        → re-home (two-object move; §9.y greedy capture)
+ *   • `objects_removed` non-empty   → dissolve (fold back + destroy)
+ *   • `new_objects` non-empty       → materialize-copy (fresh object, no gate)
+ *   • else                          → single-object gated write
+ * The two cross-object shapes `SET CONSTRAINTS ALL DEFERRED` so a unit can change `object_id` while
+ * its composite-FK edges + (id-keyed) taggings stay valid AT COMMIT (0003 made those FKs deferrable).
+ * GENERATED columns (`content_kind`/`in_expression`) are never written.
  */
 export async function persistObjectGraph(
   db: pg.Pool,
   objectId: string,
   outcome: OpOutcome,
-  opts: { provenance: Provenance; expectedRevision: number; now: Date },
-): Promise<{ won: boolean }> {
+  opts: PersistOpts,
+): Promise<{ won: boolean; blockedReferences?: string[] }> {
   try {
     await withTransaction(db, async (client) => {
       await upsertProvenance(client, opts.provenance);
 
+      if (outcome.host_content != null) {
+        await persistRehome(client, objectId, outcome, opts);
+        return;
+      }
+      if (outcome.objects_removed.length > 0) {
+        await persistDissolve(client, objectId, outcome, opts);
+        return;
+      }
+
+      // ── materialize-copy (fresh object, no gate) | single-object gated write ──
       if (outcome.new_objects.length > 0) {
         for (const created of outcome.new_objects) await insertObjectRow(client, created);
         await replaceContentUnits(client, outcome.content.object_id, outcome.content.units);
@@ -299,10 +413,146 @@ export async function persistObjectGraph(
       await insertObjectVersion(client, outcome.version_snapshot);
     });
   } catch (err) {
+    if (err instanceof DissolutionRaced) return { won: false, blockedReferences: err.references };
     if (err instanceof RevisionConflict) return { won: false };
     throw err;
   }
   return { won: true };
+}
+
+/** Every `ExpressionId` inside one unit's content (a math unit's expr, or prose inline math). */
+function expressionIdsOfUnit(unit: Unit): string[] {
+  const c = unit.content;
+  if (c.kind === 'math') return [c.expr.id];
+  if (c.kind === 'prose') return c.inline.flatMap((el) => (el.kind === 'math' ? [el.expr.id] : []));
+  return [];
+}
+
+/**
+ * Re-home (two-object move). Gate the HOST on `host_content.revision` (NOT `content.revision`, which
+ * is the new object's = 1); insert the new object; delete-all+reinsert the host layer (incl. the
+ * embed, minus the moved rows) and the new object's layer (the moved units, ids preserved); re-point
+ * the composite-FK edges (links source+target, handles unit- AND expression-anchored) that followed
+ * the moved units. Constraints are deferred, so the move is consistent only at COMMIT. Unit-level
+ * taggings need no re-point — their FK is on the (preserved) id alone.
+ */
+async function persistRehome(
+  client: pg.PoolClient,
+  hostId: string,
+  outcome: OpOutcome,
+  opts: PersistOpts,
+): Promise<void> {
+  const newObject = outcome.new_objects[0];
+  const hostContent = outcome.host_content;
+  const hostSnapshot = outcome.host_version_snapshot;
+  if (!newObject || !hostContent || !hostSnapshot) {
+    throw new Error('rehome outcome missing new object / host content / host snapshot');
+  }
+  await client.query('SET CONSTRAINTS ALL DEFERRED');
+  const gated = await client.query(
+    `UPDATE objects SET revision = $1, updated_at = $2 WHERE id = $3 AND revision = $4`,
+    [hostContent.revision, opts.now.toISOString(), hostId, opts.expectedRevision],
+  );
+  if (gated.rowCount !== 1) throw new RevisionConflict();
+
+  await insertObjectRow(client, newObject);
+  await replaceContentUnits(client, hostId, hostContent.units);
+  await replaceContentUnits(client, newObject.id, outcome.content.units);
+
+  const movedIds = outcome.content.units.map((u) => u.id);
+  if (movedIds.length > 0) {
+    const movedExprIds = outcome.content.units.flatMap(expressionIdsOfUnit);
+    await client.query(
+      `UPDATE links SET source_object_id = $1 WHERE source_unit_id = ANY($2) AND source_object_id = $3`,
+      [newObject.id, movedIds, hostId],
+    );
+    await client.query(
+      `UPDATE links SET target_object_id = $1 WHERE target_unit_id = ANY($2) AND target_object_id = $3`,
+      [newObject.id, movedIds, hostId],
+    );
+    await client.query(
+      `UPDATE handles SET target_object_id = $1
+         WHERE (target_unit_id = ANY($2) OR target_expression_id = ANY($3::uuid[])) AND target_object_id = $4`,
+      [newObject.id, movedIds, movedExprIds, hostId],
+    );
+  }
+
+  await insertObjectVersion(client, hostSnapshot);
+  await insertObjectVersion(client, outcome.version_snapshot);
+}
+
+/**
+ * Dissolve (fold back + destroy). DUAL gate (host on `content.revision`, dissolved on
+ * `expectedDissolvedRevision`) before any destructive write — either lost race rolls the whole tx
+ * back (no partial destruction). Then RE-CHECK the reviewable-refusal gate IN-TRANSACTION (the
+ * route's pre-read is a TOCTOU window): an external inbound link added concurrently → `DissolutionRaced`
+ * (→ 422), never a silent re-point. Free the dissolved object's content rows, fold the units back under
+ * the host (delete-all+reinsert, dropping the embed), re-point only the object's OWN (self) edges to
+ * the host — an external inbound that slips in after the re-check is left pointing at the doomed
+ * object so the final `DELETE` hits its immediate FK and rolls back (never silent corruption).
+ * Checkpoint the host, then destroy the dissolved object in child-FK order (incl. its object-level
+ * taggings — not dependency-blockers).
+ */
+async function persistDissolve(
+  client: pg.PoolClient,
+  hostId: string,
+  outcome: OpOutcome,
+  opts: PersistOpts,
+): Promise<void> {
+  const dissolvedId = outcome.objects_removed[0];
+  if (!dissolvedId || opts.expectedDissolvedRevision == null) {
+    throw new Error('dissolve outcome/opts missing dissolved id or its expected revision');
+  }
+  await client.query('SET CONSTRAINTS ALL DEFERRED');
+  // Lock the dissolved object's row (serializes two concurrent dissolves of it).
+  await client.query(`SELECT id FROM objects WHERE id = $1 FOR UPDATE`, [dissolvedId]);
+  const hostGate = await client.query(
+    `UPDATE objects SET revision = $1, updated_at = $2 WHERE id = $3 AND revision = $4`,
+    [outcome.content.revision, opts.now.toISOString(), hostId, opts.expectedRevision],
+  );
+  if (hostGate.rowCount !== 1) throw new RevisionConflict();
+  const dissolvedGate = await client.query(
+    `UPDATE objects SET updated_at = $1 WHERE id = $2 AND revision = $3`,
+    [opts.now.toISOString(), dissolvedId, opts.expectedDissolvedRevision],
+  );
+  if (dissolvedGate.rowCount !== 1) throw new RevisionConflict();
+
+  // The authoritative §9.y gate: re-read external inbound references INSIDE the tx (closes the
+  // route-pre-read TOCTOU). A reference committed between the pre-read and now → refuse, don't move.
+  const inbound = await client.query<{ id: string }>(
+    `SELECT id FROM links WHERE target_object_id = $1 AND source_object_id <> $1 FOR UPDATE`,
+    [dissolvedId],
+  );
+  if (inbound.rowCount && inbound.rowCount > 0) {
+    throw new DissolutionRaced(inbound.rows.map((r) => r.id));
+  }
+
+  await client.query(`DELETE FROM content_units WHERE object_id = $1`, [dissolvedId]);
+  await replaceContentUnits(client, hostId, outcome.content.units);
+
+  // Re-point only the dissolved object's OWN edges. Source first → its self-edges now read source =
+  // host; the target re-point then matches ONLY those (source = host), so a concurrently-inserted
+  // external inbound (source = someone else) is deliberately left untouched (→ FK-fail at destroy).
+  await client.query(`UPDATE links SET source_object_id = $1 WHERE source_object_id = $2`, [
+    hostId,
+    dissolvedId,
+  ]);
+  await client.query(
+    `UPDATE links SET target_object_id = $1 WHERE target_object_id = $2 AND source_object_id = $1`,
+    [hostId, dissolvedId],
+  );
+  await client.query(`UPDATE handles SET target_object_id = $1 WHERE target_object_id = $2`, [
+    hostId,
+    dissolvedId,
+  ]);
+
+  await insertObjectVersion(client, outcome.version_snapshot);
+
+  await client.query(`DELETE FROM object_versions WHERE object_id = $1`, [dissolvedId]);
+  await client.query(`DELETE FROM aliases WHERE object_id = $1`, [dissolvedId]);
+  await client.query(`DELETE FROM definition_detail WHERE object_id = $1`, [dissolvedId]);
+  await client.query(`DELETE FROM taggings WHERE tagged_object_id = $1`, [dissolvedId]);
+  await client.query(`DELETE FROM objects WHERE id = $1`, [dissolvedId]);
 }
 
 /**

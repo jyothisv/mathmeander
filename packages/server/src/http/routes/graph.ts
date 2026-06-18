@@ -17,6 +17,8 @@ import {
   type MaterializeObjectInput,
   type MathpackMeta,
   type MergeUnitsInput,
+  type RehomeSubtreeInput,
+  type DissolveObjectInput,
   type NumberingPolicy,
   type OpContext,
   type OpOutcome,
@@ -35,6 +37,8 @@ import { AppError, coreErrorToHttp, coreErrorToHttpUntrusted, type ErrorBody } f
 import {
   insertReference,
   materializeObject,
+  rehomeSubtree,
+  dissolveObject,
   mergeUnits,
   projectNumbering,
   resolveOccurrence,
@@ -50,6 +54,7 @@ import {
   loadContent,
   loadCurrentLinks,
   loadCurrentTaggings,
+  loadObject,
   loadObjectSubgraph,
   persistObjectGraph,
 } from '../../db/graph.js';
@@ -62,6 +67,18 @@ const DEFAULT_POLICY: NumberingPolicy = {
 };
 
 const MaterializeBodySchema = z.object({ expected_revision: z.number().int().nonnegative() });
+
+const RehomeBodySchema = z.object({
+  expected_revision: z.number().int().nonnegative(),
+  subtree_root: z.string().uuid(),
+  type: z.string(), // the materialized object's type; the core validates producibility (→ 422)
+});
+
+const DissolveBodySchema = z.object({
+  expected_revision: z.number().int().nonnegative(),
+  expected_dissolved_revision: z.number().int().nonnegative(),
+  dissolved_object_id: z.string().uuid(),
+});
 
 export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
   // ── set_unit_type ──
@@ -238,6 +255,94 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  // ── rehome_subtree (the §9.y greedy-capture materialize; :id = the host) ──
+  app.post(
+    '/api/objects/:id/ops/rehome',
+    { schema: { body: RehomeBodySchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof RehomeBodySchema>;
+      const hostObject = await loadObject(deps.db, ctx.spaceId, id);
+      if (!hostObject) throw new AppError(404, 'NOT_FOUND', 'no such object');
+      const hostContent = (await loadContent(deps.db, ctx.spaceId, id)) ?? {
+        object_id: id,
+        revision: hostObject.revision,
+        units: [],
+      };
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const input: RehomeSubtreeInput = {
+        expected_revision: body.expected_revision,
+        host_object: hostObject,
+        host_content: hostContent,
+        subtree_root: body.subtree_root,
+        new_object_id: uuidv7(),
+        type: body.type as RehomeSubtreeInput['type'], // core validates producibility
+        embed_unit_id: uuidv7(),
+        new_version_id: uuidv7(),
+      };
+      const result = rehomeSubtree(input, opCtx, now);
+      // The HOST is the gated object (host_content carries its bumped revision).
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, body.expected_revision, now);
+    },
+  );
+
+  // ── dissolve_object (the inverse; :id = the host, dissolved id in the body) ──
+  app.post(
+    '/api/objects/:id/ops/dissolve',
+    { schema: { body: DissolveBodySchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof DissolveBodySchema>;
+      const hostContent = await loadContent(deps.db, ctx.spaceId, id);
+      if (!hostContent) throw new AppError(404, 'NOT_FOUND', 'no such object');
+      const dissolvedContent = await loadContent(deps.db, ctx.spaceId, body.dissolved_object_id);
+      if (!dissolvedContent) throw new AppError(404, 'NOT_FOUND', 'no such dissolved object');
+
+      // Infer the embed unit — the unique Embed{Object{dissolved}} in the host (the client need not
+      // know an internal structural id; a wrong/absent one is the core's DissolveInputInconsistent).
+      const embedUnit = hostContent.units.find(
+        (u) =>
+          u.content.kind === 'embed' &&
+          u.content.target.kind === 'object' &&
+          u.content.target.object_id === body.dissolved_object_id,
+      );
+      if (!embedUnit) throw new AppError(404, 'NOT_FOUND', 'no embed of that object in the host');
+
+      // External inbound edges depend on the object's identity → the reviewable-refusal gate (§9.y).
+      // Self-edges (source within the dissolved object) travel with the content and are NOT blockers.
+      const inbound = await deps.db.query<{ id: string }>(
+        `SELECT id FROM links WHERE target_object_id = $1 AND source_object_id <> $1`,
+        [body.dissolved_object_id],
+      );
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const input: DissolveObjectInput = {
+        expected_revision: body.expected_revision,
+        expected_dissolved_revision: body.expected_dissolved_revision,
+        host_content: hostContent,
+        embed_unit_id: embedUnit.id,
+        dissolved_object_id: body.dissolved_object_id,
+        dissolved_content: dissolvedContent,
+        inbound_references: inbound.rows.map((r) => r.id),
+      };
+      const result = dissolveObject(input, opCtx, now);
+      return finish(
+        deps,
+        reply,
+        id,
+        ctx.spaceId,
+        result,
+        provenance,
+        body.expected_revision,
+        now,
+        body.expected_dissolved_revision,
+      );
+    },
+  );
+
   // ── GET labels (the §6.3b numbering projection over a default policy) ──
   app.get('/api/objects/:id/labels', async (req, reply) => {
     const ctx = await requireSession(deps, req);
@@ -303,13 +408,24 @@ async function finish(
   provenance: Provenance,
   expectedRevision: number,
   now: Date,
+  expectedDissolvedRevision?: number,
 ): Promise<unknown> {
   if (!result.ok) return sendCoreError(reply, result.error);
-  const { won } = await persistObjectGraph(deps.db, objectId, result.value, {
+  const { won, blockedReferences } = await persistObjectGraph(deps.db, objectId, result.value, {
     provenance,
     expectedRevision,
     now,
+    expectedDissolvedRevision,
   });
+  // The in-transaction dissolution re-check found a concurrently-added reference (TOCTOU) — surface
+  // the SAME 422 the core's reviewable refusal produces.
+  if (blockedReferences) {
+    return sendCoreError(reply, {
+      kind: 'validation',
+      code: 'dissolution_blocked',
+      references: blockedReferences,
+    } as import('@mathmeander/schema').CoreError);
+  }
   if (!won) {
     const revision = await currentRevision(deps.db, spaceId, objectId);
     throw new AppError(409, 'REVISION_CONFLICT', 'object changed since you read it', {
