@@ -13,7 +13,10 @@ use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use crate::api::{CreateObjectResult, CreatedObject, ObjectResult};
+use crate::api::{
+    CreateObjectResult, CreatedObject, MathpackImportResult, MathpackResult, NumberingResult,
+    ObjectResult, OpOutcomeResult,
+};
 use crate::error::{CoreError, ValidationError};
 use crate::mathpack::{
     AssetChecksum, Mathpack, MathpackCounts, MathpackGraph, MathpackImport, MathpackManifest,
@@ -166,6 +169,14 @@ pub fn artifact_json() -> String {
         inline_schema_for::<CreateObjectResult>(),
     );
     defs.insert("ObjectResult", inline_schema_for::<ObjectResult>());
+    // Slice 1d FFI envelopes (ops + projections + packaging)
+    defs.insert("OpOutcomeResult", inline_schema_for::<OpOutcomeResult>());
+    defs.insert("NumberingResult", inline_schema_for::<NumberingResult>());
+    defs.insert("MathpackResult", inline_schema_for::<MathpackResult>());
+    defs.insert(
+        "MathpackImportResult",
+        inline_schema_for::<MathpackImportResult>(),
+    );
 
     let artifact = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -971,6 +982,9 @@ pub fn conformance_json() -> String {
           "value": { "code": "inline_span_out_of_bounds", "start": 9, "end": 9, "len": 2 },
           "valid": true },
         { "type": "ValidationError",
+          "value": { "code": "occurrence_span_out_of_bounds", "start": 5, "end": 9, "len": 3 },
+          "valid": true },
+        { "type": "ValidationError",
           "value": { "code": "content_edge_missing_anchor" }, "valid": true },
         { "type": "ValidationError",
           "value": { "code": "occurrence_already_resolved" }, "valid": true },
@@ -1061,6 +1075,43 @@ pub fn conformance_json() -> String {
           "valid": true },
         { "type": "MathpackImport", "value": { "graph": sample_mathpack_graph() }, "valid": false,
           "note": "manifest missing" },
+
+        // ════════════════ Slice 1d FFI envelopes (untagged ok/value | ok/error) ════════════════
+        { "type": "OpOutcomeResult",
+          "value": { "ok": true, "value": { "content": sample_math_content(), "links_upserted": [],
+                     "links_staled": [], "expression_id_remap": [],
+                     "version_snapshot": sample_object_version(), "new_objects": [],
+                     "taggings_propagated": [] } }, "valid": true },
+        { "type": "OpOutcomeResult",
+          "value": { "ok": false,
+                     "error": { "kind": "validation", "code": "unit_not_found", "unit_id": "u-1" } },
+          "valid": true },
+        { "type": "OpOutcomeResult", "value": { "ok": true }, "valid": false,
+          "note": "ok without value" },
+
+        { "type": "NumberingResult",
+          "value": { "ok": true, "value": { "labels": [
+                       { "unit_id": "0197675f-71f4-7000-8000-0000000000b1", "unit_type": "theorem",
+                         "number": 1, "name": null } ] } }, "valid": true },
+        { "type": "NumberingResult",
+          "value": { "ok": false, "error": { "kind": "malformed_input",
+                     "context": "numbering policy", "message": "bad" } }, "valid": true },
+
+        { "type": "MathpackResult",
+          "value": { "ok": true,
+                     "value": { "manifest": sample_mathpack_manifest(), "graph": sample_mathpack_graph() } },
+          "valid": true },
+        { "type": "MathpackResult", "value": { "ok": true }, "valid": false,
+          "note": "ok without value" },
+
+        { "type": "MathpackImportResult",
+          "value": { "ok": true,
+                     "value": { "manifest": sample_mathpack_manifest(), "graph": sample_mathpack_graph() } },
+          "valid": true },
+        { "type": "MathpackImportResult",
+          "value": { "ok": false, "error": { "kind": "validation",
+                     "code": "inline_span_out_of_bounds", "start": 9, "end": 9, "len": 2 } },
+          "valid": true },
     ]);
 
     let mut out = serde_json::to_string_pretty(&cases).expect("conformance serializes");
@@ -1192,6 +1243,17 @@ mod tests {
                 "MathpackGraph" => serde_json::from_value::<MathpackGraph>(value.clone()).is_ok(),
                 "Mathpack" => serde_json::from_value::<Mathpack>(value.clone()).is_ok(),
                 "MathpackImport" => serde_json::from_value::<MathpackImport>(value.clone()).is_ok(),
+                // ── Slice 1d FFI envelopes ──
+                "OpOutcomeResult" => {
+                    serde_json::from_value::<OpOutcomeResult>(value.clone()).is_ok()
+                }
+                "NumberingResult" => {
+                    serde_json::from_value::<NumberingResult>(value.clone()).is_ok()
+                }
+                "MathpackResult" => serde_json::from_value::<MathpackResult>(value.clone()).is_ok(),
+                "MathpackImportResult" => {
+                    serde_json::from_value::<MathpackImportResult>(value.clone()).is_ok()
+                }
                 other => panic!("conformance corpus names unknown type {other}"),
             };
             assert_eq!(

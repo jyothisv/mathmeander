@@ -186,6 +186,14 @@ pub enum ValidationError {
     #[error("inline span [{start}, {end}] is out of bounds for prose text of length {len}")]
     InlineSpanOutOfBounds { start: u32, end: u32, len: u32 },
 
+    /// An occurrence's selector span falls outside its expression's `surface_text` —
+    /// `start <= end <= surface_text length` (char offsets, §6.3a). Like inline spans, the ops
+    /// maintain it by construction (the surface serializer produces in-bounds selectors); the
+    /// import load path can't assume it, so it gates here — a corrupt selector is the slice-2
+    /// resolution substrate, so it must not reach storage. A glue/import bug, not a client error.
+    #[error("occurrence selector [{start}, {end}] is out of bounds for surface of length {len}")]
+    OccurrenceSpanOutOfBounds { start: u32, end: u32, len: u32 },
+
     /// A content-derived edge (`from_content = true`) must record WHERE it came from —
     /// both `source_unit_id` and `content_locator` (§6.1b).
     #[error("a content-derived edge requires source_unit_id and content_locator")]

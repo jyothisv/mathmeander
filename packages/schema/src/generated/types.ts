@@ -39,10 +39,13 @@ import {
   MathpackCountsSchema,
   MathpackGraphSchema,
   MathpackImportSchema,
+  MathpackImportResultSchema,
   MathpackManifestSchema,
   MathpackMetaSchema,
+  MathpackResultSchema,
   MergeUnitsInputSchema,
   NumberingPolicySchema,
+  NumberingResultSchema,
   ObjectPatchSchema,
   ObjectResultSchema,
   ObjectStatusSchema,
@@ -52,6 +55,7 @@ import {
   OccurrenceTargetSchema,
   OpContextSchema,
   OpOutcomeSchema,
+  OpOutcomeResultSchema,
   OriginSchema,
   ParseStatusSchema,
   ProvenanceSchema,
@@ -112,10 +116,13 @@ export type Mathpack = z.infer<typeof MathpackSchema>;
 export type MathpackCounts = z.infer<typeof MathpackCountsSchema>;
 export type MathpackGraph = z.infer<typeof MathpackGraphSchema>;
 export type MathpackImport = z.infer<typeof MathpackImportSchema>;
+export type MathpackImportResult = z.infer<typeof MathpackImportResultSchema>;
 export type MathpackManifest = z.infer<typeof MathpackManifestSchema>;
 export type MathpackMeta = z.infer<typeof MathpackMetaSchema>;
+export type MathpackResult = z.infer<typeof MathpackResultSchema>;
 export type MergeUnitsInput = z.infer<typeof MergeUnitsInputSchema>;
 export type NumberingPolicy = z.infer<typeof NumberingPolicySchema>;
+export type NumberingResult = z.infer<typeof NumberingResultSchema>;
 export type ObjectPatch = z.infer<typeof ObjectPatchSchema>;
 export type ObjectResult = z.infer<typeof ObjectResultSchema>;
 export type ObjectStatus = z.infer<typeof ObjectStatusSchema>;
@@ -125,6 +132,7 @@ export type Occurrence = z.infer<typeof OccurrenceSchema>;
 export type OccurrenceTarget = z.infer<typeof OccurrenceTargetSchema>;
 export type OpContext = z.infer<typeof OpContextSchema>;
 export type OpOutcome = z.infer<typeof OpOutcomeSchema>;
+export type OpOutcomeResult = z.infer<typeof OpOutcomeResultSchema>;
 export type Origin = z.infer<typeof OriginSchema>;
 export type ParseStatus = z.infer<typeof ParseStatusSchema>;
 export type Provenance = z.infer<typeof ProvenanceSchema>;

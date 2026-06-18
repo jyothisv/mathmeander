@@ -4,9 +4,12 @@
 import { buildDevIdp } from '@mathmeander/dev-idp/idp';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
+import { v7 as uuidv7 } from 'uuid';
+import type { Provenance, Unit } from '@mathmeander/schema';
 import { buildApp, type App } from '../../src/http/app.js';
 import { createIdpVerifier } from '../../src/auth/verify.js';
 import { loadEnv } from '../../src/config/env.js';
+import { seedContent } from '../../src/db/graph.js';
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
@@ -103,9 +106,53 @@ export async function createStack(): Promise<TestStack> {
   };
 }
 
-/** Wipe all data between test files (schema stays; truncation respects FK order). */
+/** Wipe all data between test files (schema stays; CASCADE + all base tables = order-independent). */
 export async function truncateAll(db: pg.Pool): Promise<void> {
-  await db.query('TRUNCATE objects, provenance, sessions, spaces, users CASCADE');
+  await db.query(
+    `TRUNCATE objects, provenance, sessions, spaces, users, content_units, links, aliases,
+              handles, tags, taggings, object_versions, definition_detail, provenance_derivations CASCADE`,
+  );
 }
 
 export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+/**
+ * Seed one object (a `note`, the only directly-creatable type) with a single prose unit, via the
+ * REAL persistence path. SLICE-2: stands in for the editor's authoring — no 1c op creates a unit
+ * from nothing, so tests seed the content the ops then transform.
+ */
+export async function seedObjectWithProse(
+  stack: TestStack,
+  token: string,
+  opts: { text: string },
+): Promise<{ objectId: string; unitId: string; provenanceId: string }> {
+  const objectId = uuidv7();
+  const created = await stack.app.inject({
+    method: 'POST',
+    url: '/api/objects',
+    headers: bearer(token),
+    payload: { id: objectId, type: 'note', title: 'seed', raw_source: opts.text },
+  });
+  if (created.statusCode !== 201) {
+    throw new Error(`seed create failed: ${created.statusCode} ${created.body}`);
+  }
+
+  const unitId = uuidv7();
+  const provenanceId = uuidv7();
+  const provenance: Provenance = {
+    id: provenanceId,
+    origin: 'system',
+    occurred_at: new Date().toISOString(),
+  };
+  const unit: Unit = {
+    id: unitId,
+    object_id: objectId,
+    position: 0,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'prose', text: opts.text, inline: [] },
+    provenance_id: provenanceId,
+  };
+  await seedContent(stack.db, objectId, [unit], provenance);
+  return { objectId, unitId, provenanceId };
+}

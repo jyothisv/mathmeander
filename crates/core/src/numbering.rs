@@ -112,9 +112,12 @@ pub fn project_display_labels(
 
 /// Units in true reading order (pre-order): top-level units (`parent = None`) by `(position, id)`,
 /// each immediately followed by its descendants by `(position, id)` — NOT the input vec order.
-/// Total and cycle-safe: a `visited` set guards against parent cycles, and any units never reached
-/// from a root (an orphaned/dangling parent, or a cycle) are appended in a deterministic
-/// `(parent, position, id)` order so every unit gets exactly one label.
+///
+/// PRECONDITION: unit ids are distinct (a `content_units` PK invariant). The `visited` set that
+/// keeps this total would otherwise silently drop a duplicate. Total and cycle-safe regardless: a
+/// cycle or a dangling/orphaned parent is never reached from a root, so those units are appended at
+/// the end in a deterministic `(parent, position, id)` order — best-effort (orphan subtrees stay
+/// flat, not re-rooted) — so every distinct-id unit gets exactly one label.
 fn document_order(units: &[Unit]) -> Vec<&Unit> {
     use std::collections::{HashMap, HashSet};
 

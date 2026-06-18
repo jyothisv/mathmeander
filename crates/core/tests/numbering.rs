@@ -262,3 +262,45 @@ fn nested_units_number_in_reading_order() {
     assert_eq!(label_for(&labels, lemma_under_top1.id).number, Some(1));
     assert_eq!(label_for(&labels, lemma_under_top2.id).number, Some(2));
 }
+
+/// A parent CYCLE (a↔b) is never reached from a root — the projection stays total (every unit
+/// labeled, no hang), appending the cycle members deterministically.
+#[test]
+fn numbers_are_total_under_a_parent_cycle() {
+    let a = Unit {
+        parent_unit_id: Some(UnitId(v7(0xb2))),
+        ..unit(0xb1, 0, Some(UnitType::Theorem))
+    };
+    let b = Unit {
+        parent_unit_id: Some(UnitId(v7(0xb1))),
+        ..unit(0xb2, 1, Some(UnitType::Theorem))
+    };
+    let labels = project_display_labels(
+        &[a.clone(), b.clone()],
+        &[],
+        &[],
+        &per_type(&[UnitType::Theorem]),
+    );
+    assert_eq!(labels.labels.len(), 2, "every unit is labeled exactly once");
+    let numbers: Vec<Option<u32>> = labels.labels.iter().map(|l| l.number).collect();
+    assert!(numbers.contains(&Some(1)) && numbers.contains(&Some(2)));
+}
+
+/// An ORPHAN (parent id absent from the set) is never reached from a root, but is still labeled.
+#[test]
+fn orphan_unit_is_still_labeled() {
+    let orphan = Unit {
+        parent_unit_id: Some(UnitId(v7(0xdead))),
+        ..unit(0xb1, 0, Some(UnitType::Theorem))
+    };
+    let root = unit(0xb2, 0, Some(UnitType::Theorem));
+    let labels = project_display_labels(
+        &[orphan.clone(), root.clone()],
+        &[],
+        &[],
+        &per_type(&[UnitType::Theorem]),
+    );
+    assert_eq!(labels.labels.len(), 2);
+    assert!(label_for(&labels, orphan.id).number.is_some());
+    assert!(label_for(&labels, root.id).number.is_some());
+}

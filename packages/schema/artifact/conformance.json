@@ -2139,6 +2139,16 @@
   {
     "type": "ValidationError",
     "value": {
+      "code": "occurrence_span_out_of_bounds",
+      "start": 5,
+      "end": 9,
+      "len": 3
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
       "code": "content_edge_missing_anchor"
     },
     "valid": true
@@ -2805,5 +2815,367 @@
     },
     "valid": false,
     "note": "manifest missing"
+  },
+  {
+    "type": "OpOutcomeResult",
+    "value": {
+      "ok": true,
+      "value": {
+        "content": {
+          "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+          "revision": 3,
+          "units": [
+            {
+              "id": "0197675f-71f4-7000-8000-0000000000b1",
+              "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+              "parent_unit_id": null,
+              "position": 0,
+              "slot": null,
+              "type": "theorem",
+              "example_kind": null,
+              "status": "rough",
+              "declared_by": "user",
+              "extracted_structure": null,
+              "content": {
+                "kind": "prose",
+                "text": "By x ...",
+                "inline": [
+                  {
+                    "kind": "math",
+                    "span": {
+                      "start": 3,
+                      "end": 3
+                    },
+                    "expr": {
+                      "id": "0197675f-71f4-7000-8000-0000000000c1",
+                      "surface_text": "a/b",
+                      "surface_format": "mathmeander",
+                      "input_syntax": "latex",
+                      "original_input": "\\frac{a}{b}",
+                      "parse_status": "renderable",
+                      "occurrences": []
+                    }
+                  }
+                ]
+              },
+              "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+            }
+          ]
+        },
+        "links_upserted": [],
+        "links_staled": [],
+        "expression_id_remap": [],
+        "version_snapshot": {
+          "id": "0197675f-71f4-7000-8000-00000000000a",
+          "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+          "version_no": 4,
+          "snapshot": {
+            "object_id": "…",
+            "revision": 4,
+            "units": []
+          },
+          "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+          "created_at": "2026-06-12T00:00:00Z"
+        },
+        "new_objects": [],
+        "taggings_propagated": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "OpOutcomeResult",
+    "value": {
+      "ok": false,
+      "error": {
+        "kind": "validation",
+        "code": "unit_not_found",
+        "unit_id": "u-1"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "OpOutcomeResult",
+    "value": {
+      "ok": true
+    },
+    "valid": false,
+    "note": "ok without value"
+  },
+  {
+    "type": "NumberingResult",
+    "value": {
+      "ok": true,
+      "value": {
+        "labels": [
+          {
+            "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+            "unit_type": "theorem",
+            "number": 1,
+            "name": null
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "NumberingResult",
+    "value": {
+      "ok": false,
+      "error": {
+        "kind": "malformed_input",
+        "context": "numbering policy",
+        "message": "bad"
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "MathpackResult",
+    "value": {
+      "ok": true,
+      "value": {
+        "manifest": {
+          "format": "mathmeander.mathpack",
+          "format_version": 1,
+          "schema_version": 1,
+          "created_at": "2026-06-12T00:00:00Z",
+          "space_id": "0197675f-71f4-7000-8000-000000000003",
+          "counts": {
+            "objects": 1,
+            "units": 1,
+            "links": 0,
+            "aliases": 0,
+            "handles": 0,
+            "tags": 0,
+            "taggings": 0,
+            "object_versions": 1,
+            "definition_details": 0,
+            "provenance": 1,
+            "provenance_derivations": 0
+          },
+          "assets": []
+        },
+        "graph": {
+          "objects": [
+            {
+              "id": "0197675f-71f4-7000-8000-000000000001",
+              "type": "note",
+              "title": "Cauchy sequences",
+              "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+              "status": "draft",
+              "schema_version": 1,
+              "revision": 1,
+              "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+              "space_id": "0197675f-71f4-7000-8000-000000000003",
+              "created_at": "2026-06-12T00:00:00Z",
+              "updated_at": "2026-06-12T00:00:00Z"
+            }
+          ],
+          "provenance": [],
+          "provenance_derivations": [],
+          "content": [
+            {
+              "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+              "revision": 3,
+              "units": [
+                {
+                  "id": "0197675f-71f4-7000-8000-0000000000b1",
+                  "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+                  "parent_unit_id": null,
+                  "position": 0,
+                  "slot": null,
+                  "type": "theorem",
+                  "example_kind": null,
+                  "status": "rough",
+                  "declared_by": "user",
+                  "extracted_structure": null,
+                  "content": {
+                    "kind": "prose",
+                    "text": "By x ...",
+                    "inline": [
+                      {
+                        "kind": "math",
+                        "span": {
+                          "start": 3,
+                          "end": 3
+                        },
+                        "expr": {
+                          "id": "0197675f-71f4-7000-8000-0000000000c1",
+                          "surface_text": "a/b",
+                          "surface_format": "mathmeander",
+                          "input_syntax": "latex",
+                          "original_input": "\\frac{a}{b}",
+                          "parse_status": "renderable",
+                          "occurrences": []
+                        }
+                      }
+                    ]
+                  },
+                  "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+                }
+              ]
+            }
+          ],
+          "links": [],
+          "aliases": [],
+          "handles": [],
+          "tags": [],
+          "taggings": [],
+          "object_versions": [
+            {
+              "id": "0197675f-71f4-7000-8000-00000000000a",
+              "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+              "version_no": 4,
+              "snapshot": {
+                "object_id": "…",
+                "revision": 4,
+                "units": []
+              },
+              "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+              "created_at": "2026-06-12T00:00:00Z"
+            }
+          ],
+          "definition_details": []
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "MathpackResult",
+    "value": {
+      "ok": true
+    },
+    "valid": false,
+    "note": "ok without value"
+  },
+  {
+    "type": "MathpackImportResult",
+    "value": {
+      "ok": true,
+      "value": {
+        "manifest": {
+          "format": "mathmeander.mathpack",
+          "format_version": 1,
+          "schema_version": 1,
+          "created_at": "2026-06-12T00:00:00Z",
+          "space_id": "0197675f-71f4-7000-8000-000000000003",
+          "counts": {
+            "objects": 1,
+            "units": 1,
+            "links": 0,
+            "aliases": 0,
+            "handles": 0,
+            "tags": 0,
+            "taggings": 0,
+            "object_versions": 1,
+            "definition_details": 0,
+            "provenance": 1,
+            "provenance_derivations": 0
+          },
+          "assets": []
+        },
+        "graph": {
+          "objects": [
+            {
+              "id": "0197675f-71f4-7000-8000-000000000001",
+              "type": "note",
+              "title": "Cauchy sequences",
+              "raw_source": "Rough thought: $\\forall \\epsilon > 0$ …\nsecond line ℝ",
+              "status": "draft",
+              "schema_version": 1,
+              "revision": 1,
+              "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+              "space_id": "0197675f-71f4-7000-8000-000000000003",
+              "created_at": "2026-06-12T00:00:00Z",
+              "updated_at": "2026-06-12T00:00:00Z"
+            }
+          ],
+          "provenance": [],
+          "provenance_derivations": [],
+          "content": [
+            {
+              "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+              "revision": 3,
+              "units": [
+                {
+                  "id": "0197675f-71f4-7000-8000-0000000000b1",
+                  "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+                  "parent_unit_id": null,
+                  "position": 0,
+                  "slot": null,
+                  "type": "theorem",
+                  "example_kind": null,
+                  "status": "rough",
+                  "declared_by": "user",
+                  "extracted_structure": null,
+                  "content": {
+                    "kind": "prose",
+                    "text": "By x ...",
+                    "inline": [
+                      {
+                        "kind": "math",
+                        "span": {
+                          "start": 3,
+                          "end": 3
+                        },
+                        "expr": {
+                          "id": "0197675f-71f4-7000-8000-0000000000c1",
+                          "surface_text": "a/b",
+                          "surface_format": "mathmeander",
+                          "input_syntax": "latex",
+                          "original_input": "\\frac{a}{b}",
+                          "parse_status": "renderable",
+                          "occurrences": []
+                        }
+                      }
+                    ]
+                  },
+                  "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+                }
+              ]
+            }
+          ],
+          "links": [],
+          "aliases": [],
+          "handles": [],
+          "tags": [],
+          "taggings": [],
+          "object_versions": [
+            {
+              "id": "0197675f-71f4-7000-8000-00000000000a",
+              "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+              "version_no": 4,
+              "snapshot": {
+                "object_id": "…",
+                "revision": 4,
+                "units": []
+              },
+              "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
+              "created_at": "2026-06-12T00:00:00Z"
+            }
+          ],
+          "definition_details": []
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "type": "MathpackImportResult",
+    "value": {
+      "ok": false,
+      "error": {
+        "kind": "validation",
+        "code": "inline_span_out_of_bounds",
+        "start": 9,
+        "end": 9,
+        "len": 2
+      }
+    },
+    "valid": true
   }
 ]

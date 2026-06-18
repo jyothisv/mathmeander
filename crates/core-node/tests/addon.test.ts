@@ -9,15 +9,37 @@ import {
   coreVersion,
   createObject,
   currentSchemaVersion,
+  exportMathpack,
+  importMathpack,
   parseAndMigrateObject,
+  projectNumbering,
+  setUnitType,
 } from '../index.js';
 import {
   ARTIFACT_HASH,
   CreateObjectResultSchema,
+  MathpackImportResultSchema,
+  MathpackResultSchema,
+  NumberingResultSchema,
   ObjectResultSchema,
+  OpOutcomeResultSchema,
   SCHEMA_VERSION,
 } from '@mathmeander/schema';
 import pkg from '../package.json' with { type: 'json' };
+
+const EMPTY_GRAPH = {
+  objects: [],
+  provenance: [],
+  provenance_derivations: [],
+  content: [],
+  links: [],
+  aliases: [],
+  handles: [],
+  tags: [],
+  taggings: [],
+  object_versions: [],
+  definition_details: [],
+};
 
 describe('napi addon handshake', () => {
   it('coreVersion() answers from Rust and matches the workspace version', () => {
@@ -90,5 +112,50 @@ describe('result envelopes parse under the GENERATED zod schemas', () => {
       JSON.parse(parseAndMigrateObject(JSON.stringify(stored))),
     );
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('slice-1d FFI exports cross the real addon under the generated schemas', () => {
+  it('projectNumbering returns a DisplayLabels envelope', () => {
+    const envelope = projectNumbering(
+      JSON.stringify([]),
+      JSON.stringify([]),
+      JSON.stringify([]),
+      JSON.stringify({ numbered_types: [], shared_counter: false }),
+    );
+    const result = NumberingResultSchema.parse(JSON.parse(envelope));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.labels).toEqual([]);
+  });
+
+  it('an op surfaces a typed error envelope across the FFI (unit_not_found)', () => {
+    const envelope = setUnitType(
+      JSON.stringify({ object_id: '0197675f-71f4-7000-8000-0000000000a1', revision: 1, units: [] }),
+      JSON.stringify({ expected_revision: 1, unit_id: '0197675f-71f4-7000-8000-0000000000b1' }),
+      JSON.stringify({
+        provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
+        version_id: '0197675f-71f4-7000-8000-00000000000a',
+      }),
+      '2026-06-12T00:00:00Z',
+    );
+    const result = OpOutcomeResultSchema.parse(JSON.parse(envelope));
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatchObject({ kind: 'validation', code: 'unit_not_found' });
+  });
+
+  it('export → import round-trips an (empty) graph across the FFI', () => {
+    const exportEnv = exportMathpack(
+      JSON.stringify({ space_id: '0197675f-71f4-7000-8000-000000000003', asset_checksums: [] }),
+      JSON.stringify(EMPTY_GRAPH),
+      '2026-06-12T00:00:00Z',
+    );
+    const exported = MathpackResultSchema.parse(JSON.parse(exportEnv));
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) return;
+    const importEnv = importMathpack(JSON.stringify(exported.value));
+    const imported = MathpackImportResultSchema.parse(JSON.parse(importEnv));
+    expect(imported.ok).toBe(true);
+    if (imported.ok) expect(imported.value.graph).toEqual(exported.value.graph);
   });
 });

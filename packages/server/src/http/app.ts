@@ -14,6 +14,7 @@ import type { Env } from '../config/env.js';
 import type { IdpVerifier } from '../auth/verify.js';
 import { AppError } from './errors.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerGraphRoutes } from './routes/graph.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerObjectRoutes } from './routes/objects.js';
 
@@ -71,6 +72,7 @@ export function buildApp(deps: AppDeps): App {
   app.register(registerHealthRoutes, deps);
   app.register(registerAuthRoutes, deps);
   app.register(registerObjectRoutes, deps);
+  app.register(registerGraphRoutes, deps);
 
   return app;
 }

@@ -48,3 +48,138 @@ pub fn apply_title_patch(current_json: String, patch_json: String, now_iso: Stri
 pub fn parse_and_migrate_object(stored_json: String) -> String {
     mathmeander_core::api::parse_and_migrate_object(&stored_json)
 }
+
+// ── Slice 1c canonical operations: content (+ current rows) + input + ctx + now → ──
+// `OpOutcomeResult` JSON. One-line delegations; all logic is in the core.
+
+/// Set a unit's type → `OpOutcomeResult` JSON.
+#[napi]
+pub fn set_unit_type(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::set_unit_type(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Split a prose unit → `OpOutcomeResult` JSON.
+#[napi]
+pub fn split_unit(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::split_unit(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Merge two prose units (current taggings passed in) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn merge_units(
+    content_json: String,
+    current_taggings_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::merge_units(
+        &content_json,
+        &current_taggings_json,
+        &input_json,
+        &ctx_json,
+        &now_iso,
+    )
+}
+
+/// Toggle an expression's inline/display placement → `OpOutcomeResult` JSON.
+#[napi]
+pub fn toggle_expression_placement(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::toggle_expression_placement(
+        &content_json,
+        &input_json,
+        &ctx_json,
+        &now_iso,
+    )
+}
+
+/// Rewrite a surface, re-anchoring inbound edges (current links passed in) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn rewrite_surface(
+    content_json: String,
+    current_links_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::rewrite_surface(
+        &content_json,
+        &current_links_json,
+        &input_json,
+        &ctx_json,
+        &now_iso,
+    )
+}
+
+/// Insert a reference edge → `OpOutcomeResult` JSON.
+#[napi]
+pub fn insert_reference(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::insert_reference(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Resolve an occurrence to a target → `OpOutcomeResult` JSON.
+#[napi]
+pub fn resolve_occurrence(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::resolve_occurrence(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Materialize a copy-and-edge object (input carries the source) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn materialize_object(input_json: String, ctx_json: String, now_iso: String) -> String {
+    mathmeander_core::api::materialize_object(&input_json, &ctx_json, &now_iso)
+}
+
+// ── Slice 1d projections + packaging. ──
+
+/// Project display labels (policy passed in) → `NumberingResult` JSON.
+#[napi]
+pub fn project_numbering(
+    units_json: String,
+    aliases_json: String,
+    handles_json: String,
+    policy_json: String,
+) -> String {
+    mathmeander_core::api::project_numbering(
+        &units_json,
+        &aliases_json,
+        &handles_json,
+        &policy_json,
+    )
+}
+
+/// Build an export bundle → `MathpackResult` JSON.
+#[napi]
+pub fn export_mathpack(meta_json: String, graph_json: String, now_iso: String) -> String {
+    mathmeander_core::api::export_mathpack(&meta_json, &graph_json, &now_iso)
+}
+
+/// Validate + migrate + echo an imported bundle → `MathpackImportResult` JSON.
+#[napi]
+pub fn import_mathpack(bundle_json: String) -> String {
+    mathmeander_core::api::import_mathpack(&bundle_json)
+}

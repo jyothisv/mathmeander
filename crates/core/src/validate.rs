@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::error::ValidationError;
 use crate::ids::{ObjectId, ProvenanceId, SpaceId};
 use crate::model::{
-    CanonicalObject, Inline, Link, LinkType, ObjectStatus, ObjectType, Origin, Provenance, Tagging,
+    CanonicalObject, Inline, Link, LinkType, MathExpression, ObjectStatus, ObjectType, Origin,
+    Provenance, Tagging,
 };
 use crate::patch::Patch;
 
@@ -279,6 +280,29 @@ pub fn validate_prose_inline(text: &str, inline: &[Inline]) -> Result<(), Valida
             });
         }
         validate_inline(element)?; // the atom zero-width rule, not duplicated
+        if let Inline::Math { expr, .. } = element {
+            validate_expression(expr)?; // the inner expression's occurrence selectors
+        }
+    }
+    Ok(())
+}
+
+/// The §6.3a expression well-formedness rule the ops get by construction (the surface serializer
+/// produces in-bounds occurrence selectors): every `occurrence.selector` is in-bounds against the
+/// expression's `surface_text` — `start <= end <= surface_text` char-length. The IMPORT load path
+/// can't assume it, so it runs this over BOTH carriers (a display `Math` unit and inline `Math`).
+/// `pub` for reuse by `mathpack::validate_graph` and the Pass-2 glue.
+pub fn validate_expression(expr: &MathExpression) -> Result<(), ValidationError> {
+    let len = expr.surface_text.chars().count() as u32;
+    for occurrence in &expr.occurrences {
+        let span = occurrence.selector;
+        if span.start > span.end || span.end > len {
+            return Err(ValidationError::OccurrenceSpanOutOfBounds {
+                start: span.start,
+                end: span.end,
+                len,
+            });
+        }
     }
     Ok(())
 }

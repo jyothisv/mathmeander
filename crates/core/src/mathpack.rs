@@ -24,7 +24,9 @@ use crate::model::{
     ProvenanceDerivation, Tag, Tagging, UnitContent,
 };
 use crate::ops::MathContent;
-use crate::validate::{validate_link, validate_prose_inline, validate_tagging};
+use crate::validate::{
+    validate_expression, validate_link, validate_prose_inline, validate_tagging,
+};
 
 /// The pack format tag (distinct from the canonical model's `schema_version`).
 pub const MATHPACK_FORMAT: &str = "mathmeander.mathpack";
@@ -286,8 +288,12 @@ fn derive_counts(graph: &MathpackGraph) -> MathpackCounts {
 pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
     for content in &graph.content {
         for unit in &content.units {
-            if let UnitContent::Prose { text, inline } = &unit.content {
-                validate_prose_inline(text, inline)?;
+            match &unit.content {
+                // Prose: outer inline spans + zero-width atoms + each inline math's occurrences.
+                UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
+                // Display math: the placed expression's occurrence selectors.
+                UnitContent::Math { expr } => validate_expression(expr)?,
+                _ => {}
             }
         }
     }

@@ -9,17 +9,54 @@ import {
   applyTitlePatch as addonApplyTitlePatch,
   parseAndMigrateObject as addonParseAndMigrateObject,
   currentSchemaVersion as addonCurrentSchemaVersion,
+  setUnitType as addonSetUnitType,
+  splitUnit as addonSplitUnit,
+  mergeUnits as addonMergeUnits,
+  toggleExpressionPlacement as addonToggleExpressionPlacement,
+  rewriteSurface as addonRewriteSurface,
+  insertReference as addonInsertReference,
+  resolveOccurrence as addonResolveOccurrence,
+  materializeObject as addonMaterializeObject,
+  projectNumbering as addonProjectNumbering,
+  exportMathpack as addonExportMathpack,
+  importMathpack as addonImportMathpack,
 } from '@mathmeander/core-node';
 import {
   ARTIFACT_HASH,
   CreateObjectResultSchema,
   ObjectResultSchema,
+  OpOutcomeResultSchema,
+  NumberingResultSchema,
+  MathpackResultSchema,
+  MathpackImportResultSchema,
   type CanonicalObject,
   type CreateContext,
   type CreateObjectInput,
   type CreateObjectResult,
   type ObjectPatch,
   type ObjectResult,
+  type MathContent,
+  type OpContext,
+  type OpOutcomeResult,
+  type SetUnitTypeInput,
+  type SplitUnitInput,
+  type MergeUnitsInput,
+  type ToggleExpressionPlacementInput,
+  type RewriteSurfaceInput,
+  type InsertReferenceInput,
+  type ResolveOccurrenceInput,
+  type MaterializeObjectInput,
+  type Tagging,
+  type Link,
+  type Unit,
+  type Alias,
+  type Handle,
+  type NumberingPolicy,
+  type NumberingResult,
+  type MathpackMeta,
+  type MathpackGraph,
+  type MathpackResult,
+  type MathpackImportResult,
 } from '@mathmeander/schema';
 
 /// Boot handshake (debt guard #7): a stale addon is no server, not subtle bugs.
@@ -74,4 +111,184 @@ export function applyTitlePatch(
 
 export function parseAndMigrateObject(stored: unknown): ObjectResult {
   return ObjectResultSchema.parse(JSON.parse(addonParseAndMigrateObject(JSON.stringify(stored))));
+}
+
+// ── Slice 1c canonical operations. Each: typed args → JSON over the FFI → zod-parsed envelope.
+// `content` is assembled from the SQL load; `input` is the request body with fresh ids the route
+// minted; `ctx` carries the glue-minted provenance/version ids. merge/rewrite pass current rows.
+
+export function setUnitType(
+  content: MathContent,
+  input: SetUnitTypeInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonSetUnitType(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function splitUnit(
+  content: MathContent,
+  input: SplitUnitInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonSplitUnit(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function mergeUnits(
+  content: MathContent,
+  currentTaggings: Tagging[],
+  input: MergeUnitsInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonMergeUnits(
+        JSON.stringify(content),
+        JSON.stringify(currentTaggings),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function toggleExpressionPlacement(
+  content: MathContent,
+  input: ToggleExpressionPlacementInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonToggleExpressionPlacement(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function rewriteSurface(
+  content: MathContent,
+  currentLinks: Link[],
+  input: RewriteSurfaceInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonRewriteSurface(
+        JSON.stringify(content),
+        JSON.stringify(currentLinks),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function insertReference(
+  content: MathContent,
+  input: InsertReferenceInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonInsertReference(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function resolveOccurrence(
+  content: MathContent,
+  input: ResolveOccurrenceInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonResolveOccurrence(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function materializeObject(
+  input: MaterializeObjectInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonMaterializeObject(JSON.stringify(input), JSON.stringify(ctx), now.toISOString()),
+    ),
+  );
+}
+
+// ── Slice 1d projections + packaging. ──
+
+export function projectNumbering(
+  units: Unit[],
+  aliases: Alias[],
+  handles: Handle[],
+  policy: NumberingPolicy,
+): NumberingResult {
+  return NumberingResultSchema.parse(
+    JSON.parse(
+      addonProjectNumbering(
+        JSON.stringify(units),
+        JSON.stringify(aliases),
+        JSON.stringify(handles),
+        JSON.stringify(policy),
+      ),
+    ),
+  );
+}
+
+export function exportMathpack(
+  meta: MathpackMeta,
+  graph: MathpackGraph,
+  now: Date,
+): MathpackResult {
+  return MathpackResultSchema.parse(
+    JSON.parse(addonExportMathpack(JSON.stringify(meta), JSON.stringify(graph), now.toISOString())),
+  );
+}
+
+export function importMathpack(bundle: unknown): MathpackImportResult {
+  return MathpackImportResultSchema.parse(JSON.parse(addonImportMathpack(JSON.stringify(bundle))));
 }
