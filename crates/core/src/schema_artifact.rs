@@ -15,6 +15,10 @@ use serde_json::{Value, json};
 
 use crate::api::{CreateObjectResult, CreatedObject, ObjectResult};
 use crate::error::{CoreError, ValidationError};
+use crate::mathpack::{
+    AssetChecksum, Mathpack, MathpackCounts, MathpackGraph, MathpackImport, MathpackManifest,
+    MathpackMeta,
+};
 use crate::model::{
     Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ContentLocator, DeclaredBy,
     DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle, HandleScope,
@@ -23,6 +27,7 @@ use crate::model::{
     ProvenanceDerivation, ReferenceTarget, SurfaceFormat, Tag, Tagging, TargetSelector, Unit,
     UnitContent, UnitStatus, UnitType,
 };
+use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
     ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
     MergeUnitsInput, OpContext, OpOutcome, ResolveOccurrenceInput, ResolveTarget,
@@ -134,6 +139,17 @@ pub fn artifact_json() -> String {
         "MaterializeObjectInput",
         inline_schema_for::<MaterializeObjectInput>(),
     );
+    // Slice 1d projections + packaging (§6.3b numbering, §10 .mathpack)
+    defs.insert("NumberingPolicy", inline_schema_for::<NumberingPolicy>());
+    defs.insert("UnitLabel", inline_schema_for::<UnitLabel>());
+    defs.insert("DisplayLabels", inline_schema_for::<DisplayLabels>());
+    defs.insert("AssetChecksum", inline_schema_for::<AssetChecksum>());
+    defs.insert("MathpackMeta", inline_schema_for::<MathpackMeta>());
+    defs.insert("MathpackCounts", inline_schema_for::<MathpackCounts>());
+    defs.insert("MathpackManifest", inline_schema_for::<MathpackManifest>());
+    defs.insert("MathpackGraph", inline_schema_for::<MathpackGraph>());
+    defs.insert("Mathpack", inline_schema_for::<Mathpack>());
+    defs.insert("MathpackImport", inline_schema_for::<MathpackImport>());
     // Request DTOs
     defs.insert(
         "CreateObjectInput",
@@ -241,6 +257,38 @@ fn sample_link_draft() -> Value {
         "source_object_id": "0197675f-71f4-7000-8000-0000000000a1",
         "target_object_id": "0197675f-71f4-7000-8000-0000000000a2",
         "link_type": "proves", "from_content": false
+    })
+}
+
+/// A `MathpackCounts` value (slice-1d packaging). Shape-only — counts need not match a graph.
+fn sample_mathpack_counts() -> Value {
+    json!({
+        "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
+        "taggings": 0, "object_versions": 1, "definition_details": 0, "provenance": 1,
+        "provenance_derivations": 0
+    })
+}
+
+/// A `MathpackManifest` value, reused by the `Mathpack`/`MathpackImport` composite cases.
+fn sample_mathpack_manifest() -> Value {
+    json!({
+        "format": "mathmeander.mathpack", "format_version": 1, "schema_version": 1,
+        "created_at": "2026-06-12T00:00:00Z",
+        "space_id": "0197675f-71f4-7000-8000-000000000003",
+        "counts": sample_mathpack_counts(), "assets": []
+    })
+}
+
+/// A `MathpackGraph` value built from the real sub-samples (so it can't drift), with the
+/// deferred-but-present slice-1 sections as empty arrays.
+fn sample_mathpack_graph() -> Value {
+    json!({
+        "objects": [ sample_object() ],
+        "provenance": [], "provenance_derivations": [],
+        "content": [ sample_math_content() ],
+        "links": [], "aliases": [], "handles": [], "tags": [], "taggings": [],
+        "object_versions": [ sample_object_version() ],
+        "definition_details": []
     })
 }
 
@@ -918,11 +966,99 @@ pub fn conformance_json() -> String {
         { "type": "ValidationError",
           "value": { "code": "inline_atom_not_zero_width", "kind": "math" }, "valid": true },
         { "type": "ValidationError",
+          "value": { "code": "inline_span_out_of_bounds", "start": 9, "end": 9, "len": 2 },
+          "valid": true },
+        { "type": "ValidationError",
           "value": { "code": "content_edge_missing_anchor" }, "valid": true },
         { "type": "ValidationError",
           "value": { "code": "occurrence_already_resolved" }, "valid": true },
         { "type": "ValidationError",
           "value": { "code": "duplicate_source_id", "kind": "unit" }, "valid": true },
+
+        // ════════════════ Slice 1d — numbering + .mathpack ════════════════
+        // Shape only (serde ≡ zod). Semantic facts (counts matching the graph, name-beats-number
+        // precedence) are CORE projection logic, not transport shape.
+
+        // ── NumberingPolicy ──
+        { "type": "NumberingPolicy",
+          "value": { "numbered_types": ["theorem", "lemma"], "shared_counter": false }, "valid": true },
+        { "type": "NumberingPolicy",
+          "value": { "numbered_types": [], "shared_counter": true }, "valid": true,
+          "note": "empty policy numbers nothing" },
+        { "type": "NumberingPolicy",
+          "value": { "numbered_types": ["group"], "shared_counter": true }, "valid": false,
+          "note": "group is a content kind, never a unit type (§6.0b)" },
+        { "type": "NumberingPolicy",
+          "value": { "numbered_types": ["theorem"] }, "valid": false, "note": "shared_counter missing" },
+
+        // ── UnitLabel (number + name both optional) ──
+        { "type": "UnitLabel",
+          "value": { "unit_id": "0197675f-71f4-7000-8000-0000000000b1", "unit_type": "theorem",
+                     "number": 1, "name": "(★)" }, "valid": true },
+        { "type": "UnitLabel",
+          "value": { "unit_id": "0197675f-71f4-7000-8000-0000000000b1" }, "valid": true,
+          "note": "unit_type/number/name absent — typeless, unnumbered, unnamed" },
+        { "type": "UnitLabel",
+          "value": { "unit_id": "0197675f-71f4-7000-8000-0000000000b1", "unit_type": null,
+                     "number": null, "name": null }, "valid": true, "note": "explicit nulls" },
+        { "type": "UnitLabel",
+          "value": { "unit_type": "theorem", "number": 1 }, "valid": false, "note": "unit_id missing" },
+
+        // ── DisplayLabels ──
+        { "type": "DisplayLabels",
+          "value": { "labels": [ { "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                                    "unit_type": "theorem", "number": 1, "name": null } ] },
+          "valid": true },
+        { "type": "DisplayLabels", "value": { "labels": [] }, "valid": true },
+        { "type": "DisplayLabels", "value": {}, "valid": false,
+          "note": "labels required (always present, [] when none)" },
+
+        // ── AssetChecksum ──
+        { "type": "AssetChecksum", "value": { "name": "fig1.pdf", "sha256": "9f2c…" }, "valid": true },
+        { "type": "AssetChecksum", "value": { "name": "fig1.pdf" }, "valid": false,
+          "note": "sha256 missing" },
+
+        // ── MathpackMeta ──
+        { "type": "MathpackMeta",
+          "value": { "space_id": "0197675f-71f4-7000-8000-000000000003", "asset_checksums": [] },
+          "valid": true },
+        { "type": "MathpackMeta",
+          "value": { "space_id": "0197675f-71f4-7000-8000-000000000003" }, "valid": false,
+          "note": "asset_checksums required (always present, [] when none)" },
+
+        // ── MathpackCounts ──
+        { "type": "MathpackCounts", "value": sample_mathpack_counts(), "valid": true },
+        { "type": "MathpackCounts",
+          "value": { "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
+                     "taggings": 0, "object_versions": 1, "definition_details": 0, "provenance": 1 },
+          "valid": false, "note": "provenance_derivations missing" },
+
+        // ── MathpackManifest ──
+        { "type": "MathpackManifest", "value": sample_mathpack_manifest(), "valid": true },
+        { "type": "MathpackManifest",
+          "value": { "format": "mathmeander.mathpack", "format_version": 1, "schema_version": 1,
+                     "created_at": "2026-06-12T00:00:00Z",
+                     "space_id": "0197675f-71f4-7000-8000-000000000003", "assets": [] },
+          "valid": false, "note": "counts missing (shape requires it; format/version are CORE-validated)" },
+
+        // ── MathpackGraph (deep composite; positive from real sub-samples) ──
+        { "type": "MathpackGraph", "value": sample_mathpack_graph(), "valid": true },
+        { "type": "MathpackGraph",
+          "value": { "provenance": [], "provenance_derivations": [], "content": [], "links": [],
+                     "aliases": [], "handles": [], "tags": [], "taggings": [], "object_versions": [],
+                     "definition_details": [] }, "valid": false, "note": "objects section missing" },
+
+        // ── Mathpack / MathpackImport ──
+        { "type": "Mathpack",
+          "value": { "manifest": sample_mathpack_manifest(), "graph": sample_mathpack_graph() },
+          "valid": true },
+        { "type": "Mathpack", "value": { "manifest": sample_mathpack_manifest() }, "valid": false,
+          "note": "graph missing" },
+        { "type": "MathpackImport",
+          "value": { "manifest": sample_mathpack_manifest(), "graph": sample_mathpack_graph() },
+          "valid": true },
+        { "type": "MathpackImport", "value": { "graph": sample_mathpack_graph() }, "valid": false,
+          "note": "manifest missing" },
     ]);
 
     let mut out = serde_json::to_string_pretty(&cases).expect("conformance serializes");
@@ -1039,6 +1175,21 @@ mod tests {
                 "MaterializeObjectInput" => {
                     serde_json::from_value::<MaterializeObjectInput>(value.clone()).is_ok()
                 }
+                // ── Slice 1d numbering + .mathpack ──
+                "NumberingPolicy" => {
+                    serde_json::from_value::<NumberingPolicy>(value.clone()).is_ok()
+                }
+                "UnitLabel" => serde_json::from_value::<UnitLabel>(value.clone()).is_ok(),
+                "DisplayLabels" => serde_json::from_value::<DisplayLabels>(value.clone()).is_ok(),
+                "AssetChecksum" => serde_json::from_value::<AssetChecksum>(value.clone()).is_ok(),
+                "MathpackMeta" => serde_json::from_value::<MathpackMeta>(value.clone()).is_ok(),
+                "MathpackCounts" => serde_json::from_value::<MathpackCounts>(value.clone()).is_ok(),
+                "MathpackManifest" => {
+                    serde_json::from_value::<MathpackManifest>(value.clone()).is_ok()
+                }
+                "MathpackGraph" => serde_json::from_value::<MathpackGraph>(value.clone()).is_ok(),
+                "Mathpack" => serde_json::from_value::<Mathpack>(value.clone()).is_ok(),
+                "MathpackImport" => serde_json::from_value::<MathpackImport>(value.clone()).is_ok(),
                 other => panic!("conformance corpus names unknown type {other}"),
             };
             assert_eq!(

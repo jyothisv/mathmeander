@@ -6,6 +6,7 @@ import {
   AliasSchema,
   AliasKindSchema,
   AliasScopeSchema,
+  AssetChecksumSchema,
   CanonicalObjectSchema,
   CharSpanSchema,
   ContentLocatorSchema,
@@ -16,6 +17,7 @@ import {
   CreatedObjectSchema,
   DeclaredBySchema,
   DefinitionDetailSchema,
+  DisplayLabelsSchema,
   EmbedTargetSchema,
   ExampleKindSchema,
   ExpressionIdRemapSchema,
@@ -33,7 +35,14 @@ import {
   MaterializeObjectInputSchema,
   MathContentSchema,
   MathExpressionSchema,
+  MathpackSchema,
+  MathpackCountsSchema,
+  MathpackGraphSchema,
+  MathpackImportSchema,
+  MathpackManifestSchema,
+  MathpackMetaSchema,
   MergeUnitsInputSchema,
+  NumberingPolicySchema,
   ObjectPatchSchema,
   ObjectResultSchema,
   ObjectStatusSchema,
@@ -61,6 +70,7 @@ import {
   UnitSchema,
   UnitContentSchema,
   UnitIdRemapSchema,
+  UnitLabelSchema,
   UnitStatusSchema,
   UnitTypeSchema,
   ValidationErrorSchema,
@@ -69,6 +79,7 @@ import {
 export type Alias = z.infer<typeof AliasSchema>;
 export type AliasKind = z.infer<typeof AliasKindSchema>;
 export type AliasScope = z.infer<typeof AliasScopeSchema>;
+export type AssetChecksum = z.infer<typeof AssetChecksumSchema>;
 export type CanonicalObject = z.infer<typeof CanonicalObjectSchema>;
 export type CharSpan = z.infer<typeof CharSpanSchema>;
 export type ContentLocator = z.infer<typeof ContentLocatorSchema>;
@@ -79,6 +90,7 @@ export type CreateObjectResult = z.infer<typeof CreateObjectResultSchema>;
 export type CreatedObject = z.infer<typeof CreatedObjectSchema>;
 export type DeclaredBy = z.infer<typeof DeclaredBySchema>;
 export type DefinitionDetail = z.infer<typeof DefinitionDetailSchema>;
+export type DisplayLabels = z.infer<typeof DisplayLabelsSchema>;
 export type EmbedTarget = z.infer<typeof EmbedTargetSchema>;
 export type ExampleKind = z.infer<typeof ExampleKindSchema>;
 export type ExpressionIdRemap = z.infer<typeof ExpressionIdRemapSchema>;
@@ -96,7 +108,14 @@ export type LinkType = z.infer<typeof LinkTypeSchema>;
 export type MaterializeObjectInput = z.infer<typeof MaterializeObjectInputSchema>;
 export type MathContent = z.infer<typeof MathContentSchema>;
 export type MathExpression = z.infer<typeof MathExpressionSchema>;
+export type Mathpack = z.infer<typeof MathpackSchema>;
+export type MathpackCounts = z.infer<typeof MathpackCountsSchema>;
+export type MathpackGraph = z.infer<typeof MathpackGraphSchema>;
+export type MathpackImport = z.infer<typeof MathpackImportSchema>;
+export type MathpackManifest = z.infer<typeof MathpackManifestSchema>;
+export type MathpackMeta = z.infer<typeof MathpackMetaSchema>;
 export type MergeUnitsInput = z.infer<typeof MergeUnitsInputSchema>;
+export type NumberingPolicy = z.infer<typeof NumberingPolicySchema>;
 export type ObjectPatch = z.infer<typeof ObjectPatchSchema>;
 export type ObjectResult = z.infer<typeof ObjectResultSchema>;
 export type ObjectStatus = z.infer<typeof ObjectStatusSchema>;
@@ -124,6 +143,7 @@ export type ToggleExpressionPlacementInput = z.infer<typeof ToggleExpressionPlac
 export type Unit = z.infer<typeof UnitSchema>;
 export type UnitContent = z.infer<typeof UnitContentSchema>;
 export type UnitIdRemap = z.infer<typeof UnitIdRemapSchema>;
+export type UnitLabel = z.infer<typeof UnitLabelSchema>;
 export type UnitStatus = z.infer<typeof UnitStatusSchema>;
 export type UnitType = z.infer<typeof UnitTypeSchema>;
 export type ValidationError = z.infer<typeof ValidationErrorSchema>;

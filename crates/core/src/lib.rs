@@ -1,9 +1,10 @@
 //! mathmeander-core — the integrity core (arch doc §5).
 //!
 //! A pure, I/O-free, framework-free crate: canonical types, validation, schema
-//! migration, serialization, and (later slices) canonical operations and the
-//! `.mathpack` manifest. It never reads a clock, file, environment variable, or
-//! socket — time and identity context are always passed in by the caller.
+//! migration, serialization, the canonical operations (`ops`), the numbering/display-name
+//! projection (`numbering`), and the `.mathpack` manifest (`mathpack`). It never reads a
+//! clock, file, environment variable, or socket — time and identity context are always
+//! passed in by the caller.
 //!
 //! Design principle (arch doc §6): the core models mathematics in mathematicians'
 //! vocabulary and must not be conflated with the editor/renderer layer (ProseMirror,
@@ -14,13 +15,15 @@
 
 #![forbid(unsafe_code)]
 // The conformance corpus is one large json! literal (schema_artifact.rs).
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 
 pub mod api;
 pub mod error;
 pub mod ids;
+pub mod mathpack;
 pub mod migrate;
 pub mod model;
+pub mod numbering;
 pub mod ops;
 pub mod patch;
 #[cfg(feature = "schema-artifact")]

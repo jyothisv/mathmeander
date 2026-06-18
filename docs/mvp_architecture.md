@@ -1178,8 +1178,8 @@ Routing doctrine: *mechanical* = a deterministic result the user could produce b
 
 This layer *proves* the architecture: if the canonical model is clean, the *projections* are pure functions over it (§3.17 — "not a late feature"). But a `.mathpack` is a zip with assets, which is I/O — so the responsibility splits, and the purity claim is scoped honestly:
 
-- **Core (pure):** build/serialize the export **manifest** and the canonical-graph JSON; **validate** an import manifest; **migrate** imported objects; compute **expected asset references** (content hashes); the deterministic **readable projections** (`MathContent` → Markdown/HTML, and reserved Typst/LaTeX). These are pure functions and are property-tested.
-- **Glue (I/O):** zip/unzip; read/write/stream **assets** to and from R2; verify content hashes against the manifest's expected references; stream large PDFs; HTTP response streaming. None of this is in the core.
+- **Core (pure):** build/serialize the export **manifest** and the canonical-graph JSON; **validate** an import manifest *and the imported graph body's §6.1a invariants*; **migrate** imported objects; **carry** the asset references the graph cites — but the core never *hashes* (content hashes are computed in the I/O shell and travel as opaque `AssetChecksum`s; **decision F**); the deterministic **readable projections** (`MathContent` → Markdown/HTML, and reserved Typst/LaTeX). These are pure functions and are property-tested.
+- **Glue (I/O):** zip/unzip; read/write/stream **assets** to and from R2; **compute** the graph-JSON checksum sidecar and content-**hash** the assets, verifying both on import against the manifest's references; stream large PDFs; HTTP response streaming. None of this is in the core.
 
 So `.mathpack` is *assembled* by the glue (zip + asset streaming) around a *deterministic manifest + serialization* produced by the core.
 
@@ -1193,11 +1193,10 @@ So `.mathpack` is *assembled* by the glue (zip + asset streaming) around a *dete
   "created_at": "…",
   "space": { "id": "…" },
   "counts": { "objects": 0, "links": 0, "sources": 0, "assets": 0 },
-  "assets": [ { "key": "sha256:…", "media_type": "application/pdf", "bytes": 0 } ],
-  "checksums": { "graph_json": "sha256:…" }
+  "assets": [ { "key": "sha256:…", "media_type": "application/pdf", "bytes": 0 } ]
 }
 ```
-  The graph JSON carries objects, edges/references, aliases, annotations, trails, **notation entries + conventions**, provenance, and per-object schema versions; Inbox/Review states where appropriate. (Diagrams: reserved, §14.) Assets are referenced by content hash; the manifest's `checksums` + `assets` give a clear integrity/migration story.
+  The graph JSON carries objects, edges/references, aliases, annotations, trails, **notation entries + conventions**, provenance, and per-object schema versions; Inbox/Review states where appropriate. (Diagrams: reserved, §14.) Assets are referenced by content hash; a glue-written **checksum sidecar** (over the graph JSON) plus the manifest's `assets` give a clear integrity/migration story — the core itself never hashes (**decision F**).
 - **Readable export (MVP):** `MathContent` → **Markdown** and **HTML**. *Reserved:* Typst (primary future PDF path), emitted LaTeX, BibTeX/RIS, and **Pandoc** strictly as a conversion bridge — added as more projections, never as the canonical backend.
 - **Tests (mandatory, §5.10).** Round-trip `serialize → deserialize` and `export → import` as **proptest** invariants in the core (over the pure manifest/serialization), plus migration tests against old fixtures, plus an integration test that exercises the glue's zip+asset round-trip. These guard the §2.2 "no lost user effort" promise — not optional polish.
 

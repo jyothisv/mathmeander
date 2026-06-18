@@ -252,3 +252,28 @@ pub fn validate_inline(inline: &Inline) -> Result<(), ValidationError> {
         Err(ValidationError::InlineAtomNotZeroWidth { kind: kind.into() })
     }
 }
+
+/// FULL inline well-formedness for a prose unit (§6.0): every inline span (Mark included) is
+/// in-bounds — `start <= end <= text` char-length — AND every content-bearing atom is zero-width.
+/// The ops maintain bounds by construction (`ops::split_prose_at`), so they call `validate_inline`
+/// (zero-width only); the IMPORT load path is the first caller where bounds aren't guaranteed, so
+/// it runs this. `pub` for reuse by the Pass-1d `mathpack::validate_graph` and the Pass-2 glue.
+pub fn validate_prose_inline(text: &str, inline: &[Inline]) -> Result<(), ValidationError> {
+    let len = text.chars().count() as u32;
+    for element in inline {
+        let span = match element {
+            Inline::Mark { span, .. }
+            | Inline::Math { span, .. }
+            | Inline::Reference { span, .. } => span,
+        };
+        if span.start > span.end || span.end > len {
+            return Err(ValidationError::InlineSpanOutOfBounds {
+                start: span.start,
+                end: span.end,
+                len,
+            });
+        }
+        validate_inline(element)?; // the atom zero-width rule, not duplicated
+    }
+    Ok(())
+}

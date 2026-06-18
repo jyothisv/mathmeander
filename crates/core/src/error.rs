@@ -172,6 +172,13 @@ pub enum ValidationError {
     #[error("inline {kind} atom must have a zero-width span")]
     InlineAtomNotZeroWidth { kind: String },
 
+    /// An inline element's span falls outside its prose text — `start <= end <= text length`
+    /// (char offsets) is the §6.0 well-formedness rule. The ops maintain it by construction; the
+    /// import load path can't assume it, so it gates here (an out-of-bounds span mis-slices at the
+    /// render/editor boundary). A glue/import bug, not a client error.
+    #[error("inline span [{start}, {end}] is out of bounds for prose text of length {len}")]
+    InlineSpanOutOfBounds { start: u32, end: u32, len: u32 },
+
     /// A content-derived edge (`from_content = true`) must record WHERE it came from —
     /// both `source_unit_id` and `content_locator` (§6.1b).
     #[error("a content-derived edge requires source_unit_id and content_locator")]
