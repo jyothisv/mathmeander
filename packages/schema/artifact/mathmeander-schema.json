@@ -774,6 +774,41 @@
               ]
             },
             {
+              "description": "A valid, producible type that may not be minted by the DIRECT typed-create path — it\nenters the graph by declaration → materialization (§9.y/§13a slice 2), never a raw POST.\nDistinct from `TypeNotProducibleYet` (reserved, no machinery yet): here the machinery\nexists (materialize / number / export); only the direct-create surface is gated.",
+              "type": "object",
+              "properties": {
+                "object_type": {
+                  "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                  "type": "string",
+                  "enum": [
+                    "note",
+                    "theorem",
+                    "lemma",
+                    "proposition",
+                    "corollary",
+                    "conjecture",
+                    "claim",
+                    "definition",
+                    "proof",
+                    "example",
+                    "question",
+                    "source_excerpt",
+                    "trail",
+                    "annotation",
+                    "journal_day"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "type_not_directly_creatable"
+                }
+              },
+              "required": [
+                "code",
+                "object_type"
+              ]
+            },
+            {
               "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
               "type": "object",
               "properties": {
@@ -1826,6 +1861,41 @@
                         "code": {
                           "type": "string",
                           "const": "type_not_producible_yet"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "object_type"
+                      ]
+                    },
+                    {
+                      "description": "A valid, producible type that may not be minted by the DIRECT typed-create path — it\nenters the graph by declaration → materialization (§9.y/§13a slice 2), never a raw POST.\nDistinct from `TypeNotProducibleYet` (reserved, no machinery yet): here the machinery\nexists (materialize / number / export); only the direct-create surface is gated.",
+                      "type": "object",
+                      "properties": {
+                        "object_type": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "type_not_directly_creatable"
                         }
                       },
                       "required": [
@@ -10879,6 +10949,41 @@
                       ]
                     },
                     {
+                      "description": "A valid, producible type that may not be minted by the DIRECT typed-create path — it\nenters the graph by declaration → materialization (§9.y/§13a slice 2), never a raw POST.\nDistinct from `TypeNotProducibleYet` (reserved, no machinery yet): here the machinery\nexists (materialize / number / export); only the direct-create surface is gated.",
+                      "type": "object",
+                      "properties": {
+                        "object_type": {
+                          "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+                          "type": "string",
+                          "enum": [
+                            "note",
+                            "theorem",
+                            "lemma",
+                            "proposition",
+                            "corollary",
+                            "conjecture",
+                            "claim",
+                            "definition",
+                            "proof",
+                            "example",
+                            "question",
+                            "source_excerpt",
+                            "trail",
+                            "annotation",
+                            "journal_day"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "type_not_directly_creatable"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "object_type"
+                      ]
+                    },
+                    {
                       "description": "A `taggings` row must target exactly one of {object, unit}; `given` is how many\nwere set (§6.0b).",
                       "type": "object",
                       "properties": {
@@ -14975,6 +15080,41 @@
             "code": {
               "type": "string",
               "const": "type_not_producible_yet"
+            }
+          },
+          "required": [
+            "code",
+            "object_type"
+          ]
+        },
+        {
+          "description": "A valid, producible type that may not be minted by the DIRECT typed-create path — it\nenters the graph by declaration → materialization (§9.y/§13a slice 2), never a raw POST.\nDistinct from `TypeNotProducibleYet` (reserved, no machinery yet): here the machinery\nexists (materialize / number / export); only the direct-create surface is gated.",
+          "type": "object",
+          "properties": {
+            "object_type": {
+              "description": "Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).\nSlice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the\nformal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,\nproof, example, question — all producible via create — plus source_excerpt, trail,\nannotation, journal_day, which are **reserved vocabulary** (valid on read, not yet\nproducible — their detail tables / surfaces land in later slices, §6.1a/§13a).",
+              "type": "string",
+              "enum": [
+                "note",
+                "theorem",
+                "lemma",
+                "proposition",
+                "corollary",
+                "conjecture",
+                "claim",
+                "definition",
+                "proof",
+                "example",
+                "question",
+                "source_excerpt",
+                "trail",
+                "annotation",
+                "journal_day"
+              ]
+            },
+            "code": {
+              "type": "string",
+              "const": "type_not_directly_creatable"
             }
           },
           "required": [

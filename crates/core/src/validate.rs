@@ -118,6 +118,11 @@ pub fn create_object(
         // read, but their owning machinery lands in later slices (§6.1a/§13a).
         return Err(ValidationError::TypeNotProducibleYet { object_type });
     }
+    if !object_type.is_directly_creatable() {
+        // The formal family is producible, but only by declaration → materialization
+        // (§9.y, slice 2) — never a raw typed POST. Only `note` is directly creatable.
+        return Err(ValidationError::TypeNotDirectlyCreatable { object_type });
+    }
     if let Some(title) = &input.title {
         check_title(title)?;
     }

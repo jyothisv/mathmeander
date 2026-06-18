@@ -51,9 +51,21 @@ describe('create → read', () => {
     expect(read.json().object.title).toBe('ε-δ notes');
   });
 
-  it('returns the typed core error for an unknown type', async () => {
-    const res = await createNote({});
-    expect(res.statusCode).toBe(201);
+  // Three creation tiers (§9.y/§13a), each a distinct typed core error over HTTP:
+  // an unknown type, a formal-family type that is declaration-only, and a reserved type.
+  it('rejects an unknown object type', async () => {
+    const bad = await stack.app.inject({
+      method: 'POST',
+      url: '/api/objects',
+      headers: bearer(token),
+      payload: { id: uuidv7(), type: 'flarp' },
+    });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('unknown_object_type');
+    expect(bad.json().error.details.given).toBe('flarp');
+  });
+
+  it('rejects a formal-family type as declaration-only, not direct create', async () => {
     const bad = await stack.app.inject({
       method: 'POST',
       url: '/api/objects',
@@ -61,8 +73,20 @@ describe('create → read', () => {
       payload: { id: uuidv7(), type: 'theorem' },
     });
     expect(bad.statusCode).toBe(422);
-    expect(bad.json().error.code).toBe('unknown_object_type');
-    expect(bad.json().error.details.given).toBe('theorem');
+    expect(bad.json().error.code).toBe('type_not_directly_creatable');
+    expect(bad.json().error.details.object_type).toBe('theorem');
+  });
+
+  it('rejects a reserved type that has no create surface yet', async () => {
+    const bad = await stack.app.inject({
+      method: 'POST',
+      url: '/api/objects',
+      headers: bearer(token),
+      payload: { id: uuidv7(), type: 'journal_day' },
+    });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('type_not_producible_yet');
+    expect(bad.json().error.details.object_type).toBe('journal_day');
   });
 
   it('rejects non-v7 ids with the typed core error', async () => {

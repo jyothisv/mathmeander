@@ -65,6 +65,16 @@ impl ObjectType {
                 | ObjectType::JournalDay
         )
     }
+
+    /// Whether a client may mint this type via the DIRECT typed-create path. Only `Note`
+    /// (the freeform default) — the formal family enters the graph by *declaration* (the user
+    /// types `Thm.`/`Def:`) → materialization (§9.y/§13a slice 2), never a raw typed POST.
+    /// This is strictly NARROWER than `is_producible`: the family IS producible (it is the
+    /// output of `materialize_object` and round-trips through `.mathpack` import, and is
+    /// numbered/exported) — it is only the direct-create *surface* that is gated.
+    pub fn is_directly_creatable(self) -> bool {
+        matches!(self, ObjectType::Note)
+    }
 }
 
 /// Object lifecycle (arch doc §5.2/§6) — the full, doc-stable set lands now even though

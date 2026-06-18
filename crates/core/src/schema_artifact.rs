@@ -321,7 +321,7 @@ pub fn conformance_json() -> String {
         // ── ObjectType ──
         { "type": "ObjectType", "value": "note", "valid": true },
         { "type": "ObjectType", "value": "theorem", "valid": true,
-          "note": "formal family lands in slice 1 — now valid vocabulary" },
+          "note": "formal family: valid vocabulary, producible via materialize, not directly creatable" },
         { "type": "ObjectType", "value": "journal_day", "valid": true,
           "note": "reserved vocabulary: valid on read, not producible (TypeNotProducibleYet)" },
         { "type": "ObjectType", "value": "Note", "valid": false, "note": "case-sensitive" },
@@ -784,6 +784,8 @@ pub fn conformance_json() -> String {
         // ── ValidationError (the new §6.1a invariant codes) ──
         { "type": "ValidationError",
           "value": { "code": "type_not_producible_yet", "object_type": "trail" }, "valid": true },
+        { "type": "ValidationError",
+          "value": { "code": "type_not_directly_creatable", "object_type": "theorem" }, "valid": true },
         { "type": "ValidationError",
           "value": { "code": "link_target_not_exactly_one", "given": 2 }, "valid": true },
         { "type": "ValidationError", "value": { "code": "off_graph_deliberate_edge" }, "valid": true },

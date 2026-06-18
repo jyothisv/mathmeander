@@ -45,6 +45,8 @@ export class AppError extends Error {
  */
 export const CORE_CODE_STATUS: Record<string, number> = {
   unknown_object_type: 422,
+  type_not_producible_yet: 422, // client POSTed a reserved type (valid on read, no create surface yet)
+  type_not_directly_creatable: 422, // client POSTed a formal-family type — enters by declaration (§9.y)
   invalid_id: 422,
   not_uuid_v7: 422,
   title_too_long: 422,

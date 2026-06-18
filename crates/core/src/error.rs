@@ -102,6 +102,13 @@ pub enum ValidationError {
     #[error("object type {object_type:?} is not producible yet")]
     TypeNotProducibleYet { object_type: ObjectType },
 
+    /// A valid, producible type that may not be minted by the DIRECT typed-create path — it
+    /// enters the graph by declaration → materialization (§9.y/§13a slice 2), never a raw POST.
+    /// Distinct from `TypeNotProducibleYet` (reserved, no machinery yet): here the machinery
+    /// exists (materialize / number / export); only the direct-create surface is gated.
+    #[error("object type {object_type:?} is created by declaration, not direct creation")]
+    TypeNotDirectlyCreatable { object_type: ObjectType },
+
     /// A `taggings` row must target exactly one of {object, unit}; `given` is how many
     /// were set (§6.0b).
     #[error("a tagging must target exactly one of {{object, unit}} (got {given})")]

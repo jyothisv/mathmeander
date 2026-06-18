@@ -298,10 +298,14 @@ fn create_enforces_origin_invariants() {
         "unknown_object_type"
     );
 
-    // widened, producible vocabulary → creates (the slice-1 flip)
+    // formal family: producible (via materialize), but NOT by direct create — it enters by
+    // declaration → materialization (§9.y, slice 2). Distinct from the reserved tier below.
     let mut input = base_input.clone();
     input.object_type = "theorem".into();
-    create_object(&input, &ctx, space, now).expect("theorem is producible in slice 1");
+    let err = create_object(&input, &ctx, space, now).expect_err("theorem is declaration-only");
+    let err = serde_json::to_value(&err).expect("serializes");
+    assert_eq!(err["code"], "type_not_directly_creatable");
+    assert_eq!(err["object_type"], "theorem");
 
     // reserved vocabulary (valid on read, not producible yet) → typed error (§6.1a)
     let mut input = base_input;

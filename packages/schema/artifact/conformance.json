@@ -8,7 +8,7 @@
     "type": "ObjectType",
     "value": "theorem",
     "valid": true,
-    "note": "formal family lands in slice 1 — now valid vocabulary"
+    "note": "formal family: valid vocabulary, producible via materialize, not directly creatable"
   },
   {
     "type": "ObjectType",
@@ -1422,6 +1422,14 @@
     "value": {
       "code": "type_not_producible_yet",
       "object_type": "trail"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
+      "code": "type_not_directly_creatable",
+      "object_type": "theorem"
     },
     "valid": true
   },
