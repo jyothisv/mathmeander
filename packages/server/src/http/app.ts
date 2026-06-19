@@ -44,9 +44,9 @@ export function buildApp(deps: AppDeps): App {
   app.register(helmet);
   app.register(cors, {
     origin: deps.env.WEB_ORIGIN,
-    // @fastify/cors defaults to GET,HEAD,POST only — PATCH (rename) and DELETE
-    // (logout) must be explicitly preflightable.
-    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'],
+    // @fastify/cors defaults to GET,HEAD,POST only — PATCH (rename), PUT (the slice-2c content
+    // editor's save_content), and DELETE (logout) must be explicitly preflightable.
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
 
   app.setErrorHandler((err: unknown, req, reply) => {

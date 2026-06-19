@@ -1352,6 +1352,23 @@
                 "code",
                 "reason"
               ]
+            },
+            {
+              "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "content_save_invalid"
+                }
+              },
+              "required": [
+                "code",
+                "reason"
+              ]
             }
           ],
           "required": [
@@ -2638,6 +2655,23 @@
                         "code",
                         "reason"
                       ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
                     }
                   ],
                   "required": [
@@ -3906,6 +3940,23 @@
                         "code": {
                           "type": "string",
                           "const": "dissolve_input_inconsistent"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
                         }
                       },
                       "required": [
@@ -16163,6 +16214,23 @@
                         "code",
                         "reason"
                       ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
                     }
                   ],
                   "required": [
@@ -19020,6 +19088,23 @@
                         "code",
                         "reason"
                       ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
                     }
                   ],
                   "required": [
@@ -20266,6 +20351,23 @@
                         "code",
                         "reason"
                       ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
                     }
                   ],
                   "required": [
@@ -21478,6 +21580,23 @@
                         "code": {
                           "type": "string",
                           "const": "dissolve_input_inconsistent"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
                         }
                       },
                       "required": [
@@ -26698,6 +26817,23 @@
                         "code",
                         "reason"
                       ]
+                    },
+                    {
+                      "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "content_save_invalid"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "reason"
+                      ]
                     }
                   ],
                   "required": [
@@ -30529,6 +30665,23 @@
             "code": {
               "type": "string",
               "const": "dissolve_input_inconsistent"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "description": "A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:\nit would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /\ncontent kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory\n(`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a\ntyped/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.\nClient-attributable (the editor built the delta) → 422.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "content_save_invalid"
             }
           },
           "required": [

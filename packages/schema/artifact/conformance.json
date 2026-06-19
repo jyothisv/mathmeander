@@ -1499,6 +1499,14 @@
   {
     "type": "ValidationError",
     "value": {
+      "code": "content_save_invalid",
+      "reason": "unit X changes a semantic facet"
+    },
+    "valid": true
+  },
+  {
+    "type": "ValidationError",
+    "value": {
       "code": "tagging_target_not_exactly_one"
     },
     "valid": false,

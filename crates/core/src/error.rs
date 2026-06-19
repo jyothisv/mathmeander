@@ -263,6 +263,15 @@ pub enum ValidationError {
     /// must mirror the copy path's `DuplicateSourceId` defensiveness — it never trusts its content).
     #[error("inconsistent dissolve input: {reason}")]
     DissolveInputInconsistent { reason: String },
+
+    /// A `save_content` delta (the §6.0a coarse prose-authoring path, slice 2c) is not applicable:
+    /// it would change a unit's SEMANTIC facets (type / example_kind / status / declared_by /
+    /// content kind / parent / slot / extracted_structure) — which are the fine-grained ops' territory
+    /// (`set_unit_type`, `rehome_subtree`, `split/merge`) — or edit non-prose content, or delete a
+    /// typed/non-prose unit, or leave a per-parent position collision or a dangling `parent_unit_id`.
+    /// Client-attributable (the editor built the delta) → 422.
+    #[error("save_content delta is not applicable: {reason}")]
+    ContentSaveInvalid { reason: String },
 }
 
 /// Errors crossing the FFI result envelope: a domain validation failure, or input that

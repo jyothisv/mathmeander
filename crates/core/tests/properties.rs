@@ -18,16 +18,16 @@ use mathmeander_core::validate::{
 use mathmeander_core::error::ValidationError;
 use mathmeander_core::ids::{ExpressionId, LinkId, ObjectVersionId, TagId, TaggingId, UnitId};
 use mathmeander_core::model::{
-    CharSpan, ContentLocator, DeclaredBy, Inline, Link, LinkStatus, LinkType, MathExpression,
-    Occurrence, OccurrenceTarget, ParseStatus, SurfaceFormat, Tagging, Unit, UnitContent,
-    UnitStatus, UnitType,
+    CharSpan, ContentLocator, DeclaredBy, ExtractedStructureEnvelope, Inline, Link, LinkStatus,
+    LinkType, MathExpression, Occurrence, OccurrenceTarget, ParseStatus, SurfaceFormat, Tagging,
+    Unit, UnitContent, UnitStatus, UnitType,
 };
 use mathmeander_core::ops::{
     ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
     MergeUnitsInput, OpContext, ResolveOccurrenceInput, ResolveTarget, RewriteSurfaceInput,
     SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput, UnitIdRemap,
     insert_reference, materialize_object, merge_units, resolve_occurrence, rewrite_surface,
-    set_unit_type, split_unit, toggle_expression_placement,
+    save_content, set_unit_type, split_unit, toggle_expression_placement,
 };
 
 fn arb_uuid() -> impl Strategy<Value = Uuid> {
@@ -1280,6 +1280,276 @@ fn materialize_rejects_a_surface_source() {
     };
     let err = materialize_object(&input, &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "type_not_materializable");
+}
+
+// ── save_content: the §6.0a coarse prose-authoring delta (slice 2c) ──
+
+fn prose_content(units: Vec<Unit>) -> MathContent {
+    MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units,
+    }
+}
+
+#[test]
+fn save_content_empty_delta_is_identity_plus_revision() {
+    let u = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "Hello.", vec![]);
+    let prior = prose_content(vec![u.clone()]);
+    let out = save_content(&prior, &[], &[], &op_ctx(), op_now()).expect("empty delta applies");
+    assert_eq!(out.content.revision, 2);
+    assert_eq!(out.content.units, vec![u]); // byte-identical content
+}
+
+#[test]
+fn save_content_edits_prose_text_and_appends_and_deletes() {
+    let a = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "first", vec![]);
+    let b = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "second", vec![]);
+    let prior = prose_content(vec![a, b]);
+
+    // edit a's text, delete b, append c
+    let a_edited = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "FIRST!", vec![]);
+    let c = a_prose_unit(UnitId(v7(4)), ObjectId(v7(1)), 1, "third", vec![]);
+    let out = save_content(
+        &prior,
+        &[a_edited.clone(), c.clone()],
+        &[UnitId(v7(3))],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("prose delta applies");
+    assert_eq!(out.content.units, vec![a_edited, c]);
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_rejects_type_change_on_existing_unit() {
+    let id = UnitId(v7(2));
+    let prior = prose_content(vec![a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![])]);
+    let mut typed = a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![]);
+    typed.unit_type = Some(UnitType::Theorem); // a type change is set_unit_type's job
+    let err = save_content(&prior, &[typed], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_kind_change_on_existing_unit() {
+    let id = UnitId(v7(2));
+    let prior = prose_content(vec![a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![])]);
+    let mut as_math = a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![]);
+    as_math.content = UnitContent::Math {
+        expr: an_expr(ExpressionId(v7(40)), "y", vec![]),
+    };
+    let err = save_content(&prior, &[as_math], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_a_typed_new_unit() {
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "x",
+        vec![],
+    )]);
+    let mut bad = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "y", vec![]);
+    bad.unit_type = Some(UnitType::Theorem); // a NEW unit must be untyped rough prose
+    let err = save_content(&prior, &[bad], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_deleting_a_typed_unit() {
+    let id = UnitId(v7(2));
+    let mut typed = a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![]);
+    typed.unit_type = Some(UnitType::Theorem);
+    let prior = prose_content(vec![typed]);
+    let err = save_content(&prior, &[], &[id], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid"); // dissolve, don't coarse-delete
+}
+
+#[test]
+fn save_content_rejects_position_collision() {
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "a",
+        vec![],
+    )]);
+    // a NEW unit at the same position 0 as the untouched existing unit (editor failed to renumber)
+    let b = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 0, "b", vec![]);
+    let err = save_content(&prior, &[b], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_runs_inline_bounds_validation() {
+    let id = UnitId(v7(2));
+    let prior = prose_content(vec![a_prose_unit(id, ObjectId(v7(1)), 0, "xy", vec![])]);
+    let bad = a_prose_unit(
+        id,
+        ObjectId(v7(1)),
+        0,
+        "xy",
+        vec![Inline::Mark {
+            span: CharSpan::new(0, 9), // out of bounds on a 2-char text
+            style: "emph".into(),
+        }],
+    );
+    let err = save_content(&prior, &[bad], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "inline_span_out_of_bounds");
+}
+
+#[test]
+fn save_content_allows_reordering_prose() {
+    // Re-ordering paragraphs is prose authoring, NOT a semantic change — position may differ.
+    let a = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "a", vec![]);
+    let b = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "b", vec![]);
+    let prior = prose_content(vec![a.clone(), b.clone()]);
+    let mut a2 = a;
+    a2.position = 1;
+    let mut b2 = b;
+    b2.position = 0;
+    let out = save_content(&prior, &[a2, b2], &[], &op_ctx(), op_now()).expect("reorder applies");
+    let pos = |id: UnitId| {
+        out.content
+            .units
+            .iter()
+            .find(|u| u.id == id)
+            .unwrap()
+            .position
+    };
+    assert_eq!((pos(UnitId(v7(2))), pos(UnitId(v7(3)))), (1, 0));
+}
+
+#[test]
+fn save_content_allows_middle_delete_with_renumber() {
+    // Deleting a middle paragraph shifts its successors' positions — the editor sends the shifted
+    // survivors as upserts; the core must accept the position change (the blocker this test guards).
+    let a = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "a", vec![]);
+    let b = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "b", vec![]);
+    let c = a_prose_unit(UnitId(v7(4)), ObjectId(v7(1)), 2, "c", vec![]);
+    let prior = prose_content(vec![a, b, c.clone()]);
+    let mut c1 = c;
+    c1.position = 1; // shifted up after B's deletion
+    let out = save_content(&prior, &[c1], &[UnitId(v7(3))], &op_ctx(), op_now())
+        .expect("middle delete applies");
+    assert_eq!(out.content.units.len(), 2);
+    assert_eq!(
+        out.content
+            .units
+            .iter()
+            .find(|u| u.id == UnitId(v7(4)))
+            .unwrap()
+            .position,
+        1
+    );
+}
+
+#[test]
+fn save_content_rejects_reparenting_an_existing_unit() {
+    let a = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "a", vec![]);
+    let prior = prose_content(vec![a.clone()]);
+    let mut moved = a;
+    moved.parent_unit_id = Some(UnitId(v7(9))); // re-parenting is rehome's job
+    let err = save_content(&prior, &[moved], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_changing_declared_by() {
+    // §2.5/§6.0: editor input can't relabel a unit's authorship.
+    let a = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "a", vec![]);
+    let prior = prose_content(vec![a.clone()]);
+    let mut relabeled = a;
+    relabeled.declared_by = DeclaredBy::Imported;
+    let err = save_content(&prior, &[relabeled], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_new_unit_smuggling_a_parent() {
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "a",
+        vec![],
+    )]);
+    let mut child = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 0, "b", vec![]);
+    child.parent_unit_id = Some(UnitId(v7(2))); // a "new prose unit" may not nest (structural, §6.0b)
+    let err = save_content(&prior, &[child], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_new_unit_forging_extracted_structure() {
+    // §2.5: editor input must not be able to fabricate an AI/candidate-decomposition record.
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "a",
+        vec![],
+    )]);
+    let mut forged = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "b", vec![]);
+    forged.extracted_structure = Some(ExtractedStructureEnvelope {
+        kind: "hypothesis_conclusion_decomposition".into(),
+        schema_version: 1,
+        generated_by: "forged".into(),
+        base_object_revision: 1,
+        accepted_into: None,
+    });
+    let err = save_content(&prior, &[forged], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_object_id_mismatch() {
+    // A unit must belong to THIS object — no cross-object smuggling.
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "a",
+        vec![],
+    )]);
+    let foreign = a_prose_unit(UnitId(v7(3)), ObjectId(v7(99)), 1, "b", vec![]);
+    let err = save_content(&prior, &[foreign], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_deleting_unknown_unit() {
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "a",
+        vec![],
+    )]);
+    let err = save_content(&prior, &[], &[UnitId(v7(999))], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_editing_nonprose_content() {
+    // A day may already hold a display-math unit; save_content carries it unchanged, never edits it.
+    let m = a_math_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        an_expr(ExpressionId(v7(40)), "x", vec![]),
+    );
+    let prior = prose_content(vec![m.clone()]);
+    let mut edited = m;
+    edited.content = UnitContent::Math {
+        expr: an_expr(ExpressionId(v7(40)), "y", vec![]),
+    };
+    let err = save_content(&prior, &[edited], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
 }
 
 // ── Inline-atom contract coverage (the review's blind-spot class) ──

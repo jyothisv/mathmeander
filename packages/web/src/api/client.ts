@@ -5,9 +5,12 @@ import { z } from 'zod';
 import {
   CanonicalObjectSchema,
   MathpackGraphSchema,
+  OpOutcomeSchema,
   type CanonicalObject,
   type MathpackGraph,
   type ObjectPatch,
+  type OpOutcome,
+  type Unit,
 } from '@mathmeander/schema';
 import { API_ORIGIN, DEV_IDP_ORIGIN } from '../config';
 import { clearSession, currentToken } from '../auth/store';
@@ -142,4 +145,16 @@ export async function listJournalDays(): Promise<JournalDaySummary[]> {
 
 export async function getJournalDay(date: string): Promise<JournalDayEager> {
   return request('GET', `/api/journal/days/${date}`, JournalDayEagerEnvelope);
+}
+
+// ── Authoring: the §6.0a coarse prose delta (slice 2c). Unit ids are client-minted (§6.3). ──
+
+const OpOutcomeEnvelope = z.object({ outcome: OpOutcomeSchema });
+
+export async function saveContent(
+  objectId: string,
+  body: { expected_revision: number; upserts: Unit[]; deletes: string[] },
+): Promise<OpOutcome> {
+  return (await request('PUT', `/api/objects/${objectId}/content`, OpOutcomeEnvelope, body))
+    .outcome;
 }

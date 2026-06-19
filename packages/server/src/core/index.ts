@@ -12,6 +12,7 @@ import {
   currentSchemaVersion as addonCurrentSchemaVersion,
   setUnitType as addonSetUnitType,
   splitUnit as addonSplitUnit,
+  saveContent as addonSaveContent,
   mergeUnits as addonMergeUnits,
   toggleExpressionPlacement as addonToggleExpressionPlacement,
   rewriteSurface as addonRewriteSurface,
@@ -174,6 +175,31 @@ export function splitUnit(
       addonSplitUnit(
         JSON.stringify(content),
         JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+/**
+ * Apply a prose-authoring delta (§6.0a coarse path, slice 2c): the editor sends only changed/new
+ * units + removed ids; the core re-validates and rejects semantic drift. `prior` is the loaded
+ * content; new units' ids are glue-minted before this call. Returns the whole applied content.
+ */
+export function saveContent(
+  prior: MathContent,
+  upserts: Unit[],
+  deletes: string[],
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonSaveContent(
+        JSON.stringify(prior),
+        JSON.stringify(upserts),
+        JSON.stringify(deletes),
         JSON.stringify(ctx),
         now.toISOString(),
       ),

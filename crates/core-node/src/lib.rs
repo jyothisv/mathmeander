@@ -93,6 +93,24 @@ pub fn split_unit(
     mathmeander_core::api::split_unit(&content_json, &input_json, &ctx_json, &now_iso)
 }
 
+/// Apply a prose-authoring delta (slice 2c coarse path) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn save_content(
+    prior_json: String,
+    upserts_json: String,
+    deletes_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::save_content(
+        &prior_json,
+        &upserts_json,
+        &deletes_json,
+        &ctx_json,
+        &now_iso,
+    )
+}
+
 /// Merge two prose units (current taggings passed in) → `OpOutcomeResult` JSON.
 #[napi]
 pub fn merge_units(

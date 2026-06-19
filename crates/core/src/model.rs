@@ -144,6 +144,8 @@ pub struct CanonicalObject {
     /// Unknown-field preservation (§2.2/§6.3): fields this core version does not know
     /// survive parse → edit → store round trips instead of being silently dropped
     /// (e.g. data from a newer minor import). Never interpreted, only carried.
+    // Content-level types deliberately do NOT mirror this (they drop unknowns) — see the
+    // §2.2 foreign-field policy note by `Unit` below.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -520,6 +522,15 @@ pub struct ExtractedStructureEnvelope {
 }
 
 // ── Entity rows (§6.0b/§6.1/§6.3b) ───────────────────────────────────────────
+
+// §2.2 foreign-field policy — deliberately ASYMMETRIC with `CanonicalObject` above.
+// Content-level types (`Unit`, `UnitContent`, `Inline`, `MathExpression`) carry no `flatten`
+// catch-all and no `deny_unknown_fields`, so serde DROPS unknown fields on parse. This is
+// intentional: unknown-field *preservation* (§2.2) is scoped to the `CanonicalObject` envelope —
+// the cross-version import boundary — not to in-version content authored through the strict
+// `save_content` reconcile gate (`ops.rs`). Dropping is the safe default: a dropped field is never
+// persisted, so it cannot be smuggled past the gate or bloat storage. Revisit only when a real
+// cross-version content-import path (`.mathpack`) makes lossless content forward-compat load-bearing.
 
 /// A content unit — the §6.0b `content_units` row. Content is the authored material;
 /// `content_kind` is a DERIVED SQL column (the `content` tag), so it is NOT a field here.
