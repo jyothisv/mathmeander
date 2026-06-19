@@ -355,6 +355,19 @@ async function loadOneSubgraph(
 class RevisionConflict extends Error {}
 
 /**
+ * A DB integrity constraint blocked a content delta — a deleted unit is still referenced (FK 23503,
+ * e.g. an inbound link/handle; a reviewable refusal lands with reference authoring in 2e) or a
+ * per-parent position would collide (UNIQUE 23505; normally pre-empted by the core gate). Surfaced as
+ * a client-attributable 422 rather than a raw 500. The transaction rolls back cleanly (no corruption).
+ */
+export class ContentConstraintError extends Error {}
+
+function isConstraintViolation(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === '23503' || code === '23505';
+}
+
+/**
  * Thrown when dissolve's IN-TRANSACTION re-check finds an external inbound reference that appeared
  * after the route's pre-read (the §9.y TOCTOU). Caught → `{ won: false, blockedReferences }` → 422.
  */
@@ -618,34 +631,85 @@ async function insertObjectRow(client: pg.PoolClient, o: CanonicalObject): Promi
  * collision a split's position shift would otherwise cause on a per-row upsert. Parents are
  * inserted before children. `content_kind` is GENERATED — never written.
  */
+/** INSERT one content_unit row (never the GENERATED `content_kind`/`in_expression`). */
+async function insertContentUnit(client: pg.PoolClient, u: Unit): Promise<void> {
+  await client.query(
+    `INSERT INTO content_units
+       (id, object_id, parent_unit_id, position, slot, type, example_kind, status,
+        declared_by, extracted_structure, content, provenance_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      u.id,
+      u.object_id,
+      u.parent_unit_id ?? null,
+      u.position,
+      u.slot ?? null,
+      u.type ?? null,
+      u.example_kind ?? null,
+      u.status,
+      u.declared_by,
+      u.extracted_structure == null ? null : JSON.stringify(u.extracted_structure),
+      JSON.stringify(u.content),
+      u.provenance_id,
+    ],
+  );
+}
+
 async function replaceContentUnits(
   client: pg.PoolClient,
   objectId: string,
   units: Unit[],
 ): Promise<void> {
   await client.query(`DELETE FROM content_units WHERE object_id = $1`, [objectId]);
-  for (const u of parentsFirst(units)) {
-    await client.query(
-      `INSERT INTO content_units
-         (id, object_id, parent_unit_id, position, slot, type, example_kind, status,
-          declared_by, extracted_structure, content, provenance_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [
-        u.id,
-        u.object_id,
-        u.parent_unit_id ?? null,
-        u.position,
-        u.slot ?? null,
-        u.type ?? null,
-        u.example_kind ?? null,
-        u.status,
-        u.declared_by,
-        u.extracted_structure == null ? null : JSON.stringify(u.extracted_structure),
-        JSON.stringify(u.content),
-        u.provenance_id,
-      ],
-    );
+  for (const u of parentsFirst(units)) await insertContentUnit(client, u);
+}
+
+/**
+ * Persist a `save_content` DELTA (slice 2c): upsert the changed/new units and delete the removed ones
+ * — touching ONLY the affected rows (not delete-all-reinsert), so editing one unit in a large surface
+ * is O(changed). Gate + bump the object revision (→ 409 on a lost race) and append the version
+ * snapshot, all in one transaction. Constraints are deferred so a re-inserted (same-id) unit's inbound
+ * composite-FK edges stay valid at COMMIT; the per-parent position UNIQUE stays immediate but never
+ * collides — the core validated the applied positions and every touched row is deleted before reinsert.
+ */
+export async function persistContentDelta(
+  db: pg.Pool,
+  objectId: string,
+  delta: { upserts: Unit[]; deletes: string[] },
+  opts: {
+    provenance: Provenance;
+    expectedRevision: number;
+    newRevision: number;
+    versionSnapshot: ObjectVersion;
+    now: Date;
+  },
+): Promise<{ won: boolean }> {
+  try {
+    await withTransaction(db, async (client) => {
+      await upsertProvenance(client, opts.provenance);
+      await client.query('SET CONSTRAINTS ALL DEFERRED');
+      const bumped = await client.query(
+        `UPDATE objects SET revision = $1, updated_at = $2 WHERE id = $3 AND revision = $4`,
+        [opts.newRevision, opts.now.toISOString(), objectId, opts.expectedRevision],
+      );
+      if (bumped.rowCount !== 1) throw new RevisionConflict();
+
+      const touched = [...delta.deletes, ...delta.upserts.map((u) => u.id)];
+      if (touched.length > 0) {
+        await client.query(`DELETE FROM content_units WHERE object_id = $1 AND id = ANY($2)`, [
+          objectId,
+          touched,
+        ]);
+      }
+      for (const u of parentsFirst(delta.upserts)) await insertContentUnit(client, u);
+      await insertObjectVersion(client, opts.versionSnapshot);
+    });
+  } catch (err) {
+    if (err instanceof RevisionConflict) return { won: false };
+    if (isConstraintViolation(err)) throw new ContentConstraintError((err as Error).message);
+    throw err;
   }
+  return { won: true };
 }
 
 /** Topological order so a unit's parent is inserted before it (the composite FK requires it). */

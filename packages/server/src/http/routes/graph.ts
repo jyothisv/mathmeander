@@ -12,6 +12,7 @@ import {
   RewriteSurfaceInputSchema,
   InsertReferenceInputSchema,
   ResolveOccurrenceInputSchema,
+  UnitSchema,
   type ExpressionIdRemap,
   type InsertReferenceInput,
   type MaterializeObjectInput,
@@ -43,6 +44,7 @@ import {
   projectNumbering,
   resolveOccurrence,
   rewriteSurface,
+  saveContent,
   setUnitType,
   splitUnit,
   toggleExpressionPlacement,
@@ -51,11 +53,13 @@ import {
 } from '../../core/index.js';
 import { currentRevision } from '../../db/objects.js';
 import {
+  ContentConstraintError,
   loadContent,
   loadCurrentLinks,
   loadCurrentTaggings,
   loadObject,
   loadObjectSubgraph,
+  persistContentDelta,
   persistObjectGraph,
 } from '../../db/graph.js';
 import { requireSession } from './auth.js';
@@ -80,6 +84,14 @@ const DissolveBodySchema = z.object({
   dissolved_object_id: z.string().uuid(),
 });
 
+// The §6.0a coarse prose-authoring delta (slice 2c): only changed/new units + removed ids. Unit ids
+// are client-minted UUIDv7 (the §6.3 reservation); the core reconcile-gates against `prior`.
+const SaveContentBodySchema = z.object({
+  expected_revision: z.number().int().nonnegative(),
+  upserts: z.array(UnitSchema),
+  deletes: z.array(z.string().uuid()),
+});
+
 export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
   // ── set_unit_type ──
   app.post(
@@ -95,6 +107,63 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
       const result = setUnitType(content, input, opCtx, now);
       return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
+    },
+  );
+
+  // ── save_content (the §6.0a coarse prose-authoring DELTA, slice 2c editor) ──
+  app.put(
+    '/api/objects/:id/content',
+    { schema: { body: SaveContentBodySchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const body = req.body as { expected_revision: number; upserts: Unit[]; deletes: string[] };
+      const prior = await loadContent(deps.db, ctx.spaceId, id);
+      if (!prior) throw new AppError(404, 'NOT_FOUND', 'no such object');
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      // New (from-nothing) units carry the authoring action's provenance; edits keep theirs (the
+      // core's reconcile gate requires every non-prose-content field unchanged on an existing unit).
+      const priorIds = new Set(prior.units.map((u) => u.id));
+      const upserts: Unit[] = body.upserts.map((u) =>
+        priorIds.has(u.id) ? u : { ...u, provenance_id: provenance.id },
+      );
+
+      const result = saveContent(prior, upserts, body.deletes, opCtx, now);
+      if (!result.ok) return sendCoreError(reply, result.error);
+
+      let won: boolean;
+      try {
+        ({ won } = await persistContentDelta(
+          deps.db,
+          id,
+          { upserts, deletes: body.deletes },
+          {
+            provenance,
+            expectedRevision: body.expected_revision,
+            newRevision: result.value.content.revision,
+            versionSnapshot: result.value.version_snapshot,
+            now,
+          },
+        ));
+      } catch (err) {
+        // A DB integrity constraint (e.g. deleting a still-referenced unit) → client error, not 500.
+        if (err instanceof ContentConstraintError) {
+          return sendCoreError(reply, {
+            kind: 'validation',
+            code: 'content_save_invalid',
+            reason: err.message,
+          } as import('@mathmeander/schema').CoreError);
+        }
+        throw err;
+      }
+      if (!won) {
+        const revision = await currentRevision(deps.db, ctx.spaceId, id);
+        throw new AppError(409, 'REVISION_CONFLICT', 'object changed since you read it', {
+          current_revision: revision,
+        });
+      }
+      return reply.send({ outcome: result.value });
     },
   );
 

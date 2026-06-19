@@ -7,6 +7,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
+use crate::ids::UnitId;
 use crate::mathpack::{Mathpack, MathpackGraph, MathpackImport, MathpackMeta};
 use crate::model::{
     Alias, CanonicalObject, Handle, JournalDayDetail, Link, Provenance, Tagging, Unit,
@@ -259,6 +260,29 @@ pub fn set_unit_type(
         let ctx: OpContext = parse_input("op context", ctx_json)?;
         let now = parse_now(now_iso)?;
         Ok(crate::ops::set_unit_type(content, &input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Apply a prose-authoring delta (§6.0a coarse path, slice 2c) → `OpOutcomeResult` JSON. The glue
+/// loads `prior` content, mints ids for any new units, then persists the DELTA (`upserts`/`deletes`);
+/// the returned `content` is the whole applied result for the editor to re-anchor against.
+pub fn save_content(
+    prior_json: &str,
+    upserts_json: &str,
+    deletes_json: &str,
+    ctx_json: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let prior: MathContent = parse_input("prior content", prior_json)?;
+        let upserts: Vec<Unit> = parse_input("upserts", upserts_json)?;
+        let deletes: Vec<UnitId> = parse_input("deletes", deletes_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::save_content(
+            &prior, &upserts, &deletes, &ctx, now,
+        )?)
     })();
     OpOutcomeResult::from_result(result).to_json()
 }

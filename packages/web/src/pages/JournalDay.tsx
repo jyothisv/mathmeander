@@ -8,6 +8,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import type { MathContent, Unit } from '@mathmeander/schema';
 import { getJournalDay } from '../api/client';
+import { DayEditor } from '../editor/DayEditor';
+import { isFlatProse } from '../editor/projection';
 
 type ContentById = Map<string, MathContent>;
 
@@ -127,7 +129,12 @@ export function JournalDayPage() {
         <Link to="/journal">← Journal</Link>
       </p>
       <h1>{date}</h1>
-      {dayContent && dayContent.units.length > 0 ? (
+      {dayContent && isFlatProse(dayContent) ? (
+        // Flat-prose (or empty) days are EDITABLE (slice 2c-1). Keyed by object id so a new day
+        // remounts the editor cleanly.
+        <DayEditor key={object.id} objectId={object.id} content={dayContent} />
+      ) : dayContent ? (
+        // Days with display math / embeds / groups render read-only until later passes.
         <MathContentView content={dayContent} contentById={contentById} />
       ) : (
         <p>

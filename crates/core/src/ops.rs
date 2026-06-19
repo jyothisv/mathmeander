@@ -48,7 +48,9 @@ use crate::model::{
     OccurrenceTarget, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::patch::Patch;
-use crate::validate::{validate_inline, validate_link, validate_tagging};
+use crate::validate::{
+    validate_expression, validate_inline, validate_link, validate_prose_inline, validate_tagging,
+};
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Carriers
@@ -386,6 +388,199 @@ pub fn set_unit_type(
     }
     content.revision = content.revision.saturating_add(1);
     Ok(OpOutcome::new(content, ctx, now))
+}
+
+/// Apply a **prose-authoring delta** to an object's content — the §6.0a coarse, core-VALIDATED
+/// authoring path (slice 2c). The editor sends only the units that changed (`upserts`) and the ids
+/// it removed (`deletes`); this applies them to `prior`, re-validates the result, and bumps the
+/// revision. It may edit a prose unit's `text`/`inline`, **re-order prose units** (a `position`
+/// change), add brand-new prose units, and delete prose units. It may NOT change any SEMANTIC facet
+/// of an existing unit — type / content-kind / parent / slot / status / declared_by / example_kind /
+/// extracted_structure / provenance are frozen; those transitions are the fine-grained ops' territory
+/// (`set_unit_type`/`rehome_subtree`/`split_unit`/`merge_units`). That freeze is what keeps coarse
+/// prose sync from reintroducing the editor-as-truth problem (§6.0a): the editor proposes content +
+/// ordering, the core adjudicates everything else.
+///
+/// The glue persists the DELTA (upsert the `upserts`, delete the `deletes`); the returned
+/// `OpOutcome.content` is the whole applied result, for the editor to re-anchor against. Positions
+/// ride in on the units; this validates per-parent uniqueness (the DB `(object_id, parent_unit_id,
+/// position)` constraint) and parent resolution — so the editor must include every position-shifted
+/// sibling in `upserts` — but does NOT renumber (that would silently move untouched units the delta
+/// won't persist).
+pub fn save_content(
+    prior: &MathContent,
+    upserts: &[Unit],
+    deletes: &[UnitId],
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    use std::collections::{HashMap, HashSet};
+
+    let prior_by_id: HashMap<UnitId, &Unit> = prior.units.iter().map(|u| (u.id, u)).collect();
+    let delete_set: HashSet<UnitId> = deletes.iter().copied().collect();
+
+    let invalid = |reason: String| ValidationError::ContentSaveInvalid { reason };
+
+    // Reconcile gate — each upsert is either a prose-only edit of an existing unit, or a brand-new
+    // rough user-declared prose unit. Everything semantic is forbidden here.
+    let mut upsert_ids: HashSet<UnitId> = HashSet::new();
+    for u in upserts {
+        if !upsert_ids.insert(u.id) {
+            return Err(invalid(format!("unit {} appears twice in upserts", u.id)));
+        }
+        if delete_set.contains(&u.id) {
+            return Err(invalid(format!(
+                "unit {} is both upserted and deleted",
+                u.id
+            )));
+        }
+        if u.object_id != prior.object_id {
+            return Err(invalid(format!(
+                "unit {} does not belong to object {}",
+                u.id, prior.object_id
+            )));
+        }
+        match prior_by_id.get(&u.id) {
+            Some(old) => {
+                // An existing unit may differ ONLY in prose `content` and `position` (reordering is a
+                // prose-authoring act). Swap those two into a clone of `old`; if the result still
+                // equals `u`, EVERY other field is unchanged (frozen exhaustively-by-construction —
+                // a future `Unit` field is protected automatically).
+                let mut frozen = (*old).clone();
+                frozen.content = u.content.clone();
+                frozen.position = u.position;
+                let kind_unchanged =
+                    std::mem::discriminant(&u.content) == std::mem::discriminant(&old.content);
+                let prose_edit = matches!(u.content, UnitContent::Prose { .. });
+                if frozen != *u || !kind_unchanged || (!prose_edit && u.content != old.content) {
+                    return Err(invalid(format!(
+                        "unit {} changes a semantic facet (type/kind/parent/slot/status/…) or non-prose \
+                         content; use the unit operations",
+                        u.id
+                    )));
+                }
+            }
+            None => {
+                // A brand-new unit must be EXACTLY a rough, user-declared, untyped, TOP-LEVEL prose
+                // unit. Build the canonical expected shape field-by-field and compare, so nothing can
+                // be smuggled in — no parent/slot (structural, §6.0b) and no `extracted_structure`
+                // (an AI/candidate-decomposition record, §2.5). Only id/object_id/position/content/
+                // provenance vary.
+                if !matches!(u.content, UnitContent::Prose { .. }) {
+                    return Err(invalid(format!("new unit {} must be prose", u.id)));
+                }
+                let expected = Unit {
+                    id: u.id,
+                    object_id: u.object_id,
+                    parent_unit_id: None,
+                    position: u.position,
+                    slot: None,
+                    unit_type: None,
+                    example_kind: None,
+                    status: UnitStatus::Rough,
+                    declared_by: DeclaredBy::User,
+                    extracted_structure: None,
+                    content: u.content.clone(),
+                    provenance_id: u.provenance_id,
+                };
+                if *u != expected {
+                    return Err(invalid(format!(
+                        "new unit {} must be a rough, user-declared, untyped, top-level prose unit \
+                         (no parent/slot/extracted_structure)",
+                        u.id
+                    )));
+                }
+            }
+        }
+    }
+
+    // Deletes may only remove existing prose, untyped units (dropping a typed/object unit is
+    // `dissolve_object`'s reviewable job).
+    for d in deletes {
+        match prior_by_id.get(d) {
+            Some(old)
+                if old.unit_type.is_none() && matches!(old.content, UnitContent::Prose { .. }) => {}
+            Some(_) => {
+                return Err(invalid(format!(
+                    "unit {d} is typed or non-prose; clear/dissolve it via the unit operations"
+                )));
+            }
+            None => return Err(invalid(format!("delete targets unknown unit {d}"))),
+        }
+    }
+
+    // Apply the delta: keep prior order (minus deletes, with upserts substituted), then append
+    // brand-new units in the order the editor sent them.
+    let upsert_by_id: HashMap<UnitId, &Unit> = upserts.iter().map(|u| (u.id, u)).collect();
+    let mut units: Vec<Unit> = Vec::with_capacity(prior.units.len() + upserts.len());
+    for u in &prior.units {
+        if delete_set.contains(&u.id) {
+            continue;
+        }
+        units.push(
+            upsert_by_id
+                .get(&u.id)
+                .map_or_else(|| u.clone(), |up| (*up).clone()),
+        );
+    }
+    for u in upserts {
+        if !prior_by_id.contains_key(&u.id) {
+            units.push(u.clone());
+        }
+    }
+
+    let mut result = MathContent {
+        object_id: prior.object_id,
+        revision: prior.revision,
+        units,
+    };
+    validate_content_well_formed(&result)?;
+    result.revision = result.revision.saturating_add(1);
+    Ok(OpOutcome::new(result, ctx, now))
+}
+
+/// Full intra-object well-formedness for a `save_content` result (§6.1a): every unit's content is
+/// in-bounds (`validate_prose_inline` for prose, `validate_expression` for display math), unit ids
+/// are unique (one home, §6.0b), every `parent_unit_id` resolves to a unit in this object (the DB's
+/// self-FK is immediate — catching a dangling parent here makes it a clean 422, not a raw 500), and
+/// within each parent no two siblings share a `position` (the DB `UNIQUE(object_id, parent_unit_id,
+/// position)`). Gaps are tolerated (ordering is by `position`).
+fn validate_content_well_formed(content: &MathContent) -> Result<(), ValidationError> {
+    use std::collections::HashSet;
+    let ids: HashSet<UnitId> = content.units.iter().map(|u| u.id).collect();
+    let mut seen_units: HashSet<UnitId> = HashSet::new();
+    let mut seen_positions: HashSet<(Option<UnitId>, u32)> = HashSet::new();
+    for unit in &content.units {
+        if !seen_units.insert(unit.id) {
+            return Err(ValidationError::UnitInMultipleObjects {
+                unit_id: unit.id.to_string(),
+            });
+        }
+        if let Some(parent) = unit.parent_unit_id
+            && !ids.contains(&parent)
+        {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "unit {} names a parent {parent} not in this object",
+                    unit.id
+                ),
+            });
+        }
+        if !seen_positions.insert((unit.parent_unit_id, unit.position)) {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "two sibling units share position {} under the same parent",
+                    unit.position
+                ),
+            });
+        }
+        match &unit.content {
+            UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
+            UnitContent::Math { expr } => validate_expression(expr)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Split a prose unit at char offset `at` into two siblings; expression ids are preserved.

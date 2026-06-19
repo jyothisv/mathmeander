@@ -833,6 +833,9 @@ pub fn conformance_json() -> String {
           "value": { "code": "alias_scope_ref_mismatch", "scope": "source" }, "valid": true },
         { "type": "ValidationError", "value": { "code": "declared_by_ai" }, "valid": true },
         { "type": "ValidationError",
+          "value": { "code": "content_save_invalid", "reason": "unit X changes a semantic facet" },
+          "valid": true },
+        { "type": "ValidationError",
           "value": { "code": "tagging_target_not_exactly_one" }, "valid": false,
           "note": "missing variant field `given`" },
 
