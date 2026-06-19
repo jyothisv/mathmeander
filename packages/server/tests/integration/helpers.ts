@@ -110,7 +110,8 @@ export async function createStack(): Promise<TestStack> {
 export async function truncateAll(db: pg.Pool): Promise<void> {
   await db.query(
     `TRUNCATE objects, provenance, sessions, spaces, users, content_units, links, aliases,
-              handles, tags, taggings, object_versions, definition_detail, provenance_derivations CASCADE`,
+              handles, tags, taggings, object_versions, definition_detail, journal_day_detail,
+              provenance_derivations CASCADE`,
   );
 }
 
@@ -187,7 +188,19 @@ export async function seedTheoremHost(stack: TestStack, token: string): Promise<
   if (created.statusCode !== 201) {
     throw new Error(`seed create failed: ${created.statusCode} ${created.body}`);
   }
+  return { hostId, ...(await seedTheoremSubtreeInto(stack, hostId)) };
+}
 
+/**
+ * Seed the theorem subtree into an ALREADY-EXISTING host (a `note`, or a `journal_day` surface — the
+ * core treats the host as raw `MathContent`, so re-home works into either). Splitting this out of
+ * `seedTheoremHost` lets the journal suite prove re-home INTO a journal_day host end-to-end. The host
+ * stays at its current revision (seedContent adds content without bumping).
+ */
+export async function seedTheoremSubtreeInto(
+  stack: TestStack,
+  hostId: string,
+): Promise<Omit<TheoremHost, 'hostId'>> {
   const rootId = uuidv7();
   const stmtId = uuidv7();
   const mathId = uuidv7();
@@ -256,5 +269,5 @@ export async function seedTheoremHost(stack: TestStack, token: string): Promise<
     { ...base(afterId), position: 2, content: { kind: 'prose', text: 'After.', inline: [] } },
   ];
   await seedContent(stack.db, hostId, units, provenance);
-  return { hostId, rootId, stmtId, mathId, exprId, inlineExprId, beforeId, afterId, provenanceId };
+  return { rootId, stmtId, mathId, exprId, inlineExprId, beforeId, afterId, provenanceId };
 }

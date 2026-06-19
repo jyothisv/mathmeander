@@ -16,6 +16,7 @@ import { AppError } from './errors.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerGraphRoutes } from './routes/graph.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerJournalRoutes } from './routes/journal.js';
 import { registerObjectRoutes } from './routes/objects.js';
 
 export interface AppDeps {
@@ -73,6 +74,7 @@ export function buildApp(deps: AppDeps): App {
   app.register(registerAuthRoutes, deps);
   app.register(registerObjectRoutes, deps);
   app.register(registerGraphRoutes, deps);
+  app.register(registerJournalRoutes, deps);
 
   return app;
 }

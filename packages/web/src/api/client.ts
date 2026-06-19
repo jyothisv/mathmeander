@@ -2,7 +2,13 @@
 // ("parse, don't trust") — a drifting server fails loudly at runtime, never silently.
 // Attaches the bearer token, maps the error envelope, and routes 401 to /login.
 import { z } from 'zod';
-import { CanonicalObjectSchema, type CanonicalObject, type ObjectPatch } from '@mathmeander/schema';
+import {
+  CanonicalObjectSchema,
+  MathpackGraphSchema,
+  type CanonicalObject,
+  type MathpackGraph,
+  type ObjectPatch,
+} from '@mathmeander/schema';
 import { API_ORIGIN, DEV_IDP_ORIGIN } from '../config';
 import { clearSession, currentToken } from '../auth/store';
 
@@ -104,4 +110,36 @@ export async function listObjects(): Promise<CanonicalObject[]> {
 
 export async function patchObject(id: string, patch: ObjectPatch): Promise<CanonicalObject> {
   return (await request('PATCH', `/api/objects/${id}`, ObjectEnvelope, patch)).object;
+}
+
+// ── Journal (§6.5 surface): a day = its object + the date it carries; the eager read carries the
+// transitive subgraph so the view resolves Embed{Object} inline. ──
+
+export interface JournalDaySummary {
+  object: CanonicalObject;
+  date: string;
+}
+export interface JournalDayEager extends JournalDaySummary {
+  graph: MathpackGraph;
+}
+
+const JournalDayEnvelope = z.object({ object: CanonicalObjectSchema, date: z.string() });
+const JournalListEnvelope = z.object({ items: z.array(JournalDayEnvelope) });
+const JournalDayEagerEnvelope = z.object({
+  object: CanonicalObjectSchema,
+  date: z.string(),
+  graph: MathpackGraphSchema,
+});
+
+/** Idempotent get-or-create for one calendar day (the "Today" button). */
+export async function createJournalDay(date: string): Promise<JournalDaySummary> {
+  return request('POST', '/api/journal/days', JournalDayEnvelope, { date });
+}
+
+export async function listJournalDays(): Promise<JournalDaySummary[]> {
+  return (await request('GET', '/api/journal', JournalListEnvelope)).items;
+}
+
+export async function getJournalDay(date: string): Promise<JournalDayEager> {
+  return request('GET', `/api/journal/days/${date}`, JournalDayEagerEnvelope);
 }

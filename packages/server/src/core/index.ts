@@ -6,6 +6,7 @@ import {
   artifactHash as addonArtifactHash,
   coreVersion as addonCoreVersion,
   createObject as addonCreateObject,
+  createJournalDay as addonCreateJournalDay,
   applyTitlePatch as addonApplyTitlePatch,
   parseAndMigrateObject as addonParseAndMigrateObject,
   currentSchemaVersion as addonCurrentSchemaVersion,
@@ -26,6 +27,7 @@ import {
 import {
   ARTIFACT_HASH,
   CreateObjectResultSchema,
+  CreateJournalDayResultSchema,
   ObjectResultSchema,
   OpOutcomeResultSchema,
   NumberingResultSchema,
@@ -35,6 +37,7 @@ import {
   type CreateContext,
   type CreateObjectInput,
   type CreateObjectResult,
+  type CreateJournalDayResult,
   type ObjectPatch,
   type ObjectResult,
   type MathContent,
@@ -98,6 +101,27 @@ export function createObject(
     now.toISOString(),
   );
   return CreateObjectResultSchema.parse(JSON.parse(envelope));
+}
+
+/**
+ * Create a `journal_day` surface (§6.5): the date is parsed at the FFI boundary (ISO `YYYY-MM-DD`).
+ * Yields the (object, provenance, detail) triplet the route persists in one transaction.
+ */
+export function createJournalDay(
+  input: CreateObjectInput,
+  ctx: CreateContext,
+  spaceId: string,
+  date: string,
+  now: Date,
+): CreateJournalDayResult {
+  const envelope = addonCreateJournalDay(
+    JSON.stringify(input),
+    JSON.stringify(ctx),
+    spaceId,
+    date,
+    now.toISOString(),
+  );
+  return CreateJournalDayResultSchema.parse(JSON.parse(envelope));
 }
 
 export function applyTitlePatch(

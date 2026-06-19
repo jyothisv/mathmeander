@@ -11,6 +11,8 @@ import {
 import { logout } from './api/client';
 import { useAuth } from './auth/store';
 import { DeskPage } from './pages/Desk';
+import { JournalPage } from './pages/Journal';
+import { JournalDayPage } from './pages/JournalDay';
 import { LoginPage } from './pages/Login';
 import { NewNotePage } from './pages/NewNote';
 import { NoteDetailPage } from './pages/NoteDetail';
@@ -20,6 +22,7 @@ const rootRoute = createRootRoute({
     <>
       <nav>
         <Link to="/">Desk</Link>
+        <Link to="/journal">Journal</Link>
         <Link to="/objects/new">New note</Link>
         <LogoutLink />
       </nav>
@@ -78,7 +81,28 @@ export const noteDetailRoute = createRoute({
   component: NoteDetailPage,
 });
 
-const routeTree = rootRoute.addChildren([loginRoute, deskRoute, newNoteRoute, noteDetailRoute]);
+const journalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/journal',
+  beforeLoad: requireAuth,
+  component: JournalPage,
+});
+
+const journalDayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/journal/$date',
+  beforeLoad: requireAuth,
+  component: JournalDayPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  loginRoute,
+  deskRoute,
+  newNoteRoute,
+  noteDetailRoute,
+  journalRoute,
+  journalDayRoute,
+]);
 
 export const router = createRouter({ routeTree });
 
