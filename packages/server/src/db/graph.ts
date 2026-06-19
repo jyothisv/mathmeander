@@ -9,6 +9,7 @@ import type {
   CanonicalObject,
   DefinitionDetail,
   Handle,
+  JournalDayDetail,
   Link,
   MathContent,
   MathpackGraph,
@@ -228,6 +229,7 @@ function mergeSubgraph(into: MathpackGraph, sub: MathpackGraph): void {
   into.handles.push(...sub.handles);
   into.object_versions.push(...sub.object_versions);
   into.definition_details.push(...sub.definition_details);
+  into.journal_day_details.push(...sub.journal_day_details);
   const tagIds = new Set(into.tags.map((t) => t.id));
   for (const t of sub.tags) if (!tagIds.has(t.id)) into.tags.push(t);
   const taggingIds = new Set(into.taggings.map((t) => t.id));
@@ -300,6 +302,14 @@ async function loadOneSubgraph(
       [objectId],
     )
   ).rows.map((r) => ({ object_id: r.object_id, term: r.term }) satisfies DefinitionDetail);
+  // §6.5: a journal_day's date travels with its subgraph (symmetry with definition_detail; the
+  // core's import gate type-checks it, arch §827). `date` is stored as a Postgres `date` → ISO string.
+  const journalDayDetails = (
+    await db.query<{ object_id: string; date: string }>(
+      `SELECT object_id, to_char(date, 'YYYY-MM-DD') AS date FROM journal_day_detail WHERE object_id = $1`,
+      [objectId],
+    )
+  ).rows.map((r) => ({ object_id: r.object_id, date: r.date }) satisfies JournalDayDetail);
 
   // The trust spine: every provenance row the subgraph references travels too.
   const provenanceIds = new Set<string>([object.provenance_id]);
@@ -335,6 +345,7 @@ async function loadOneSubgraph(
     taggings,
     object_versions: objectVersions,
     definition_details: definitionDetails,
+    journal_day_details: journalDayDetails,
   };
 }
 

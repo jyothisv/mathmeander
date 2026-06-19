@@ -39,6 +39,7 @@ const EMPTY_GRAPH = {
   taggings: [],
   object_versions: [],
   definition_details: [],
+  journal_day_details: [],
 };
 
 describe('napi addon handshake', () => {

@@ -77,7 +77,7 @@ describe('create → read', () => {
     expect(bad.json().error.details.object_type).toBe('theorem');
   });
 
-  it('rejects a reserved type that has no create surface yet', async () => {
+  it('rejects a journal_day direct POST — surface-created, not directly creatable', async () => {
     const bad = await stack.app.inject({
       method: 'POST',
       url: '/api/objects',
@@ -85,8 +85,22 @@ describe('create → read', () => {
       payload: { id: uuidv7(), type: 'journal_day' },
     });
     expect(bad.statusCode).toBe(422);
-    expect(bad.json().error.code).toBe('type_not_producible_yet');
+    // journal_day became producible in slice 2b (via its §6.5 surface), so the raw typed-create path
+    // now gives the declaration/surface-only error, NOT type_not_producible_yet.
+    expect(bad.json().error.code).toBe('type_not_directly_creatable');
     expect(bad.json().error.details.object_type).toBe('journal_day');
+  });
+
+  it('rejects a reserved type that has no create surface yet', async () => {
+    const bad = await stack.app.inject({
+      method: 'POST',
+      url: '/api/objects',
+      headers: bearer(token),
+      payload: { id: uuidv7(), type: 'trail' },
+    });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('type_not_producible_yet');
+    expect(bad.json().error.details.object_type).toBe('trail');
   });
 
   it('rejects non-v7 ids with the typed core error', async () => {

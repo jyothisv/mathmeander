@@ -14,7 +14,7 @@
     "type": "ObjectType",
     "value": "journal_day",
     "valid": true,
-    "note": "reserved vocabulary: valid on read, not producible (TypeNotProducibleYet)"
+    "note": "producible since slice 2b via its §6.5 surface (create_journal_day); a raw typed POST still 422s (TypeNotDirectlyCreatable)"
   },
   {
     "type": "ObjectType",
@@ -1400,6 +1400,22 @@
     },
     "valid": false,
     "note": "term missing"
+  },
+  {
+    "type": "JournalDayDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "date": "2026-06-18"
+    },
+    "valid": true
+  },
+  {
+    "type": "JournalDayDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": false,
+    "note": "date missing (the §6.5 day's identity); ISO YYYY-MM-DD validity is core-strict"
   },
   {
     "type": "ProvenanceDerivation",
@@ -2792,6 +2808,7 @@
       "taggings": 0,
       "object_versions": 1,
       "definition_details": 0,
+      "journal_day_details": 0,
       "provenance": 1,
       "provenance_derivations": 0
     },
@@ -2809,6 +2826,7 @@
       "taggings": 0,
       "object_versions": 1,
       "definition_details": 0,
+      "journal_day_details": 0,
       "provenance": 1
     },
     "valid": false,
@@ -2832,6 +2850,7 @@
         "taggings": 0,
         "object_versions": 1,
         "definition_details": 0,
+        "journal_day_details": 0,
         "provenance": 1,
         "provenance_derivations": 0
       },
@@ -2934,7 +2953,8 @@
           "created_at": "2026-06-12T00:00:00Z"
         }
       ],
-      "definition_details": []
+      "definition_details": [],
+      "journal_day_details": []
     },
     "valid": true
   },
@@ -2950,7 +2970,8 @@
       "tags": [],
       "taggings": [],
       "object_versions": [],
-      "definition_details": []
+      "definition_details": [],
+      "journal_day_details": []
     },
     "valid": false,
     "note": "objects section missing"
@@ -2974,6 +2995,7 @@
           "taggings": 0,
           "object_versions": 1,
           "definition_details": 0,
+          "journal_day_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3059,7 +3081,8 @@
             "created_at": "2026-06-12T00:00:00Z"
           }
         ],
-        "definition_details": []
+        "definition_details": [],
+        "journal_day_details": []
       }
     },
     "valid": true
@@ -3083,6 +3106,7 @@
           "taggings": 0,
           "object_versions": 1,
           "definition_details": 0,
+          "journal_day_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3111,6 +3135,7 @@
           "taggings": 0,
           "object_versions": 1,
           "definition_details": 0,
+          "journal_day_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3196,7 +3221,8 @@
             "created_at": "2026-06-12T00:00:00Z"
           }
         ],
-        "definition_details": []
+        "definition_details": [],
+        "journal_day_details": []
       }
     },
     "valid": true
@@ -3284,7 +3310,8 @@
             "created_at": "2026-06-12T00:00:00Z"
           }
         ],
-        "definition_details": []
+        "definition_details": [],
+        "journal_day_details": []
       }
     },
     "valid": false,
@@ -3430,6 +3457,7 @@
             "taggings": 0,
             "object_versions": 1,
             "definition_details": 0,
+            "journal_day_details": 0,
             "provenance": 1,
             "provenance_derivations": 0
           },
@@ -3515,7 +3543,8 @@
               "created_at": "2026-06-12T00:00:00Z"
             }
           ],
-          "definition_details": []
+          "definition_details": [],
+          "journal_day_details": []
         }
       }
     },
@@ -3550,6 +3579,7 @@
             "taggings": 0,
             "object_versions": 1,
             "definition_details": 0,
+            "journal_day_details": 0,
             "provenance": 1,
             "provenance_derivations": 0
           },
@@ -3635,7 +3665,8 @@
               "created_at": "2026-06-12T00:00:00Z"
             }
           ],
-          "definition_details": []
+          "definition_details": [],
+          "journal_day_details": []
         }
       }
     },

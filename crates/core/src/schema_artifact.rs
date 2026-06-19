@@ -14,8 +14,8 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::api::{
-    CreateObjectResult, CreatedObject, MathpackImportResult, MathpackResult, NumberingResult,
-    ObjectResult, OpOutcomeResult,
+    CreateJournalDayResult, CreateObjectResult, CreatedJournalDay, CreatedObject,
+    MathpackImportResult, MathpackResult, NumberingResult, ObjectResult, OpOutcomeResult,
 };
 use crate::error::{CoreError, ValidationError};
 use crate::mathpack::{
@@ -25,10 +25,10 @@ use crate::mathpack::{
 use crate::model::{
     Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ContentLocator, DeclaredBy,
     DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle, HandleScope,
-    HandleStatus, Inline, InputSyntax, Link, LinkStatus, LinkType, MathExpression, ObjectStatus,
-    ObjectType, ObjectVersion, Occurrence, OccurrenceTarget, Origin, ParseStatus, Provenance,
-    ProvenanceDerivation, ReferenceTarget, SurfaceFormat, Tag, Tagging, TargetSelector, Unit,
-    UnitContent, UnitStatus, UnitType,
+    HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
+    MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence, OccurrenceTarget, Origin,
+    ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget, SurfaceFormat, Tag, Tagging,
+    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
@@ -104,6 +104,7 @@ pub fn artifact_json() -> String {
     defs.insert("Tagging", inline_schema_for::<Tagging>());
     defs.insert("ObjectVersion", inline_schema_for::<ObjectVersion>());
     defs.insert("DefinitionDetail", inline_schema_for::<DefinitionDetail>());
+    defs.insert("JournalDayDetail", inline_schema_for::<JournalDayDetail>());
     defs.insert(
         "ProvenanceDerivation",
         inline_schema_for::<ProvenanceDerivation>(),
@@ -175,6 +176,14 @@ pub fn artifact_json() -> String {
     defs.insert(
         "CreateObjectResult",
         inline_schema_for::<CreateObjectResult>(),
+    );
+    defs.insert(
+        "CreatedJournalDay",
+        inline_schema_for::<CreatedJournalDay>(),
+    );
+    defs.insert(
+        "CreateJournalDayResult",
+        inline_schema_for::<CreateJournalDayResult>(),
     );
     defs.insert("ObjectResult", inline_schema_for::<ObjectResult>());
     // Slice 1d FFI envelopes (ops + projections + packaging)
@@ -283,8 +292,8 @@ fn sample_link_draft() -> Value {
 fn sample_mathpack_counts() -> Value {
     json!({
         "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
-        "taggings": 0, "object_versions": 1, "definition_details": 0, "provenance": 1,
-        "provenance_derivations": 0
+        "taggings": 0, "object_versions": 1, "definition_details": 0, "journal_day_details": 0,
+        "provenance": 1, "provenance_derivations": 0
     })
 }
 
@@ -307,7 +316,8 @@ fn sample_mathpack_graph() -> Value {
         "content": [ sample_math_content() ],
         "links": [], "aliases": [], "handles": [], "tags": [], "taggings": [],
         "object_versions": [ sample_object_version() ],
-        "definition_details": []
+        "definition_details": [],
+        "journal_day_details": []
     })
 }
 
@@ -342,7 +352,7 @@ pub fn conformance_json() -> String {
         { "type": "ObjectType", "value": "theorem", "valid": true,
           "note": "formal family: valid vocabulary, producible via materialize, not directly creatable" },
         { "type": "ObjectType", "value": "journal_day", "valid": true,
-          "note": "reserved vocabulary: valid on read, not producible (TypeNotProducibleYet)" },
+          "note": "producible since slice 2b via its §6.5 surface (create_journal_day); a raw typed POST still 422s (TypeNotDirectlyCreatable)" },
         { "type": "ObjectType", "value": "Note", "valid": false, "note": "case-sensitive" },
         { "type": "ObjectType", "value": "proof_step", "valid": false,
           "note": "proof_step is a UNIT type, never an object type (§6.0b)" },
@@ -785,13 +795,19 @@ pub fn conformance_json() -> String {
                      "created_at": "2026-06-12T00:00:00Z" }, "valid": false,
           "note": "version_no missing" },
 
-        // ── DefinitionDetail + ProvenanceDerivation ──
+        // ── DefinitionDetail + JournalDayDetail + ProvenanceDerivation ──
         { "type": "DefinitionDetail",
           "value": { "object_id": "0197675f-71f4-7000-8000-0000000000a1", "term": "compact" },
           "valid": true },
         { "type": "DefinitionDetail",
           "value": { "object_id": "0197675f-71f4-7000-8000-0000000000a1" }, "valid": false,
           "note": "term missing" },
+        { "type": "JournalDayDetail",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000b1", "date": "2026-06-18" },
+          "valid": true },
+        { "type": "JournalDayDetail",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000b1" }, "valid": false,
+          "note": "date missing (the §6.5 day's identity); ISO YYYY-MM-DD validity is core-strict" },
         { "type": "ProvenanceDerivation",
           "value": { "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
                      "derived_from_provenance_id": "0197675f-71f4-7000-8000-0000000000d2" },
@@ -1114,7 +1130,8 @@ pub fn conformance_json() -> String {
         { "type": "MathpackCounts", "value": sample_mathpack_counts(), "valid": true },
         { "type": "MathpackCounts",
           "value": { "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
-                     "taggings": 0, "object_versions": 1, "definition_details": 0, "provenance": 1 },
+                     "taggings": 0, "object_versions": 1, "definition_details": 0,
+                     "journal_day_details": 0, "provenance": 1 },
           "valid": false, "note": "provenance_derivations missing" },
 
         // ── MathpackManifest ──
@@ -1130,7 +1147,8 @@ pub fn conformance_json() -> String {
         { "type": "MathpackGraph",
           "value": { "provenance": [], "provenance_derivations": [], "content": [], "links": [],
                      "aliases": [], "handles": [], "tags": [], "taggings": [], "object_versions": [],
-                     "definition_details": [] }, "valid": false, "note": "objects section missing" },
+                     "definition_details": [], "journal_day_details": [] },
+          "valid": false, "note": "objects section missing" },
 
         // ── Mathpack / MathpackImport ──
         { "type": "Mathpack",
@@ -1261,6 +1279,9 @@ mod tests {
                 "ObjectVersion" => serde_json::from_value::<ObjectVersion>(value.clone()).is_ok(),
                 "DefinitionDetail" => {
                     serde_json::from_value::<DefinitionDetail>(value.clone()).is_ok()
+                }
+                "JournalDayDetail" => {
+                    serde_json::from_value::<JournalDayDetail>(value.clone()).is_ok()
                 }
                 "ProvenanceDerivation" => {
                     serde_json::from_value::<ProvenanceDerivation>(value.clone()).is_ok()

@@ -3,12 +3,14 @@
 //! boundary; results are ENVELOPES (`{ok:true,value}` / `{ok:false,error}`) — domain
 //! failures are values, never exceptions (arch doc §17).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 use crate::mathpack::{Mathpack, MathpackGraph, MathpackImport, MathpackMeta};
-use crate::model::{Alias, CanonicalObject, Handle, Link, Provenance, Tagging, Unit};
+use crate::model::{
+    Alias, CanonicalObject, Handle, JournalDayDetail, Link, Provenance, Tagging, Unit,
+};
 use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
     DissolveObjectInput, InsertReferenceInput, MaterializeObjectInput, MathContent,
@@ -116,6 +118,21 @@ core_result!(
     /// Envelope of `create_object`.
     CreateObjectResult, CreatedObject
 );
+
+/// What a successful `journal_day` create yields: the THREE rows the glue persists in ONE
+/// transaction (the detail carries the day's date — §6.5).
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct CreatedJournalDay {
+    pub object: CanonicalObject,
+    pub provenance: Provenance,
+    pub detail: JournalDayDetail,
+}
+
+core_result!(
+    /// Envelope of `create_journal_day`.
+    CreateJournalDayResult, CreatedJournalDay
+);
 core_result!(
     /// Envelope of `apply_title_patch` and `parse_and_migrate_object`.
     ObjectResult, CanonicalObject
@@ -156,6 +173,15 @@ fn parse_now(now_iso: &str) -> Result<DateTime<Utc>, CoreError> {
         })
 }
 
+/// Parse an ISO calendar date (`YYYY-MM-DD`) at the FFI boundary — a malformed date is a typed
+/// `MalformedInput`, never an opaque serde failure (the `journal_day` surface's date, §6.5).
+fn parse_date(date_str: &str) -> Result<NaiveDate, CoreError> {
+    NaiveDate::parse_from_str(date_str, "%Y-%m-%d").map_err(|e| CoreError::MalformedInput {
+        context: "date".into(),
+        message: e.to_string(),
+    })
+}
+
 /// Create: untrusted input + server context + now → (object, provenance) envelope.
 pub fn create_object(input_json: &str, ctx_json: &str, space_id: &str, now_iso: &str) -> String {
     let result = (|| {
@@ -166,6 +192,32 @@ pub fn create_object(input_json: &str, ctx_json: &str, space_id: &str, now_iso: 
         Ok(CreatedObject { object, provenance })
     })();
     CreateObjectResult::from_result(result).to_json()
+}
+
+/// Create a `journal_day` surface (§6.5): untrusted input + server context + the day's date + now
+/// → (object, provenance, detail) envelope. The date is parsed at the boundary (→ `MalformedInput`),
+/// like `now`; the glue persists all three rows in one transaction under `UNIQUE(space_id, date)`.
+pub fn create_journal_day(
+    input_json: &str,
+    ctx_json: &str,
+    space_id: &str,
+    date_str: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let input: CreateObjectInput = parse_input("create input", input_json)?;
+        let ctx: CreateContext = parse_input("create context", ctx_json)?;
+        let date = parse_date(date_str)?;
+        let now = parse_now(now_iso)?;
+        let (object, provenance, detail) =
+            crate::validate::create_journal_day(&input, &ctx, space_id, date, now)?;
+        Ok(CreatedJournalDay {
+            object,
+            provenance,
+            detail,
+        })
+    })();
+    CreateJournalDayResult::from_result(result).to_json()
 }
 
 /// Patch object metadata (pure; concurrency is the glue's conditional UPDATE, §6.4).

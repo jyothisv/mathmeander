@@ -85,6 +85,8 @@ export const CORE_CODE_STATUS: Record<string, number> = {
   embed_target_missing: 422, // an imported pack's embed names an object absent from the pack
   unit_in_multiple_objects: 422, // an imported pack puts one unit under two objects (one home, §6.0b)
   dissolution_blocked: 422, // inbound references depend on the object — review, don't silently move (§9.y)
+  type_not_materializable: 422, // client asked rehome to materialize a §6.5 surface (journal_day/trail) — surfaces are created via their own op
+  detail_object_type_mismatch: 422, // imported pack: a *_detail.object_id references the wrong object type (arch §827) — untrusted, client-attributable
 
   // ── Glue id-bookkeeping the client cannot cause via a well-formed request → 500 ──
   id_count_mismatch: 500,

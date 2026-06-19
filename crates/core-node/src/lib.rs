@@ -37,6 +37,25 @@ pub fn create_object(
     mathmeander_core::api::create_object(&input_json, &ctx_json, &space_id, &now_iso)
 }
 
+/// Create a `journal_day` surface: input + context + space + date + now → `CreateJournalDayResult`
+/// JSON (§6.5). The glue persists the (object, provenance, detail) triplet in one transaction.
+#[napi]
+pub fn create_journal_day(
+    input_json: String,
+    ctx_json: String,
+    space_id: String,
+    date_str: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::create_journal_day(
+        &input_json,
+        &ctx_json,
+        &space_id,
+        &date_str,
+        &now_iso,
+    )
+}
+
 /// Patch object metadata (pure) → `ObjectResult` JSON.
 #[napi]
 pub fn apply_title_patch(current_json: String, patch_json: String, now_iso: String) -> String {

@@ -20,8 +20,8 @@ use serde_json::Value;
 use crate::error::{CoreError, ValidationError};
 use crate::ids::SpaceId;
 use crate::model::{
-    Alias, CanonicalObject, DefinitionDetail, EmbedTarget, Handle, Link, ObjectVersion, Provenance,
-    ProvenanceDerivation, Tag, Tagging, UnitContent,
+    Alias, CanonicalObject, DefinitionDetail, EmbedTarget, Handle, JournalDayDetail, Link,
+    ObjectType, ObjectVersion, Provenance, ProvenanceDerivation, Tag, Tagging, UnitContent,
 };
 use crate::ops::MathContent;
 use crate::validate::{
@@ -65,6 +65,7 @@ pub struct MathpackCounts {
     pub taggings: u32,
     pub object_versions: u32,
     pub definition_details: u32,
+    pub journal_day_details: u32,
     /// The trust-spine rows travel with the graph (`MathpackGraph.provenance`), so they are
     /// counted too — every graph vec has a count (a complete self-describing manifest).
     pub provenance: u32,
@@ -106,6 +107,7 @@ pub struct MathpackGraph {
     pub taggings: Vec<Tagging>,
     pub object_versions: Vec<ObjectVersion>,
     pub definition_details: Vec<DefinitionDetail>,
+    pub journal_day_details: Vec<JournalDayDetail>,
 }
 
 /// What export produces: a deterministic manifest + the canonical graph. The glue writes this
@@ -209,6 +211,7 @@ pub fn import_mathpack(bundle: Value) -> Result<MathpackImport, CoreError> {
         taggings: Vec<Tagging>,
         object_versions: Vec<ObjectVersion>,
         definition_details: Vec<DefinitionDetail>,
+        journal_day_details: Vec<JournalDayDetail>,
     }
 
     let raw: RawBundle = serde_json::from_value(bundle).map_err(|e| CoreError::MalformedInput {
@@ -234,6 +237,7 @@ pub fn import_mathpack(bundle: Value) -> Result<MathpackImport, CoreError> {
         taggings: raw.graph.taggings,
         object_versions: raw.graph.object_versions,
         definition_details: raw.graph.definition_details,
+        journal_day_details: raw.graph.journal_day_details,
     };
     // The §6.1a invariants the DB can't FK-check — import is the only gate (refuse loudly, §2.2).
     validate_graph(&graph)?;
@@ -269,6 +273,7 @@ fn derive_counts(graph: &MathpackGraph) -> MathpackCounts {
         taggings: graph.taggings.len() as u32,
         object_versions: graph.object_versions.len() as u32,
         definition_details: graph.definition_details.len() as u32,
+        journal_day_details: graph.journal_day_details.len() as u32,
         provenance: graph.provenance.len() as u32,
         provenance_derivations: graph.provenance_derivations.len() as u32,
     }
@@ -284,12 +289,18 @@ fn derive_counts(graph: &MathpackGraph) -> MathpackCounts {
 /// atoms, `validate_prose_inline`), exactly-one link / tagging target + content-edge anchors
 /// (`validate_link` / `validate_tagging`). Most REFERENTIAL integrity — does a `target_unit_id` /
 /// `provenance_id` resolve WITHIN the pack — is the database's job at INSERT (composite FKs, Pass 2),
-/// not here. The TWO exceptions the core owns, because SQL has no FK for them (§6.1a/§9.y): an
+/// not here. The THREE exceptions the core owns, because SQL has no FK for them (§6.1a/§9.y): an
 /// `Embed{target: Object}` target must resolve within the pack (embed targets live in content, not a
-/// typed FK column), and **one home (§6.0b)** — a unit belongs to exactly one object's content (a
-/// re-homed unit must not linger in two objects). Refuses loudly (§2.2).
+/// typed FK column); **one home (§6.0b)** — a unit belongs to exactly one object's content (a re-homed
+/// unit must not linger in two objects); and **type-qualified detail references** (arch §827) — every
+/// `*_detail.object_id` resolves to an object of the matching TYPE within the pack (SQL's FK checks the
+/// id exists, never its type). Refuses loudly (§2.2).
 pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
-    let object_ids: std::collections::HashSet<_> = graph.objects.iter().map(|o| o.id).collect();
+    let object_types: std::collections::HashMap<_, _> = graph
+        .objects
+        .iter()
+        .map(|o| (o.id, o.object_type))
+        .collect();
     let mut seen_units: std::collections::HashSet<_> = std::collections::HashSet::new();
     for content in &graph.content {
         for unit in &content.units {
@@ -308,7 +319,7 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
                 // Embed: its object target must be present in the pack (no SQL FK for it, §9.y).
                 UnitContent::Embed {
                     target: EmbedTarget::Object { object_id },
-                } if !object_ids.contains(object_id) => {
+                } if !object_types.contains_key(object_id) => {
                     return Err(ValidationError::EmbedTargetMissing {
                         object_id: object_id.to_string(),
                     }
@@ -323,6 +334,26 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
     }
     for tagging in &graph.taggings {
         validate_tagging(tagging)?;
+    }
+    // Type-qualified detail references (arch §827): a detail row must reference an object of the
+    // matching TYPE within the pack — `None` = absent entirely. SQL FKs the id, never the type.
+    let check_detail = |object_id, expected: ObjectType| -> Result<(), CoreError> {
+        let actual = object_types.get(&object_id).copied();
+        if actual == Some(expected) {
+            return Ok(());
+        }
+        Err(ValidationError::DetailObjectTypeMismatch {
+            object_id: object_id.to_string(),
+            expected,
+            actual,
+        }
+        .into())
+    };
+    for detail in &graph.definition_details {
+        check_detail(detail.object_id, ObjectType::Definition)?;
+    }
+    for detail in &graph.journal_day_details {
+        check_detail(detail.object_id, ObjectType::JournalDay)?;
     }
     Ok(())
 }

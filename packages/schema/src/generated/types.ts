@@ -12,8 +12,10 @@ import {
   ContentLocatorSchema,
   CoreErrorSchema,
   CreateContextSchema,
+  CreateJournalDayResultSchema,
   CreateObjectInputSchema,
   CreateObjectResultSchema,
+  CreatedJournalDaySchema,
   CreatedObjectSchema,
   DeclaredBySchema,
   DefinitionDetailSchema,
@@ -29,6 +31,7 @@ import {
   InlineSchema,
   InputSyntaxSchema,
   InsertReferenceInputSchema,
+  JournalDayDetailSchema,
   LinkSchema,
   LinkDraftSchema,
   LinkStatusSchema,
@@ -91,8 +94,10 @@ export type CharSpan = z.infer<typeof CharSpanSchema>;
 export type ContentLocator = z.infer<typeof ContentLocatorSchema>;
 export type CoreError = z.infer<typeof CoreErrorSchema>;
 export type CreateContext = z.infer<typeof CreateContextSchema>;
+export type CreateJournalDayResult = z.infer<typeof CreateJournalDayResultSchema>;
 export type CreateObjectInput = z.infer<typeof CreateObjectInputSchema>;
 export type CreateObjectResult = z.infer<typeof CreateObjectResultSchema>;
+export type CreatedJournalDay = z.infer<typeof CreatedJournalDaySchema>;
 export type CreatedObject = z.infer<typeof CreatedObjectSchema>;
 export type DeclaredBy = z.infer<typeof DeclaredBySchema>;
 export type DefinitionDetail = z.infer<typeof DefinitionDetailSchema>;
@@ -108,6 +113,7 @@ export type HandleStatus = z.infer<typeof HandleStatusSchema>;
 export type Inline = z.infer<typeof InlineSchema>;
 export type InputSyntax = z.infer<typeof InputSyntaxSchema>;
 export type InsertReferenceInput = z.infer<typeof InsertReferenceInputSchema>;
+export type JournalDayDetail = z.infer<typeof JournalDayDetailSchema>;
 export type Link = z.infer<typeof LinkSchema>;
 export type LinkDraft = z.infer<typeof LinkDraftSchema>;
 export type LinkStatus = z.infer<typeof LinkStatusSchema>;

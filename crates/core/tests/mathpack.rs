@@ -2,7 +2,7 @@
 //! §2.2 guarantee at pack scope: serialize → import is lossless, every object flows through the
 //! migration read path, and a wrong/future pack is refused loudly. Core stays hash-free.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use proptest::prelude::*;
 use uuid::Uuid;
 
@@ -14,9 +14,10 @@ use mathmeander_core::mathpack::{
     MathpackGraph, MathpackMeta, import_mathpack, serialize_mathpack,
 };
 use mathmeander_core::model::{
-    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, DeclaredBy, EmbedTarget, Inline, Link,
-    LinkStatus, LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
-    Origin, ParseStatus, Provenance, SurfaceFormat, Tagging, Unit, UnitContent, UnitStatus,
+    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, DeclaredBy, DefinitionDetail,
+    EmbedTarget, Inline, JournalDayDetail, Link, LinkStatus, LinkType, MathExpression,
+    ObjectStatus, ObjectType, ObjectVersion, Occurrence, Origin, ParseStatus, Provenance,
+    SurfaceFormat, Tagging, Unit, UnitContent, UnitStatus,
 };
 use mathmeander_core::ops::MathContent;
 
@@ -149,6 +150,7 @@ fn sample_graph() -> MathpackGraph {
         taggings: Vec::new(),
         object_versions: vec![an_object_version(0xa6, object.id)],
         definition_details: Vec::new(),
+        journal_day_details: Vec::new(),
     }
 }
 
@@ -177,6 +179,46 @@ fn round_trip_identity() {
 
     assert_eq!(imported.graph, graph, "graph round-trips byte-for-byte");
     assert_eq!(imported.manifest, pack.manifest, "manifest round-trips");
+}
+
+/// A `journal_day` object round-trips through serialize → import WITH its date — the §6.5 surface's
+/// detail travels in the pack (symmetry with `definition_details`), the manifest count is
+/// self-describing, and the `NaiveDate` survives losslessly as ISO `YYYY-MM-DD`.
+#[test]
+fn journal_day_detail_round_trips() {
+    let mut day = an_object(0xb1);
+    day.object_type = ObjectType::JournalDay;
+    let detail = JournalDayDetail {
+        object_id: day.id,
+        date: NaiveDate::from_ymd_opt(2026, 6, 18).expect("valid date"),
+    };
+    let graph = MathpackGraph {
+        objects: vec![day],
+        provenance: Vec::new(),
+        provenance_derivations: Vec::new(),
+        content: Vec::new(),
+        links: Vec::new(),
+        aliases: Vec::new(),
+        handles: Vec::new(),
+        tags: Vec::new(),
+        taggings: Vec::new(),
+        object_versions: Vec::new(),
+        definition_details: Vec::new(),
+        journal_day_details: vec![detail.clone()],
+    };
+
+    let pack = serialize_mathpack(&meta(), graph.clone(), dt()).expect("serialize");
+    assert_eq!(pack.manifest.counts.journal_day_details, 1);
+
+    let value = serde_json::to_value(&pack).expect("pack serializes to value");
+    let imported = import_mathpack(value).expect("import");
+
+    assert_eq!(
+        imported.graph.journal_day_details,
+        vec![detail],
+        "the day's date survives the pack round-trip"
+    );
+    assert_eq!(imported.graph, graph, "journal_day graph round-trips");
 }
 
 /// Every object flows through `parse_and_migrate_object` on import — so unknown (foreign) fields
@@ -247,6 +289,7 @@ fn graph_with(objects: Vec<CanonicalObject>, content: Vec<MathContent>) -> Mathp
         taggings: Vec::new(),
         object_versions: Vec::new(),
         definition_details: Vec::new(),
+        journal_day_details: Vec::new(),
     }
 }
 
@@ -331,6 +374,35 @@ fn import_rejects_embed_target_missing() {
     let value = pack_value(graph_with(vec![object], vec![content]));
     let err = import_mathpack(value).expect_err("rejected");
     assert_eq!(err_code(&err), "embed_target_missing");
+}
+
+/// Arch §827 / §6.1a: a `journal_day_detail.object_id` must reference a `journal_day`. SQL's FK checks
+/// the id EXISTS, never its TYPE — so the core owns it on the untrusted import path (a malformed pack
+/// would otherwise persist a §6.1a violation at 2e). A detail pointing at a note → loud refusal.
+#[test]
+fn import_rejects_journal_day_detail_wrong_type() {
+    let object = an_object(0xa1); // a note, not a journal_day
+    let mut graph = graph_with(vec![object.clone()], vec![]);
+    graph.journal_day_details = vec![JournalDayDetail {
+        object_id: object.id,
+        date: NaiveDate::from_ymd_opt(2026, 6, 18).expect("valid date"),
+    }];
+    let err = import_mathpack(pack_value(graph)).expect_err("rejected");
+    assert_eq!(err_code(&err), "detail_object_type_mismatch");
+}
+
+/// The same type-qualified gate for `definition_detail` → `definition` (makes the 0002 "core-enforced"
+/// comment true on the import path too).
+#[test]
+fn import_rejects_definition_detail_wrong_type() {
+    let object = an_object(0xa1); // a note, not a definition
+    let mut graph = graph_with(vec![object.clone()], vec![]);
+    graph.definition_details = vec![DefinitionDetail {
+        object_id: object.id,
+        term: "compact".into(),
+    }];
+    let err = import_mathpack(pack_value(graph)).expect_err("rejected");
+    assert_eq!(err_code(&err), "detail_object_type_mismatch");
 }
 
 /// Slice 2a: re-home MOVES a unit (it must leave its old object). A pack with the same unit id in
@@ -575,6 +647,7 @@ proptest! {
             taggings: Vec::new(),
             object_versions: Vec::new(),
             definition_details: Vec::new(),
+            journal_day_details: Vec::new(),
         };
         let pack = serialize_mathpack(&meta(), graph, dt()).expect("serialize");
         let value = serde_json::to_value(&pack).expect("pack serializes to value");

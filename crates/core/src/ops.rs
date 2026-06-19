@@ -796,6 +796,16 @@ pub fn materialize_object(
 ) -> Result<OpOutcome, ValidationError> {
     use std::collections::HashMap;
 
+    // A §6.5 SURFACE (journal_day; trail later) is created via its own surface op, never COPIED — a
+    // copy would mint a dateless, detail-less day, bypassing UNIQUE(space_id, date). The twin of the
+    // `rehome_subtree` target guard; reachable since slice 2b made journal_day producible (so instances
+    // can now exist to copy). Non-producible types have no instances, so `is_surface` is the whole gate.
+    if input.source_object.object_type.is_surface() {
+        return Err(ValidationError::TypeNotMaterializable {
+            object_type: input.source_object.object_type,
+        });
+    }
+
     // A duplicate source id would collapse onto one fresh id via the maps — reject up front.
     let src_expr_ids = expr_ids_of(&input.source_content);
     if has_duplicate(&src_expr_ids) {
@@ -938,9 +948,17 @@ pub fn rehome_subtree(
     now: DateTime<Utc>,
 ) -> Result<OpOutcome, ValidationError> {
     // The materialized object must be a producible type — the formal family, never the reserved
-    // surface/source/annotation types whose detail machinery hasn't landed (§13a/§6.1a).
+    // source/annotation types (or `trail`) whose detail machinery hasn't landed (§13a/§6.1a).
     if !input.new_object_type.is_producible() {
         return Err(ValidationError::TypeNotProducibleYet {
+            object_type: input.new_object_type,
+        });
+    }
+    // ...and never a §6.5 SURFACE. `journal_day` BECAME producible in slice 2b, but it is created
+    // via its own surface op (`create_journal_day` + a dated `journal_day_detail`), never greedy-
+    // captured — materializing one here would mint a dateless day bypassing `UNIQUE(space_id, date)`.
+    if input.new_object_type.is_surface() {
+        return Err(ValidationError::TypeNotMaterializable {
             object_type: input.new_object_type,
         });
     }

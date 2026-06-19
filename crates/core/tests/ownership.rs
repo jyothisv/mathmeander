@@ -409,10 +409,20 @@ fn one_home_no_unit_in_two_objects() {
 
 #[test]
 fn rehome_rejects_a_non_producible_type() {
-    // Only the formal family materializes; the reserved surface/source/annotation types have no
-    // detail machinery yet (§13a/§6.1a).
+    // Only the formal family materializes; the reserved source/annotation types (and `trail`) have
+    // no detail machinery yet (§13a/§6.1a).
     let err = rehome_subtree(&rehome_input(ObjectType::Trail), &op_ctx(), op_now()).unwrap_err();
     assert!(matches!(err, ValidationError::TypeNotProducibleYet { .. }));
+}
+
+#[test]
+fn rehome_rejects_a_surface_target() {
+    // `journal_day` is PRODUCIBLE since slice 2b, but it is a §6.5 SURFACE — created via its own op
+    // (`create_journal_day`), never greedy-captured. The `is_producible` lift must NOT open it as a
+    // rehome target (that would mint a dateless, detail-less day, bypassing UNIQUE(space_id, date)).
+    let err =
+        rehome_subtree(&rehome_input(ObjectType::JournalDay), &op_ctx(), op_now()).unwrap_err();
+    assert!(matches!(err, ValidationError::TypeNotMaterializable { .. }));
 }
 
 #[test]

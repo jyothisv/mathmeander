@@ -23,9 +23,10 @@ pub use mathmeander_surface::{CharSpan, InputSyntax, ParseStatus, SurfaceFormat}
 /// Durable workspace identity of an object (arch doc §6.0b: `object.type` ≠ `unit.type`).
 /// Slice 1 widens this from the skeleton's lone `note` to the full §6 vocabulary: the
 /// formal family (theorem/lemma/proposition/corollary/conjecture/claim), definition,
-/// proof, example, question — all producible via create — plus source_excerpt, trail,
-/// annotation, journal_day, which are **reserved vocabulary** (valid on read, not yet
-/// producible — their detail tables / surfaces land in later slices, §6.1a/§13a).
+/// proof, example, question — all producible via create — plus `journal_day`, producible
+/// since slice 2b via its §6.5 surface (not the plain typed POST). `source_excerpt`, `trail`,
+/// and `annotation` remain **reserved vocabulary** (valid on read, not yet producible — their
+/// detail tables / surfaces land in later slices, §6.1a/§13a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -44,10 +45,13 @@ pub enum ObjectType {
     Question,
     // Reserved vocabulary — known on read, not producible via the plain create path
     // until their detail tables / surfaces arrive (source: §13a.3, annotation: §13a.4,
-    // trail/journal_day: §6.5 surfaces, slice 2+). The producibility gate is in `validate`.
+    // trail: §6.5 surfaces, slice 2+). The producibility gate is in `validate`.
     SourceExcerpt,
     Trail,
     Annotation,
+    // journal_day BECAME producible in slice 2b — via its own surface
+    // (`validate::create_journal_day` + `journal_day_detail`), NOT the plain typed POST; it
+    // stays non-directly-creatable (a raw POST still 422s with TypeNotDirectlyCreatable). (§6.5)
     JournalDay,
 }
 
@@ -59,10 +63,7 @@ impl ObjectType {
     pub fn is_producible(self) -> bool {
         !matches!(
             self,
-            ObjectType::SourceExcerpt
-                | ObjectType::Trail
-                | ObjectType::Annotation
-                | ObjectType::JournalDay
+            ObjectType::SourceExcerpt | ObjectType::Trail | ObjectType::Annotation
         )
     }
 
@@ -74,6 +75,16 @@ impl ObjectType {
     /// numbered/exported) — it is only the direct-create *surface* that is gated.
     pub fn is_directly_creatable(self) -> bool {
         matches!(self, ObjectType::Note)
+    }
+
+    /// Whether this is a §6.5 SURFACE — a dated/ordered writing context (`journal_day`; `trail`
+    /// later), not a materializable knowledge object. Surfaces are created via their own surface op
+    /// (`create_journal_day`), NEVER as the output of greedy capture (`rehome_subtree`) or the copy
+    /// path — so they are excluded as materialization targets even when producible. This is what
+    /// keeps the `is_producible` lift (slice 2b) from silently opening `journal_day` as a rehome
+    /// target (which would mint a dateless, detail-less day, bypassing `UNIQUE(space_id, date)`).
+    pub fn is_surface(self) -> bool {
+        matches!(self, ObjectType::JournalDay | ObjectType::Trail)
     }
 }
 
@@ -644,6 +655,20 @@ pub struct ObjectVersion {
 pub struct DefinitionDetail {
     pub object_id: ObjectId,
     pub term: String,
+}
+
+/// Non-content metadata for a `journal_day` object (§6.5 surfaces): the calendar date this
+/// day's flow belongs to. A `journal_day` owns ONE day's `content_units`; the *journal* is the
+/// view over these objects ORDER BY date, and an object's appearance on a day is an
+/// `Embed{target: Object}` unit. The date is object identity (`UNIQUE(space_id, date)` in SQL),
+/// not patchable content — re-dating is a deliberate §6.5 content-move op, never a column edit.
+/// `NaiveDate` serde-round-trips as ISO `YYYY-MM-DD`; chrono is built clock-free (the date is
+/// PASSED IN), so the core stays pure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct JournalDayDetail {
+    pub object_id: ObjectId,
+    pub date: chrono::NaiveDate,
 }
 
 /// One edge of the provenance derivation chain (§6.1) — a typed, FK-checked join row

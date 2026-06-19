@@ -109,6 +109,16 @@ pub enum ValidationError {
     #[error("object type {object_type:?} is created by declaration, not direct creation")]
     TypeNotDirectlyCreatable { object_type: ObjectType },
 
+    /// A producible type that is a §6.5 SURFACE (`journal_day`; `trail` later) — created via its own
+    /// surface op (e.g. `create_journal_day`), never the output of greedy capture. Distinct from
+    /// `TypeNotProducibleYet` (the target is not producible at all) and `TypeNotDirectlyCreatable`
+    /// (the formal family, which IS a valid rehome target): a surface can never be MATERIALIZED, so
+    /// `rehome_subtree` refuses it as a target even though it is producible (slice 2b).
+    #[error(
+        "object type {object_type:?} is a surface (created via its own op), not materializable"
+    )]
+    TypeNotMaterializable { object_type: ObjectType },
+
     /// A `taggings` row must target exactly one of {object, unit}; `given` is how many
     /// were set (§6.0b).
     #[error("a tagging must target exactly one of {{object, unit}} (got {given})")]
@@ -230,6 +240,22 @@ pub enum ValidationError {
     /// content being folded back would collide with a unit already in the host.
     #[error("unit {unit_id} appears in more than one object (one home, §6.0b)")]
     UnitInMultipleObjects { unit_id: String },
+
+    /// A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type
+    /// within the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`
+    /// → `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its
+    /// TYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would
+    /// otherwise silently store a type violation. `actual` is `None` when the object is absent from the
+    /// pack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`
+    /// (a glue-bug 500): this is a client-attributable bad import (422).
+    #[error(
+        "detail references object {object_id}, expected type {expected:?} but found {actual:?}"
+    )]
+    DetailObjectTypeMismatch {
+        object_id: String,
+        expected: ObjectType,
+        actual: Option<ObjectType>,
+    },
 
     /// `dissolve_object` was handed inconsistent inputs by the glue — the `dissolved_content` does
     /// not belong to `dissolved_object_id`, or the unit at `embed_unit_id` is not an `Embed` of that

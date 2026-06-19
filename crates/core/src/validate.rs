@@ -6,15 +6,15 @@
 //! Inputs are deliberately stringly-typed where the client supplies them — parsing them
 //! HERE is what produces typed `ValidationError`s instead of opaque serde failures.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::ValidationError;
 use crate::ids::{ObjectId, ProvenanceId, SpaceId};
 use crate::model::{
-    CanonicalObject, Inline, Link, LinkType, MathExpression, ObjectStatus, ObjectType, Origin,
-    Provenance, Tagging,
+    CanonicalObject, Inline, JournalDayDetail, Link, LinkType, MathExpression, ObjectStatus,
+    ObjectType, Origin, Provenance, Tagging,
 };
 use crate::patch::Patch;
 
@@ -169,6 +169,83 @@ pub fn create_object(
     };
 
     Ok((object, provenance))
+}
+
+/// Construct a canonical `journal_day` — (object, provenance, detail) — from untrusted input +
+/// server context + the day's date (§6.5 surfaces). A journal_day is PRODUCIBLE but NOT
+/// directly-creatable: it enters the graph only through THIS dedicated surface, never the plain
+/// typed POST. So this deliberately SKIPS the `is_directly_creatable` gate `create_object` enforces,
+/// while keeping every other create invariant (id v7, producibility, origin/created_by, the
+/// Draft / schema_version=CURRENT / revision=1 / `now` stamping). The `date` is PASSED IN (the core
+/// reads no clock) and becomes object identity via the `journal_day_detail` row — the glue's
+/// `UNIQUE(space_id, date)` makes one-day-per-space a creation-time guard, never a column edit.
+pub fn create_journal_day(
+    input: &CreateObjectInput,
+    ctx: &CreateContext,
+    space_id: &str,
+    date: NaiveDate,
+    now: DateTime<Utc>,
+) -> Result<(CanonicalObject, Provenance, JournalDayDetail), ValidationError> {
+    let id = ObjectId(parse_uuid_v7("id", &input.id)?);
+    let object_type = parse_object_type(&input.object_type)?;
+    // This surface mints journal_days ONLY — a wrong type is a glue bug (the route always supplies
+    // `journal_day`), surfaced as the same detail / type-qualified mismatch SQL can't FK-check
+    // (§6.1a). Deliberately NOT the `is_directly_creatable` gate: skipping it is the whole point of
+    // a dedicated surface (a raw typed POST still 422s via `create_object`).
+    if object_type != ObjectType::JournalDay {
+        return Err(ValidationError::DetailTypeMismatch {
+            expected: ObjectType::JournalDay,
+            given: object_type,
+        });
+    }
+    if let Some(title) = &input.title {
+        check_title(title)?;
+    }
+    if let Some(raw_source) = &input.raw_source {
+        check_raw_source(raw_source)?;
+    }
+
+    let provenance_id = ProvenanceId(parse_uuid_v7("provenance_id", &ctx.provenance_id)?);
+    let space = SpaceId(parse_uuid("space_id", space_id)?);
+
+    match ctx.origin {
+        Origin::User if ctx.created_by.is_none() => {
+            return Err(ValidationError::MissingCreatedBy { origin: ctx.origin });
+        }
+        Origin::Ai | Origin::Imported => {
+            return Err(ValidationError::OriginNotProducible { origin: ctx.origin });
+        }
+        _ => {}
+    }
+
+    let provenance = Provenance {
+        id: provenance_id,
+        origin: ctx.origin,
+        created_by: ctx.created_by.clone(),
+        occurred_at: now,
+    };
+
+    let object = CanonicalObject {
+        id,
+        object_type,
+        title: input.title.clone(), // tri-state preserved
+        raw_source: input.raw_source.clone(),
+        status: ObjectStatus::Draft,
+        schema_version: crate::CURRENT_SCHEMA_VERSION,
+        revision: 1,
+        provenance_id,
+        space_id: space,
+        created_at: now,
+        updated_at: now,
+        extra: serde_json::Map::new(),
+    };
+
+    let detail = JournalDayDetail {
+        object_id: id,
+        date,
+    };
+
+    Ok((object, provenance, detail))
 }
 
 /// Apply a metadata patch (pure). Revision increments; `updated_at` becomes `now`;

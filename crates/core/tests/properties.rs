@@ -2,7 +2,7 @@
 //! totality (no panics on arbitrary input), patch semantics, and create invariants.
 //! These are the heart of the §2.2 "no lost user effort" guarantee.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use proptest::prelude::*;
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ use mathmeander_core::model::{CanonicalObject, ObjectStatus, ObjectType, Origin}
 use mathmeander_core::patch::Patch;
 use mathmeander_core::validate::{
     CreateContext, CreateObjectInput, MAX_TITLE_CHARS, ObjectPatch, apply_title_patch,
-    create_object,
+    create_journal_day, create_object,
 };
 
 // ── Slice 1c canonical-operation imports (the expression-id stability matrix) ──
@@ -315,6 +315,135 @@ fn create_enforces_origin_invariants() {
         serde_json::to_value(&err).expect("serializes")["code"],
         "type_not_producible_yet"
     );
+}
+
+/// §6.5 / slice 2b: `journal_day` is PRODUCIBLE (it joined the producible set) but NOT
+/// directly-creatable — so the plain typed POST path still refuses it (the §9.y declaration
+/// rule), while the dedicated surface accepts it. This is the producibility shift the lift hinges
+/// on; the direct-create gate must stay narrower than producibility.
+#[test]
+fn journal_day_is_producible_but_not_directly_creatable() {
+    assert!(ObjectType::JournalDay.is_producible());
+    assert!(!ObjectType::JournalDay.is_directly_creatable());
+
+    let now = DateTime::from_timestamp(1_780_000_000, 0).expect("in range");
+    let input = CreateObjectInput {
+        id: "0197675f-71f4-7000-8000-0000000000b1".into(),
+        object_type: "journal_day".into(),
+        title: None,
+        raw_source: None,
+    };
+    let ctx = CreateContext {
+        provenance_id: "0197675f-71f4-7000-8000-000000000002".into(),
+        origin: Origin::User,
+        created_by: Some("u".into()),
+    };
+    let space = "0197675f-71f4-7000-8000-000000000003";
+    // The plain create path: producible, so NOT type_not_producible_yet — but gated as
+    // declaration-only (the surface, not a raw POST).
+    let err = create_object(&input, &ctx, space, now).expect_err("journal_day is surface-only");
+    let err = serde_json::to_value(&err).expect("serializes");
+    assert_eq!(err["code"], "type_not_directly_creatable");
+    assert_eq!(err["object_type"], "journal_day");
+}
+
+/// The §6.5 surface stamps exactly what `create_object` does (Draft / rev 1 / CURRENT / `now`),
+/// preserves the client's id verbatim, and carries the PASSED-IN date into the detail (the core
+/// reads no clock) — the detail's `object_id` matches the object so the glue persists a consistent
+/// triplet.
+#[test]
+fn create_journal_day_stamps_and_carries_date() {
+    let now = DateTime::from_timestamp(1_780_000_000, 0).expect("in range");
+    let date = NaiveDate::from_ymd_opt(2026, 6, 18).expect("valid date");
+    let input = CreateObjectInput {
+        id: "0197675f-71f4-7000-8000-0000000000b1".into(),
+        object_type: "journal_day".into(),
+        title: None,
+        raw_source: None,
+    };
+    let ctx = CreateContext {
+        provenance_id: "0197675f-71f4-7000-8000-000000000002".into(),
+        origin: Origin::User,
+        created_by: Some("u".into()),
+    };
+    let space = "0197675f-71f4-7000-8000-000000000003";
+
+    let (object, provenance, detail) =
+        create_journal_day(&input, &ctx, space, date, now).expect("valid journal_day create");
+
+    assert_eq!(object.object_type, ObjectType::JournalDay);
+    assert_eq!(object.status, ObjectStatus::Draft);
+    assert_eq!(
+        object.schema_version,
+        mathmeander_core::CURRENT_SCHEMA_VERSION
+    );
+    assert_eq!(object.revision, 1);
+    assert_eq!(object.created_at, now);
+    assert_eq!(object.provenance_id, provenance.id);
+    assert_eq!(provenance.occurred_at, now);
+    assert_eq!(provenance.origin, Origin::User);
+    // The date rides into the detail, keyed by the object's own id (§6.5 — date is identity).
+    assert_eq!(detail.object_id, object.id);
+    assert_eq!(detail.date, date);
+}
+
+/// The surface mints journal_days ONLY: a wrong type (a glue bug — the route always supplies
+/// `journal_day`) is the type-qualified detail mismatch SQL can't FK-check (§6.1a), a 500 code,
+/// never silently accepted.
+#[test]
+fn create_journal_day_rejects_wrong_type() {
+    let now = DateTime::from_timestamp(1_780_000_000, 0).expect("in range");
+    let date = NaiveDate::from_ymd_opt(2026, 6, 18).expect("valid date");
+    let input = CreateObjectInput {
+        id: "0197675f-71f4-7000-8000-0000000000b1".into(),
+        object_type: "note".into(), // not journal_day
+        title: None,
+        raw_source: None,
+    };
+    let ctx = CreateContext {
+        provenance_id: "0197675f-71f4-7000-8000-000000000002".into(),
+        origin: Origin::User,
+        created_by: Some("u".into()),
+    };
+    let space = "0197675f-71f4-7000-8000-000000000003";
+    let err = create_journal_day(&input, &ctx, space, date, now).expect_err("wrong type refused");
+    let err = serde_json::to_value(&err).expect("serializes");
+    assert_eq!(err["code"], "detail_type_mismatch");
+    assert_eq!(err["expected"], "journal_day");
+    assert_eq!(err["given"], "note");
+}
+
+/// The FFI boundary parses the date string (like `now`): a malformed date is a TYPED
+/// `malformed_input` envelope, never a panic or an opaque serde failure (§17).
+#[test]
+fn api_create_journal_day_rejects_bad_date() {
+    let input = serde_json::json!({
+        "id": "0197675f-71f4-7000-8000-0000000000b1",
+        "type": "journal_day", "title": null, "raw_source": null
+    })
+    .to_string();
+    let ctx = serde_json::json!({
+        "provenance_id": "0197675f-71f4-7000-8000-000000000002",
+        "origin": "user", "created_by": "u"
+    })
+    .to_string();
+    let space = "0197675f-71f4-7000-8000-000000000003";
+    let now = "2026-06-18T00:00:00Z";
+
+    let envelope =
+        mathmeander_core::api::create_journal_day(&input, &ctx, space, "2026-13-40", now);
+    let parsed: serde_json::Value = serde_json::from_str(&envelope).expect("envelope is JSON");
+    assert_eq!(parsed["ok"], false);
+    // CoreError is tagged `kind`; MalformedInput carries the boundary `context`.
+    assert_eq!(parsed["error"]["kind"], "malformed_input");
+    assert_eq!(parsed["error"]["context"], "date");
+
+    // And the happy path through the FFI yields a well-formed CreateJournalDayResult.
+    let ok = mathmeander_core::api::create_journal_day(&input, &ctx, space, "2026-06-18", now);
+    let ok: serde_json::Value = serde_json::from_str(&ok).expect("envelope is JSON");
+    assert_eq!(ok["ok"], true);
+    assert_eq!(ok["value"]["detail"]["date"], "2026-06-18");
+    assert_eq!(ok["value"]["object"]["type"], "journal_day");
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1127,6 +1256,30 @@ fn materialize_requires_total_id_maps() {
     };
     let err = materialize_object(&input, &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "remap_incomplete");
+}
+
+#[test]
+fn materialize_rejects_a_surface_source() {
+    // The twin of `rehome_rejects_a_surface_target` (ownership.rs): COPYING a §6.5 surface is refused —
+    // a journal_day copy would be dateless + detail-less. The guard fires before any id-remap check.
+    let mut source_object = an_object(ObjectId(v7(1)));
+    source_object.object_type = ObjectType::JournalDay;
+    let input = MaterializeObjectInput {
+        expected_revision: 1,
+        source_object,
+        source_content: MathContent {
+            object_id: ObjectId(v7(1)),
+            revision: 1,
+            units: vec![],
+        },
+        new_object_id: ObjectId(v7(2)),
+        new_provenance_id: ProvenanceId(v7(102)),
+        edge_link_id: LinkId(v7(103)),
+        expr_id_map: vec![],
+        unit_id_map: vec![],
+    };
+    let err = materialize_object(&input, &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "type_not_materializable");
 }
 
 // ── Inline-atom contract coverage (the review's blind-spot class) ──

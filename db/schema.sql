@@ -83,6 +83,17 @@ CREATE TABLE public.handles (
 
 
 --
+-- Name: journal_day_detail; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.journal_day_detail (
+    object_id uuid NOT NULL,
+    space_id uuid NOT NULL,
+    date date NOT NULL
+);
+
+
+--
 -- Name: links; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -286,6 +297,22 @@ ALTER TABLE ONLY public.handles
 
 
 --
+-- Name: journal_day_detail journal_day_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journal_day_detail
+    ADD CONSTRAINT journal_day_detail_pkey PRIMARY KEY (object_id);
+
+
+--
+-- Name: journal_day_detail journal_day_detail_space_id_date_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journal_day_detail
+    ADD CONSTRAINT journal_day_detail_space_id_date_key UNIQUE (space_id, date);
+
+
+--
 -- Name: links links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -413,6 +440,13 @@ CREATE INDEX aliases_by_object ON public.aliases USING btree (object_id);
 
 
 --
+-- Name: journal_day_detail_by_space_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX journal_day_detail_by_space_date ON public.journal_day_detail USING btree (space_id, date DESC);
+
+
+--
 -- Name: links_backlinks; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -524,6 +558,22 @@ ALTER TABLE ONLY public.handles
 
 ALTER TABLE ONLY public.handles
     ADD CONSTRAINT handles_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
+
+
+--
+-- Name: journal_day_detail journal_day_detail_object_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journal_day_detail
+    ADD CONSTRAINT journal_day_detail_object_id_fkey FOREIGN KEY (object_id) REFERENCES public.objects(id);
+
+
+--
+-- Name: journal_day_detail journal_day_detail_space_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journal_day_detail
+    ADD CONSTRAINT journal_day_detail_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id);
 
 
 --
@@ -676,4 +726,5 @@ ALTER TABLE ONLY public.tags
 INSERT INTO public.schema_migrations (version) VALUES
     ('0001'),
     ('0002'),
-    ('0003');
+    ('0003'),
+    ('0004');
