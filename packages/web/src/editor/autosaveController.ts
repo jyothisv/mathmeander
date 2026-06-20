@@ -5,8 +5,9 @@
 // stale-write 422) runs the additive merge (merge.ts); a same-unit clash surfaces a CONFLICT the user
 // resolves ("Load the latest" / "Keep mine"). The controller owns the state machine; the e2e merge suite
 // is the behaviour-preservation safety net.
-import type { MathContent, Unit } from '@mathmeander/schema';
+import type { MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { planMerge, type Delta } from './merge';
+import type { TypeNeed } from './projection';
 import { classifyFlushError } from './errorClass';
 import type { SaveState } from './saveStatus';
 
@@ -26,12 +27,20 @@ export interface AutosavePorts {
   delta(baseline: MathContent): Delta;
   /** A stable signature of the live doc (drives the semantic latch). */
   signature(): string;
-  /** Replace the live doc with `content` WITHOUT a dispatch (no spurious dirty/flush). */
-  reproject(content: MathContent): void;
+  /** Replace the live doc with `content` WITHOUT a dispatch (no spurious dirty/flush). `keepTypes`
+   *  overlays my still-pending optimistic type cues onto the reprojected doc so a prose merge (which
+   *  carries only server types) never silently drops a type the user just declared (§2c-2). */
+  reproject(content: MathContent, keepTypes: TypeNeed[]): void;
   /** Persist the local draft (token-guarded; reads shared `prior` + the doc). */
   persistDraft(): void;
   clearDraft(): void;
   seedCache(content: MathContent): void;
+  /** Issue the §6.0a `set_unit_type` op (value=set, null=clear) at `expectedRevision`; resolves to the
+   *  canonical echo; throws ApiError (409 stale revision / 422 the target unit was concurrently removed). */
+  setType(unitId: string, type: UnitType | null, expectedRevision: number): Promise<MathContent>;
+  /** The pending TYPE delta vs `server` (= `typeNeeds` over the live doc): units whose node type attr
+   *  differs from the server's `type`. The type-axis analog of `delta`. */
+  docTypeNeeds(server: MathContent): TypeNeed[];
   /** Set the React save status; already cancellation-guarded by the caller (DayEditor's `setIf`). */
   setStatus(next: (s: SaveState) => SaveState): void;
   /** Clear the pending network-flush debounce timer (DayEditor owns the handle). */
@@ -41,6 +50,8 @@ export interface AutosavePorts {
   ready(): boolean;
   /** Bounded re-409 retries before giving up to a conflict (default 3). */
   maxMergeRetries?: number;
+  /** Bounded retries for a type-set racing another writer before giving up to a conflict (default 3). */
+  maxTypeRetries?: number;
 }
 
 export interface AutosaveController {
@@ -63,6 +74,7 @@ export interface AutosaveController {
 export function createAutosaveController(ports: AutosavePorts): AutosaveController {
   const { prior } = ports;
   const MAX_MERGE_RETRIES = ports.maxMergeRetries ?? 3;
+  const MAX_TYPE_RETRIES = ports.maxTypeRetries ?? 3;
   const setStatus = ports.setStatus;
 
   let busy = false; // single in-progress guard across the whole flush → merge / resolve chain
@@ -77,6 +89,95 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     ports.cancelScheduledFlush();
     ports.persistDraft(); // keep the user's unsynced work
     setStatus((s) => ({ ...s, saving: false, conflict: true }));
+  };
+
+  /** Unified post-sync bookkeeping (covers prose AND type work): dirty iff EITHER a prose delta or a type
+   *  need still remains; persist/clear the draft to match. A partial type failure leaves dirty=true so the
+   *  next flush re-drains — non-lossy. Always lands conflict:false (the clean exit of a sync). */
+  const settleAfterFlush = (error: boolean): void => {
+    const d = ports.delta(prior.current);
+    const proseLeft = d.upserts.length > 0 || d.deletes.length > 0;
+    const typesLeft = ports.docTypeNeeds(prior.current).length > 0;
+    const stillDirty = proseLeft || typesLeft;
+    if (stillDirty) ports.persistDraft();
+    else ports.clearDraft();
+    dirtyMirror = stillDirty;
+    setStatus((s) => ({ ...s, saving: false, dirty: stillDirty, error, conflict: false }));
+  };
+
+  /** Apply pending TYPE changes (2c-2) via `set_unit_type`, AFTER the prose part of a sync. Stateless +
+   *  idempotent: recompute `docTypeNeeds` each pass, apply each sequentially at the current revision (each
+   *  op bumps it). On a 409 (revision advanced) or 422 (the target unit was concurrently removed) →
+   *  re-anchor by MERGING fresh (preserving my unflushed prose AND my pending type cues), then loop to
+   *  retry the types at the new revision; bounded retries → conflict. A transient failure DEFERS (draft
+   *  kept, retried on the next flush). Type NEVER rides the prose delta (§6.0a). The CALLER owns `busy`. */
+  const drainTypes = async (): Promise<'done' | 'deferred' | 'conflict'> => {
+    for (let attempt = 0; attempt <= MAX_TYPE_RETRIES; attempt += 1) {
+      const needs = ports.docTypeNeeds(prior.current);
+      if (needs.length === 0) return 'done';
+      try {
+        for (const need of needs) {
+          const content = await ports.setType(need.unitId, need.type, prior.current.revision);
+          if (disposed) return 'done';
+          prior.current = content;
+          ports.seedCache(content);
+        }
+        return 'done';
+      } catch (err) {
+        if (disposed) return 'done';
+        if (classifyFlushError(err) === 'transient') return 'deferred'; // retried next flush/reconnect
+        // 409/422: another writer advanced the revision (or removed the target unit). Re-anchor by merging
+        // fresh — preserving my unflushed prose AND my pending cues — then loop to retry at the new
+        // revision. (Self-contained; mirrors runMerge's merge step without the latch/force/retry-cap.)
+        const baseline = prior.current;
+        let fresh: MathContent;
+        try {
+          const found = await ports.fetchFresh();
+          if (disposed) return 'done';
+          if (!found) {
+            enterConflict();
+            return 'conflict';
+          }
+          fresh = found;
+        } catch {
+          return 'deferred'; // GET failed (transient) — retry on the next flush
+        }
+        const plan = planMerge({ baseline, server: fresh, mine: ports.delta(baseline) });
+        if (plan.kind === 'conflict') {
+          enterConflict();
+          return 'conflict';
+        }
+        const keep = ports.docTypeNeeds(fresh); // my pending cues, preserved across the reproject
+        prior.current = fresh;
+        ports.seedCache(fresh);
+        ports.reproject(plan.content, keep);
+        if (plan.rebasedDelta.upserts.length > 0 || plan.rebasedDelta.deletes.length > 0) {
+          try {
+            const content = await ports.save({
+              expected_revision: fresh.revision,
+              upserts: plan.rebasedDelta.upserts,
+              deletes: plan.rebasedDelta.deletes,
+            });
+            if (disposed) return 'done';
+            prior.current = content;
+            ports.seedCache(content);
+          } catch {
+            return 'deferred'; // prose re-save raced again — defer; the next flush retries
+          }
+        }
+        // loop: recompute typeNeeds(prior.current) and retry setType at the advanced revision
+      }
+    }
+    enterConflict(); // exhausted the type-retry budget under repeated races
+    return 'conflict';
+  };
+
+  /** Shared success tail of flush + runMerge: drain pending types, then settle the status (unless the
+   *  drain ended in a conflict, which already set the status). */
+  const finishWithTypes = async (): Promise<void> => {
+    const outcome = await drainTypes();
+    if (outcome === 'conflict') return; // enterConflict already set the status
+    settleAfterFlush(outcome === 'deferred' ? ports.isOnline() : false);
   };
 
   /** A 409 (or a stale-write 422), and the "Keep mine" resolution (`force`) → safe additive merge. We
@@ -119,19 +220,20 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     if (plan.kind === 'conflict') return enterConflict();
 
     // Doc is stable → bring the merged content on screen and rebase the baseline to the fresh server.
+    // Capture my still-pending type cues BEFORE the reproject overwrites the doc's type attrs, and overlay
+    // them back, so a prose merge never silently drops a type the user just declared (§2c-2).
+    const keepTypes = ports.docTypeNeeds(fresh);
     prior.current = fresh;
     ports.seedCache(fresh);
-    ports.reproject(plan.content);
+    ports.reproject(plan.content, keepTypes);
 
     if (plan.rebasedDelta.upserts.length === 0 && plan.rebasedDelta.deletes.length === 0) {
-      // nothing of mine to persist (e.g. my only change was a dropped reorder) — already in sync.
+      // nothing PROSE of mine to persist (e.g. my only change was a dropped reorder) — already in sync;
+      // any pending type still drains via finishWithTypes.
       ports.seedCache(plan.content);
       prior.current = plan.content;
       mergeRetries = 0;
-      ports.clearDraft();
-      dirtyMirror = false;
-      setStatus((s) => ({ ...s, saving: false, dirty: false, error: false, conflict: false }));
-      return;
+      return await finishWithTypes();
     }
 
     setStatus((s) => ({ ...s, saving: true, conflict: false }));
@@ -145,13 +247,9 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       prior.current = content;
       ports.seedCache(content);
       mergeRetries = 0;
-      // The reprojected doc has the foreign units, so any typed-during-PUT edit is a normal delta.
-      const after = ports.delta(prior.current);
-      const stillDirty = after.upserts.length > 0 || after.deletes.length > 0;
-      if (stillDirty) ports.persistDraft();
-      else ports.clearDraft();
-      dirtyMirror = stillDirty;
-      setStatus((s) => ({ ...s, saving: false, dirty: stillDirty, error: false, conflict: false }));
+      // The reprojected doc has the foreign units, so any typed-during-PUT edit is a normal delta; pending
+      // types then drain + settle.
+      await finishWithTypes();
     } catch (err) {
       if (classifyFlushError(err) === 'conflict') {
         if (mergeRetries >= MAX_MERGE_RETRIES) return enterConflict();
@@ -166,35 +264,41 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   const flush = async (): Promise<void> => {
     if (conflict || busy) return;
     const { upserts, deletes } = ports.delta(prior.current);
-    if (upserts.length === 0 && deletes.length === 0) {
+    const hasProse = upserts.length > 0 || deletes.length > 0;
+    const hasTypes = ports.docTypeNeeds(prior.current).length > 0;
+
+    if (!hasProse && !hasTypes) {
+      // Fully clean (no prose delta, no pending type) — settle and stop. A clean doc never flips `saving`.
       semanticLatch = null; // doc returned to the server state
       ports.clearDraft();
       dirtyMirror = false;
       setStatus((s) => ({ ...s, dirty: false, error: false }));
       return;
     }
-    if (semanticLatch !== null) {
-      if (ports.signature() === semanticLatch) return; // known-bad delta, unchanged → don't re-send
+    // The latch is a PROSE concept — only gate (and lift) it when there's a prose delta, so a type-only
+    // flush never lifts a latch protecting a genuinely-rejected prose delta.
+    if (hasProse && semanticLatch !== null) {
+      if (ports.signature() === semanticLatch) return; // known-bad prose, unchanged → don't re-send
       semanticLatch = null; // doc changed → worth another try
     }
     busy = true;
     setStatus((s) => ({ ...s, saving: true }));
     try {
-      const content = await ports.save({
-        expected_revision: prior.current.revision,
-        upserts,
-        deletes,
-      });
-      prior.current = content; // ids are client-minted, so the doc stays anchored
-      ports.seedCache(content);
-      // Did the user type more while the PUT was in flight? Keep the draft if so, else drop it.
-      const after = ports.delta(prior.current);
-      const stillDirty = after.upserts.length > 0 || after.deletes.length > 0;
-      if (stillDirty) ports.persistDraft();
-      else ports.clearDraft();
-      dirtyMirror = stillDirty;
-      setStatus((s) => ({ ...s, saving: false, dirty: stillDirty, error: false }));
+      if (hasProse) {
+        const content = await ports.save({
+          expected_revision: prior.current.revision,
+          upserts,
+          deletes,
+        });
+        prior.current = content; // ids are client-minted, so the doc stays anchored
+        ports.seedCache(content);
+      }
+      // Reached by BOTH the saved-prose and the type-only branches (a pure type change has no prose delta
+      // and must NOT early-return before the drain). Drains pending types, then settles (recomputing dirty
+      // from both axes — so a "typed more during the PUT" edit is caught here too).
+      await finishWithTypes();
     } catch (err) {
+      // Only the prose `save` can throw here (drainTypes/runMerge handle their own errors).
       if (classifyFlushError(err) === 'transient') {
         // network/5xx: while OFFLINE keep the calm "Offline" status (auto-flushes on reconnect); a
         // genuine online failure surfaces an error. Retries on next edit/online.
@@ -204,7 +308,7 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       }
       // conflict (409) OR semantic (4xx): the server may have advanced under us — a STALE delta is
       // rejected 422 BEFORE the 409 revision gate. runMerge fetches fresh and decides by revision:
-      // advanced → merge; not advanced → genuine reject → latch. `busy` stays held.
+      // advanced → merge (+ drain types); not advanced → genuine reject → latch. `busy` stays held.
       await runMerge();
     } finally {
       busy = false;
@@ -226,7 +330,7 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       }
       prior.current = found;
       ports.seedCache(found);
-      ports.reproject(found); // discard my unsaved changes, show the server version
+      ports.reproject(found, []); // discard my unsaved changes AND pending type cues — show the server
       ports.clearDraft();
       conflict = false;
       mergeRetries = 0;

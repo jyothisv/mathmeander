@@ -6,7 +6,7 @@
 // units), so non-BMP glyphs anchor correctly. 2c-1 is FLAT PROSE only; see `isFlatProse`.
 import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
-import type { Inline, MathContent, Unit } from '@mathmeander/schema';
+import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
@@ -86,7 +86,12 @@ export function projectToDoc(content: MathContent): Node {
     .sort((a, b) => a.position - b.position);
   const blocks = prose.map((u) => {
     const c = u.content as { kind: 'prose'; text: string; inline: Inline[] };
-    return editorSchema.nodes.prose.create({ unitId: u.id }, inlineToNodes(c.text, c.inline));
+    // `unitType` mirrors the unit's §6.0 type for display + as the source for the set_unit_type delta
+    // (typeNeeds); it never rides the prose `save_content` delta (flushToContent ignores it).
+    return editorSchema.nodes.prose.create(
+      { unitId: u.id, unitType: u.type ?? null },
+      inlineToNodes(c.text, c.inline),
+    );
   });
   if (blocks.length === 0) blocks.push(editorSchema.nodes.prose.create({ unitId: null }));
   return editorSchema.nodes.doc.create(null, blocks);
@@ -217,4 +222,28 @@ export function flushToContent(
   });
   const deletes = prior.units.filter((u) => !seen.has(u.id)).map((u) => u.id);
   return { upserts, deletes };
+}
+
+/** A single pending type change (2c-2). `type: null` = clear to plain. */
+export type TypeNeed = { unitId: string; type: UnitType | null };
+
+/** The TYPE delta — the type-axis analog of `flushToContent`. For each prose block whose unit EXISTS on
+ *  `server` and whose node `unitType` attr differs from the server unit's `type`, emit a `set_unit_type`
+ *  need. Blocks NOT yet persisted (no id, or not on the server) are skipped — their type applies on a
+ *  later drain, once the prose flush has created them. Type NEVER rides the prose `save_content` delta
+ *  (§6.0a: the core freezes every semantic facet there); it flows only through `set_unit_type`. */
+export function typeNeeds(doc: Node, server: MathContent): TypeNeed[] {
+  const serverById = new Map(server.units.map((u) => [u.id, u]));
+  const needs: TypeNeed[] = [];
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return; // brand-new block, not yet persisted
+    const srv = serverById.get(unitId);
+    if (!srv) return; // not on the server yet — applies on a later drain
+    const want = (block.attrs.unitType as UnitType | null) ?? null;
+    const have = srv.type ?? null;
+    if (want !== have) needs.push({ unitId, type: want });
+  });
+  return needs;
 }

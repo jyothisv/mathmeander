@@ -11,6 +11,7 @@ import {
   type ObjectPatch,
   type OpOutcome,
   type Unit,
+  type UnitType,
 } from '@mathmeander/schema';
 import { API_ORIGIN, DEV_IDP_ORIGIN } from '../config';
 import { clearSession, currentToken } from '../auth/store';
@@ -157,6 +158,19 @@ export async function saveContent(
 ): Promise<OpOutcome> {
   return (await request('PUT', `/api/objects/${objectId}/content`, OpOutcomeEnvelope, body))
     .outcome;
+}
+
+/** The §6.0a canonical type-set op (slice 2c-2): a leading cue / clear routes here, NOT through the prose
+ *  delta (the core freezes type on `save_content`). `unit_type` is a §6.3 Patch — a value SETS, `null`
+ *  CLEARS to plain; the editor never sends "absent". A stale `expected_revision` → 409 (same gate as
+ *  `save_content`). The unit must already exist (a brand-new cue'd unit is created prose-first). */
+export async function setUnitType(
+  objectId: string,
+  body: { expected_revision: number; unit_id: string; unit_type: UnitType | null },
+): Promise<OpOutcome> {
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/set-unit-type`, OpOutcomeEnvelope, body)
+  ).outcome;
 }
 
 /** Best-effort exit flush (slice 2c autosave): a fire-and-forget `keepalive` PUT used on
