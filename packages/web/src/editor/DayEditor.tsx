@@ -74,6 +74,8 @@ export function DayEditor({
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
+  // Conflict-resolution handlers, set by the effect and called from the conflict buttons' onClick.
+  const conflictRef = useRef<{ takeTheirs: () => void; keepMine: () => void } | null>(null);
   const [status, setStatus] = useState<SaveState>(() => ({
     conflict: false,
     error: false,
@@ -90,8 +92,8 @@ export function DayEditor({
     let view: EditorView | null = null;
     let timer: number | null = null; // network-flush debounce
     let drafter: number | null = null; // IndexedDB-draft debounce
-    let inFlight = false;
-    let conflict = false; // a 409 we couldn't merge — auto-save paused until reload
+    let busy = false; // single in-progress guard across the whole flush → merge / resolve chain
+    let conflict = false; // a 409 we couldn't merge — auto-save paused until the user resolves
     let semanticLatch: string | null = null; // doc signature of a deterministically-rejected (4xx) save
     let mergeRetries = 0;
     let dirtyMirror = false; // closure mirror of `dirty` (read synchronously in the online handler)
@@ -150,7 +152,7 @@ export function DayEditor({
     };
 
     const flush = async (v: EditorView): Promise<void> => {
-      if (conflict || inFlight) return;
+      if (conflict || busy) return;
       const { upserts, deletes } = flushToContent(v.state.doc, prior.current);
       if (upserts.length === 0 && deletes.length === 0) {
         semanticLatch = null; // doc returned to the server state
@@ -163,7 +165,7 @@ export function DayEditor({
         if (docSig(v) === semanticLatch) return; // known-bad delta, unchanged → don't re-send (no loop)
         semanticLatch = null; // doc changed → worth another try
       }
-      inFlight = true;
+      busy = true;
       setIf((s) => ({ ...s, saving: true }));
       try {
         const outcome = await saveContent(objectId, {
@@ -181,35 +183,28 @@ export function DayEditor({
         dirtyMirror = stillDirty;
         setIf((s) => ({ ...s, saving: false, dirty: stillDirty, error: false }));
       } catch (err) {
-        inFlight = false;
         const cls = classifyFlushError(err);
         if (cls === 'transient') {
           // network/5xx: while OFFLINE keep the calm "Offline" status (auto-flushes on reconnect); a
           // genuine online failure surfaces an error. Retries on next edit/online.
           writeDraft(v);
           setIf((s) => ({ ...s, saving: false, error: isOnline() }));
-          return;
+          return; // finally clears busy
         }
-        // conflict (409) OR semantic (4xx): the server may have advanced under us — a STALE delta can be
-        // rejected as 422 (it collides with newer content) BEFORE the 409 revision gate even fires. So
-        // both go through runMerge, which fetches fresh and decides: advanced → merge; not advanced → a
-        // genuine reject → latch.
+        // conflict (409) OR semantic (4xx): the server may have advanced under us — a STALE delta is
+        // rejected 422 (collides with newer content) BEFORE the 409 revision gate. runMerge fetches fresh
+        // and decides: advanced → merge; not advanced → genuine reject → latch. `busy` stays held.
         await runMerge(v);
       } finally {
-        inFlight = false;
+        busy = false;
       }
     };
 
-    /** A 409 → safe additive merge. We REPROJECT the merged content (incl. foreign units) into the doc
-     *  while it's stable, then persist the rebased delta; the normal flush handling then covers any
-     *  typed-during-PUT edits (the foreign units are already in the doc, so they won't be deleted). */
-    const runMerge = async (v: EditorView): Promise<void> => {
-      if (mergeRetries >= MAX_MERGE_RETRIES) return enterConflict(v);
-      mergeRetries += 1;
+    /** A 409 (or a stale-write 422), and the "Keep mine" resolution (`force`) → safe additive merge. We
+     *  REPROJECT the merged content (incl. foreign units) into the doc while it's stable, then persist the
+     *  rebased delta; the after-recompute then covers any typed-during-PUT edit. The CALLER owns `busy`. */
+    const runMerge = async (v: EditorView, opts?: { force?: boolean }): Promise<void> => {
       const baseline = prior.current;
-      const docAtStart = docSig(v);
-      const mineAtStart = flushToContent(v.state.doc, baseline);
-
       let fresh: MathContent;
       try {
         const day = await getJournalDay(date);
@@ -223,11 +218,13 @@ export function DayEditor({
         return;
       }
       if (cancelled) return;
-      if (docSig(v) !== docAtStart) return void runMerge(v); // typed during the GET → recompute
+      // Compute MY delta against the CURRENT doc (captures edits made during the GET) so a fast typist
+      // doesn't burn the retry budget; the retry cap is then consumed only by genuine re-409 races.
+      const mine = flushToContent(v.state.doc, baseline);
 
-      if (fresh.revision <= baseline.revision) {
-        // The server did NOT advance → the save was a GENUINE reject (not a stale-write race). Latch the
-        // offending doc so we don't re-send it every keystroke; surface for review.
+      if (fresh.revision <= baseline.revision && !opts?.force) {
+        // The server did NOT advance → a GENUINE reject (not a stale-write race). Latch the offending doc
+        // so we don't re-send it every keystroke; surface for review. (Forced keep-mine skips this.)
         mergeRetries = 0;
         writeDraft(v);
         semanticLatch = docSig(v);
@@ -235,7 +232,12 @@ export function DayEditor({
         return;
       }
 
-      const plan = planMerge({ baseline, server: fresh, mine: mineAtStart });
+      const plan = planMerge({
+        baseline,
+        server: fresh,
+        mine,
+        ...(opts?.force ? { force: true } : {}),
+      });
       if (plan.kind === 'conflict') return enterConflict(v);
 
       // Doc is stable → bring the merged content on screen and rebase the baseline to the fresh server.
@@ -254,7 +256,6 @@ export function DayEditor({
         return;
       }
 
-      inFlight = true;
       setIf((s) => ({ ...s, saving: true, conflict: false }));
       try {
         const outcome = await saveContent(objectId, {
@@ -274,13 +275,61 @@ export function DayEditor({
         dirtyMirror = stillDirty;
         setIf((s) => ({ ...s, saving: false, dirty: stillDirty, error: false, conflict: false }));
       } catch (err) {
-        inFlight = false;
-        if (classifyFlushError(err) === 'conflict') return void runMerge(v); // another writer raced
+        if (classifyFlushError(err) === 'conflict') {
+          if (mergeRetries >= MAX_MERGE_RETRIES) return enterConflict(v);
+          mergeRetries += 1;
+          return await runMerge(v, opts); // another writer raced — bounded retry, still inside `busy`
+        }
         writeDraft(v);
         setIf((s) => ({ ...s, saving: false, error: isOnline() }));
-      } finally {
-        inFlight = false;
       }
+    };
+
+    // Conflict resolution (the two buttons shown in the conflict state). Both take `busy` for their whole
+    // span so a keystroke-scheduled flush can't interleave.
+    const resolveTakeTheirs = async (): Promise<void> => {
+      if (busy || !view) return;
+      busy = true;
+      setIf((s) => ({ ...s, saving: true }));
+      try {
+        const day = await getJournalDay(date);
+        if (cancelled) return;
+        const found = day.graph.content.find((c) => c.object_id === objectId);
+        if (!found) {
+          setIf((s) => ({ ...s, saving: false, error: true }));
+          return;
+        }
+        prior.current = found;
+        seedCache(found);
+        reproject(found); // discard my unsaved changes, show the server version
+        await clearDraft(objectId);
+        conflict = false;
+        mergeRetries = 0;
+        semanticLatch = null;
+        dirtyMirror = false;
+        setIf((s) => ({ ...s, saving: false, conflict: false, dirty: false, error: false }));
+      } catch {
+        setIf((s) => ({ ...s, saving: false, error: isOnline() }));
+      } finally {
+        busy = false;
+      }
+    };
+
+    const resolveKeepMine = async (): Promise<void> => {
+      if (busy || !view) return;
+      const v = view;
+      busy = true;
+      conflict = false; // resolving in my favor → let the (forced) merge proceed and re-sync
+      setIf((s) => ({ ...s, saving: true, conflict: false }));
+      try {
+        await runMerge(v, { force: true });
+      } finally {
+        busy = false;
+      }
+    };
+    conflictRef.current = {
+      takeTheirs: () => void resolveTakeTheirs(),
+      keepMine: () => void resolveKeepMine(),
     };
 
     const stampNullIds = (v: EditorView) => v.dispatch(v.state.tr); // triggers idStamper.appendTransaction
@@ -364,7 +413,7 @@ export function DayEditor({
     };
     const onOnline = () => {
       setIf((s) => ({ ...s, offline: false }));
-      if (dirtyMirror && !conflict && view) scheduleFlush(view); // flush pending edits on reconnect
+      if (dirtyMirror && !conflict && !busy && view) scheduleFlush(view); // flush pending edits on reconnect
     };
     const onOffline = () => setIf((s) => ({ ...s, offline: true }));
     window.addEventListener('pagehide', onHide);
@@ -374,6 +423,7 @@ export function DayEditor({
 
     return () => {
       cancelled = true;
+      conflictRef.current = null;
       if (timer != null) clearTimeout(timer);
       if (drafter != null) clearTimeout(drafter);
       window.removeEventListener('pagehide', onHide);
@@ -394,6 +444,28 @@ export function DayEditor({
     <div>
       <div ref={mountRef} className="day-editor" aria-label="day content" />
       <SaveStatusIndicator state={status} />
+      {status.conflict && (
+        <div className="conflict-actions" role="group" aria-label="resolve conflict">
+          <p className="meta">
+            This day changed elsewhere. “Load the latest” discards your unsaved changes — copy
+            anything you want to keep first.
+          </p>
+          <button
+            type="button"
+            disabled={status.saving}
+            onClick={() => conflictRef.current?.takeTheirs()}
+          >
+            Load the latest
+          </button>
+          <button
+            type="button"
+            disabled={status.saving}
+            onClick={() => conflictRef.current?.keepMine()}
+          >
+            Keep mine
+          </button>
+        </div>
+      )}
     </div>
   );
 }
