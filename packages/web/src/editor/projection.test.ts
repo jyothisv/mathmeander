@@ -147,6 +147,25 @@ describe('flushToContent delta', () => {
     expect(roundTripIsClean(c)).toBe(true);
   });
 
+  it('does not re-upsert a unit whose server content keys differ in ORDER (wire vs local)', () => {
+    // The server's zod-parsed content can serialize as {text, inline, kind}; the editor builds
+    // {kind, text, inline}. Change-detection must be key-order-INDEPENDENT — otherwise a just-saved
+    // unit looks "changed" and the editor re-upserts it on every idle cycle (never settling).
+    const wireUnit: Unit = {
+      id: 'u1',
+      object_id: OBJ,
+      position: 0,
+      status: 'rough',
+      declared_by: 'user',
+      content: { text: 'Status check.', inline: [], kind: 'prose' }, // kind LAST (wire order)
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
+    };
+    const c: MathContent = { object_id: OBJ, revision: 2, units: [wireUnit] };
+    const { upserts, deletes } = flushToContent(projectToDoc(c), c);
+    expect(upserts).toEqual([]);
+    expect(deletes).toEqual([]);
+  });
+
   it('an empty day projects to an editable doc and flushes to nothing', () => {
     const empty = content([]);
     expect(isFlatProse(empty)).toBe(true);

@@ -132,7 +132,7 @@ export function JournalDayPage() {
       {dayContent && isFlatProse(dayContent) ? (
         // Flat-prose (or empty) days are EDITABLE (slice 2c-1). Keyed by object id so a new day
         // remounts the editor cleanly.
-        <DayEditor key={object.id} objectId={object.id} content={dayContent} />
+        <DayEditor key={object.id} objectId={object.id} content={dayContent} date={date} />
       ) : dayContent ? (
         // Days with display math / embeds / groups render read-only until later passes.
         <MathContentView content={dayContent} contentById={contentById} />

@@ -135,9 +135,17 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
   return { text, inline: canonicalInline(inline) };
 }
 
-function newProseUnit(objectId: string, position: number, text: string, inline: Inline[]): Unit {
+function newProseUnit(
+  id: string,
+  objectId: string,
+  position: number,
+  text: string,
+  inline: Inline[],
+): Unit {
   return {
-    id: uuidv7(), // client-minted UUIDv7 (§6.3); the route stamps the op's provenance on new units
+    id, // the block's idStamper-minted UUIDv7 (§6.3) — so the block stays ANCHORED to the persisted
+    // unit after save (server keeps the client id; only provenance is stamped). Using a fresh id here
+    // would orphan the block → every save would delete+recreate the unit and never settle to "saved".
     object_id: objectId,
     position,
     status: 'rough',
@@ -147,15 +155,30 @@ function newProseUnit(objectId: string, position: number, text: string, inline: 
   };
 }
 
-function proseUnchanged(next: Unit, prev: Unit): boolean {
-  return (
-    next.position === prev.position &&
-    JSON.stringify(next.content) ===
-      JSON.stringify({
-        ...prev.content,
-        inline: canonicalInline((prev.content as { inline: Inline[] }).inline),
-      })
+/** Key-order-independent JSON (recursively sorts object keys). Change-detection compares the
+ *  locally-built content (`{kind,text,inline}` literal order) against the SERVER's zod-parsed content,
+ *  whose key order differs — a plain `JSON.stringify` would then report every saved unit as "changed"
+ *  and the editor would re-upsert it on every idle cycle (never settling). */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(o[k])}`)
+    .join(',')}}`;
+}
+
+/** Canonical change-detection form: prose inline is sorted into canonical order, then key-order is
+ *  normalized so wire-vs-local key ordering can't masquerade as a change. */
+function contentKey(c: Unit['content']): string {
+  return stableStringify(
+    c.kind === 'prose' ? { ...c, inline: canonicalInline((c as { inline: Inline[] }).inline) } : c,
   );
+}
+
+function proseUnchanged(next: Unit, prev: Unit): boolean {
+  return next.position === prev.position && contentKey(next.content) === contentKey(prev.content);
 }
 
 /** Read the edited doc back into a DELTA against `prior`: the units that changed/were added
@@ -185,7 +208,7 @@ export function flushToContent(
       position += 1;
     } else {
       if (cpLen(text) === 0 && inline.length === 0) return; // empty placeholder — not persisted
-      upserts.push(newProseUnit(prior.object_id, position, text, inline));
+      upserts.push(newProseUnit(unitId ?? uuidv7(), prior.object_id, position, text, inline));
       position += 1;
     }
   });
