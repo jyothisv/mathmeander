@@ -11,12 +11,22 @@ export const editorSchema = new Schema({
     doc: { content: 'prose+' },
 
     // One canonical prose unit. `unitId` is the identity carrier (null = a brand-new unit the
-    // server-side flush mints); all other unit fields are reconciled from prior content on flush.
+    // server-side flush mints); other unit fields are reconciled from prior content on flush. `unitType`
+    // mirrors the unit's §6.0 `type` (null = plain): it round-trips for display + is the source for the
+    // set_unit_type delta (2c-2) — it is NEVER sent via the prose `save_content` delta (§6.0a; the type
+    // freeze lives in core ops.rs). A leading-cue inputRule sets it; Backspace-at-start clears it.
     prose: {
       group: 'block',
       content: 'inline*',
-      attrs: { unitId: { default: null } },
-      toDOM: (node) => ['p', { 'data-unit-id': (node.attrs.unitId as string | null) ?? '' }, 0],
+      attrs: { unitId: { default: null }, unitType: { default: null } },
+      toDOM: (node) => [
+        'p',
+        {
+          'data-unit-id': (node.attrs.unitId as string | null) ?? '',
+          ...(node.attrs.unitType ? { 'data-unit-type': node.attrs.unitType as string } : {}),
+        },
+        0,
+      ],
       parseDOM: [{ tag: 'p' }],
     },
 

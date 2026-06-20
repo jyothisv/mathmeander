@@ -1,18 +1,25 @@
 // The load-bearing 2c-1 test: the MathContent ⇄ ProseMirror round-trip, especially the zero-width
 // inline-atom contract (§6.0) and Mark regions. Pure (prosemirror-model runs in node, no DOM).
 import { describe, expect, it } from 'vitest';
-import type { Inline, MathContent, MathExpression, Unit } from '@mathmeander/schema';
-import { flushToContent, isFlatProse, projectToDoc } from './projection';
+import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
+import { flushToContent, isFlatProse, projectToDoc, typeNeeds } from './projection';
 
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
 
-function prose(id: string, position: number, text: string, inline: Inline[] = []): Unit {
+function prose(
+  id: string,
+  position: number,
+  text: string,
+  inline: Inline[] = [],
+  type?: UnitType,
+): Unit {
   return {
     id,
     object_id: OBJ,
     position,
     status: 'rough',
     declared_by: 'user',
+    ...(type ? { type } : {}),
     content: { kind: 'prose', text, inline },
     provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
   };
@@ -197,5 +204,42 @@ describe('isFlatProse', () => {
       provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
     };
     expect(isFlatProse(content([mathUnit]))).toBe(false);
+  });
+});
+
+describe('type round-trip + typeNeeds (2c-2)', () => {
+  it('a typed unit causes NO spurious upsert (type is not part of the prose delta)', () => {
+    expect(roundTripIsClean(content([prose('u1', 0, 'Pythagoras.', [], 'theorem')]))).toBe(true);
+  });
+
+  it('editing a typed unit preserves its type UNCHANGED in the upsert (save_content-safe)', () => {
+    const prior = content([prose('u1', 0, 'Pythagoras.', [], 'theorem')]);
+    const doc = projectToDoc(content([prose('u1', 0, 'Pythagoras!!', [], 'theorem')]));
+    const { upserts } = flushToContent(doc, prior);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.type).toBe('theorem'); // preserved from prior, never changed by the prose flush
+  });
+
+  it('typeNeeds emits a set when the doc type differs from the server', () => {
+    const server = content([prose('u1', 0, 'Pythagoras.')]); // untyped on the server
+    const doc = projectToDoc(content([prose('u1', 0, 'Pythagoras.', [], 'theorem')]));
+    expect(typeNeeds(doc, server)).toEqual([{ unitId: 'u1', type: 'theorem' }]);
+  });
+
+  it('typeNeeds emits a clear (null) when the doc cleared a server type', () => {
+    const server = content([prose('u1', 0, 'Pythagoras.', [], 'theorem')]);
+    const doc = projectToDoc(content([prose('u1', 0, 'Pythagoras.')]));
+    expect(typeNeeds(doc, server)).toEqual([{ unitId: 'u1', type: null }]);
+  });
+
+  it('typeNeeds is empty when types match, and skips a unit not yet on the server', () => {
+    const server = content([prose('u1', 0, 'A', [], 'lemma')]);
+    expect(typeNeeds(projectToDoc(content([prose('u1', 0, 'A', [], 'lemma')])), server)).toEqual(
+      [],
+    );
+    const withNew = projectToDoc(
+      content([prose('u1', 0, 'A', [], 'lemma'), prose('u2', 1, 'B', [], 'theorem')]),
+    );
+    expect(typeNeeds(withNew, server)).toEqual([]); // u2 not persisted yet → skipped
   });
 });

@@ -4,9 +4,9 @@
 // `fetchFresh` mocks, and every side effect by a spy. We drive the private `runMerge` through the public
 // `flush` (by making `save` throw 409/422), exactly as the real 409/422 path does.
 import { describe, expect, it } from 'vitest';
-import type { Inline, MathContent, Unit } from '@mathmeander/schema';
+import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { ApiError } from '../api/client';
-import { contentKeyOf } from './projection';
+import { contentKeyOf, type TypeNeed } from './projection';
 import type { Delta } from './merge';
 import type { SaveState } from './saveStatus';
 import { createAutosaveController, type AutosavePorts, type SaveBody } from './autosaveController';
@@ -14,13 +14,20 @@ import { createAutosaveController, type AutosavePorts, type SaveBody } from './a
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
 const PROV = '0197675f-71f4-7000-8000-0000000000d1';
 
-function prose(id: string, position: number, text: string, inline: Inline[] = []): Unit {
+function prose(
+  id: string,
+  position: number,
+  text: string,
+  inline: Inline[] = [],
+  type?: UnitType,
+): Unit {
   return {
     id,
     object_id: OBJ,
     position,
     status: 'rough',
     declared_by: 'user',
+    ...(type ? { type } : {}),
     content: { kind: 'prose', text, inline },
     provenance_id: PROV,
   };
@@ -51,7 +58,9 @@ function diffContent(current: MathContent, baseline: MathContent): Delta {
   return { upserts, deletes };
 }
 
-/** Stands in for the live ProseMirror doc: holds the content the user has typed; records reprojections. */
+/** Stands in for the live ProseMirror doc: `current.units` carry both prose content AND the `type` node
+ *  attr (so `delta` is prose-only — matching flushToContent which ignores type — and `docTypeNeeds` is the
+ *  separate type axis). Records reprojections. */
 class FakeDoc {
   current: MathContent;
   reprojections: MathContent[] = [];
@@ -59,16 +68,32 @@ class FakeDoc {
     this.current = init;
   }
   delta(baseline: MathContent): Delta {
-    return diffContent(this.current, baseline);
+    return diffContent(this.current, baseline); // prose only (ignores type)
   }
   signature(): string {
     return JSON.stringify(this.current.units);
   }
-  reproject(c: MathContent): void {
-    this.current = c;
-    this.reprojections.push(c);
+  /** Pending TYPE delta vs `server`: each persisted unit whose doc type differs from the server's. */
+  docTypeNeeds(server: MathContent): TypeNeed[] {
+    const byId = new Map(server.units.map((u) => [u.id, u]));
+    const needs: TypeNeed[] = [];
+    for (const u of this.current.units) {
+      const srv = byId.get(u.id);
+      if (!srv) continue; // not yet persisted
+      if ((u.type ?? null) !== (srv.type ?? null))
+        needs.push({ unitId: u.id, type: u.type ?? null });
+    }
+    return needs;
   }
-  /** Simulate the user typing (replace the unit set). */
+  reproject(c: MathContent, keepTypes: TypeNeed[]): void {
+    const want = new Map(keepTypes.map((t) => [t.unitId, t.type]));
+    this.current = {
+      ...c,
+      units: c.units.map((u) => (want.has(u.id) ? { ...u, type: want.get(u.id) ?? undefined } : u)),
+    };
+    this.reprojections.push(this.current);
+  }
+  /** Simulate the user typing (replace the unit set — prose and/or type attrs). */
   type(units: Unit[]): void {
     this.current = { ...this.current, units };
   }
@@ -98,12 +123,14 @@ interface Harness {
   getState: () => SaveState;
   calls: {
     saves: SaveBody[];
+    setTypes: Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>;
     persistDraft: number;
     clearDraft: number;
     cancelFlush: number;
     seeds: MathContent[];
   };
   queueSave: (fn: () => Promise<MathContent>) => void;
+  queueSetType: (fn: () => Promise<MathContent>) => void;
   setFetch: (fn: () => Promise<MathContent | null>) => void;
   setOnline: (b: boolean) => void;
   setReady: (b: boolean) => void;
@@ -113,6 +140,7 @@ function makeHarness(opts: {
   baseline: MathContent;
   doc?: MathContent; // what the user has typed (defaults to baseline = clean)
   maxMergeRetries?: number;
+  maxTypeRetries?: number;
 }): Harness {
   const prior = { current: opts.baseline };
   const doc = new FakeDoc(opts.doc ?? opts.baseline);
@@ -125,12 +153,14 @@ function makeHarness(opts: {
   };
   const calls = {
     saves: [] as SaveBody[],
+    setTypes: [] as Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>,
     persistDraft: 0,
     clearDraft: 0,
     cancelFlush: 0,
     seeds: [] as MathContent[],
   };
   const saveQueue: Array<() => Promise<MathContent>> = [];
+  const setTypeQueue: Array<() => Promise<MathContent>> = [];
   let fetchImpl: () => Promise<MathContent | null> = async () => null;
   let online = true;
   let ready = true;
@@ -147,7 +177,7 @@ function makeHarness(opts: {
     fetchFresh: () => fetchImpl(),
     delta: (baseline) => doc.delta(baseline),
     signature: () => doc.signature(),
-    reproject: (c) => doc.reproject(c),
+    reproject: (c, keepTypes) => doc.reproject(c, keepTypes),
     persistDraft: () => {
       calls.persistDraft += 1;
     },
@@ -157,6 +187,17 @@ function makeHarness(opts: {
     seedCache: (c) => {
       calls.seeds.push(c);
     },
+    setType: (unitId, type, expectedRevision) => {
+      calls.setTypes.push({ unitId, type, expectedRevision });
+      const override = setTypeQueue.shift();
+      if (override) return override(); // simulate an error / specific echo
+      // default success: echo prior.current with the type applied + revision bumped
+      const units = prior.current.units.map((u) =>
+        u.id === unitId ? { ...u, ...(type ? { type } : { type: undefined }) } : u,
+      );
+      return Promise.resolve({ ...prior.current, revision: prior.current.revision + 1, units });
+    },
+    docTypeNeeds: (server) => doc.docTypeNeeds(server),
     setStatus: (fn) => {
       state = fn(state);
     },
@@ -166,6 +207,7 @@ function makeHarness(opts: {
     isOnline: () => online,
     ready: () => ready,
     ...(opts.maxMergeRetries != null ? { maxMergeRetries: opts.maxMergeRetries } : {}),
+    ...(opts.maxTypeRetries != null ? { maxTypeRetries: opts.maxTypeRetries } : {}),
   };
 
   return {
@@ -175,6 +217,7 @@ function makeHarness(opts: {
     getState: () => state,
     calls,
     queueSave: (fn) => saveQueue.push(fn),
+    queueSetType: (fn) => setTypeQueue.push(fn),
     setFetch: (fn) => {
       fetchImpl = fn;
     },
@@ -663,5 +706,126 @@ describe('noteEdit / canFlushOnReconnect / dispose', () => {
     await p;
     expect(h.calls.saves).toHaveLength(1); // no merge save after disposal
     expect(h.doc.reprojections).toHaveLength(0); // nothing reprojected
+  });
+});
+
+describe('type cues (2c-2) — drainTypes after the prose part', () => {
+  it('a new cued unit: prose save (type=null) THEN set_unit_type', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0'), prose('pa', 1, 'Pa', [], 'theorem')], 1),
+    });
+    h.queueSave(ok(content([prose('p0', 0, 'P0'), prose('pa', 1, 'Pa')], 2))); // server creates type=null
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(1);
+    expect(h.calls.setTypes).toEqual([{ unitId: 'pa', type: 'theorem', expectedRevision: 2 }]);
+    expect(h.prior.current.units.find((u) => u.id === 'pa')!.type).toBe('theorem');
+    expect(h.getState()).toMatchObject({
+      saving: false,
+      dirty: false,
+      conflict: false,
+      error: false,
+    });
+  });
+
+  it('a pure re-type of an existing unit: NO prose save, one set_unit_type (fall-through past clean)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 1), // same text/pos, type added
+    });
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0); // type never rides the prose delta
+    expect(h.calls.setTypes).toEqual([{ unitId: 'p0', type: 'theorem', expectedRevision: 1 }]);
+    expect(h.getState()).toMatchObject({ saving: false, dirty: false });
+  });
+
+  it('clearing a type sends set_unit_type with null', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0', [], 'theorem')], 1),
+      doc: content([prose('p0', 0, 'P0')], 1), // type cleared
+    });
+    await h.ctl.flush();
+    expect(h.calls.setTypes).toEqual([{ unitId: 'p0', type: null, expectedRevision: 1 }]);
+    expect(h.prior.current.units.find((u) => u.id === 'p0')!.type ?? null).toBeNull();
+  });
+
+  it('a fully clean doc does no work (no save, no set_unit_type, never saving)', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) }); // doc === baseline, no type
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0);
+    expect(h.calls.setTypes).toHaveLength(0);
+    expect(h.getState()).toMatchObject({ dirty: false });
+  });
+
+  it('a 409 mid-drain re-anchors to fresh and retries (preserving the pending type)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 2),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 2), // pure type change
+    });
+    let rev = 3;
+    h.setFetch(async () => content([prose('p0', 0, 'P0')], rev++)); // advances each GET
+    h.queueSetType(() => Promise.reject(apiErr(409))); // first attempt races
+    await h.ctl.flush();
+    expect(h.calls.setTypes).toHaveLength(2); // 409 then success
+    expect(h.prior.current.units.find((u) => u.id === 'p0')!.type).toBe('theorem');
+    expect(h.getState()).toMatchObject({ conflict: false, dirty: false });
+  });
+
+  it('exhausting the type-retry budget enters conflict', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 2),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 2),
+      maxTypeRetries: 1,
+    });
+    let rev = 3;
+    h.setFetch(async () => content([prose('p0', 0, 'P0')], rev++));
+    h.queueSetType(() => Promise.reject(apiErr(409)));
+    h.queueSetType(() => Promise.reject(apiErr(409)));
+    await h.ctl.flush();
+    expect(h.getState().conflict).toBe(true);
+  });
+
+  it('drains a pending type AFTER a prose merge (409 → runMerge → drainTypes)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0x', [], 'theorem')], 1), // edited prose + typed
+    });
+    h.setFetch(async () => content([prose('p0', 0, 'P0'), prose('z', 1, 'Z')], 2)); // server added z
+    h.queueSave(() => Promise.reject(apiErr(409))); // initial prose PUT races
+    h.queueSave(ok(content([prose('p0', 0, 'P0x'), prose('z', 1, 'Z')], 3))); // merge PUT
+    await h.ctl.flush();
+    expect(h.calls.setTypes.map((s) => s.unitId)).toEqual(['p0']); // type drained post-merge
+    expect(h.prior.current.units.find((u) => u.id === 'p0')!.type).toBe('theorem');
+    expect(h.getState()).toMatchObject({ conflict: false, error: false, dirty: false });
+  });
+
+  it('a transient type-op failure is non-lossy: dirty + error, prose safe, retried later', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 1),
+    });
+    h.setOnline(true);
+    h.queueSetType(() => Promise.reject(new Error('network')));
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0);
+    expect(h.getState()).toMatchObject({ dirty: true, error: true });
+    expect(h.prior.current.units.find((u) => u.id === 'p0')!.type ?? null).toBeNull(); // not applied
+    expect(h.calls.persistDraft).toBeGreaterThanOrEqual(1); // draft kept
+  });
+
+  it('dispose mid-drain stops further type ops (no write after teardown)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 1),
+    });
+    const gate = deferred<MathContent>();
+    h.queueSetType(() => gate.promise);
+    const p = h.ctl.flush();
+    await tick(); // parked on set_unit_type
+    h.ctl.dispose();
+    gate.resolve(content([prose('p0', 0, 'P0', [], 'theorem')], 2));
+    await p;
+    expect(h.calls.setTypes).toHaveLength(1);
+    expect(h.prior.current.revision).toBe(1); // disposed continuation never advanced the baseline
   });
 });

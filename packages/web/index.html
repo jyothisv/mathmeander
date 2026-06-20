@@ -68,6 +68,21 @@
         padding: 0 0.2rem;
         border-radius: 3px;
       }
+      /* Type cues (slice 2c-2): a typed prose block shows its §6.0 type as a small label, so a stripped
+         cue (`Thm.`) is visibly acknowledged. Full styling is the design pass; this is minimal feedback. */
+      .day-editor .ProseMirror p[data-unit-type] {
+        border-left: 2px solid rgba(127, 127, 127, 0.4);
+        padding-left: 0.6rem;
+      }
+      .day-editor .ProseMirror p[data-unit-type]::before {
+        content: attr(data-unit-type);
+        display: block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: capitalize;
+        letter-spacing: 0.03em;
+        color: gray;
+      }
     </style>
   </head>
   <body>
