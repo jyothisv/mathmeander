@@ -15,6 +15,7 @@ export type ConflictReason =
   | 'both-edited-same-unit'
   | 'i-edited-server-deleted'
   | 'i-deleted-server-edited'
+  | 'new-id-collision'
   | 'non-flat';
 
 export type MergeResult =
@@ -28,10 +29,15 @@ export interface MergeInput {
   server: MathContent;
   /** My local delta vs `baseline` = flushToContent(doc, baseline). */
   mine: Delta;
+  /** "Keep mine" resolution: skip the overlap→conflict checks so MY version wins on a clash, while the
+   *  other side's SEPARATE additions (server-new units + server edits to units I didn't touch) survive. */
+  force?: boolean;
 }
 
-/** What the server changed since our baseline (by unit id). `new` is tracked separately because a
- *  brand-new server unit can never collide with one of my edits (my edits reference baseline ids). */
+/** What the server changed since our baseline (by unit id). Server-new ids aren't returned for overlap:
+ *  my NEW units carry freshly client-minted UUIDv7s (§6.3), so they're disjoint from every server id —
+ *  hence appending mine can't collide (the one place this is verified, not assumed, is the
+ *  `myNew ∩ serverIds` guard in `planMerge`). */
 function serverDiff(baseline: MathContent, server: MathContent) {
   const baseById = new Map(baseline.units.map((u) => [u.id, u]));
   const serverIds = new Set(server.units.map((u) => u.id));
@@ -69,7 +75,7 @@ function diffUnits(target: Unit[], base: MathContent): Delta {
   return { upserts, deletes };
 }
 
-export function planMerge({ baseline, server, mine }: MergeInput): MergeResult {
+export function planMerge({ baseline, server, mine, force }: MergeInput): MergeResult {
   // Fail safe: the flat-prose construction below only reasons about top-level prose.
   if (!isFlatProse(baseline) || !isFlatProse(server))
     return { kind: 'conflict', reason: 'non-flat' };
@@ -82,22 +88,36 @@ export function planMerge({ baseline, server, mine }: MergeInput): MergeResult {
 
   const srv = serverDiff(baseline, server);
 
-  // Overlap → conflict (the ONLY non-additive cases). Deterministic order for stable assertions.
-  for (const id of myEditedIds) if (srv.changed.has(id)) return conflict('both-edited-same-unit');
-  for (const id of myEditedIds) if (srv.deleted.has(id)) return conflict('i-edited-server-deleted');
-  for (const id of myDeleted) if (srv.changed.has(id)) return conflict('i-deleted-server-edited');
+  // Verify the one invariant the construction relies on (unreachable with UUIDv7): a "new" unit of mine
+  // must not already exist on the server, or it'd appear twice. Conflict even under `force` — it's a
+  // structural impossibility, not a content clash to resolve.
+  for (const u of myNew) if (srv.serverIds.has(u.id)) return conflict('new-id-collision');
 
-  // Disjoint → ADDITIVE merge, built from server.units so every foreign/server-new unit is preserved.
+  // Overlap → conflict (the ONLY non-additive cases) — UNLESS `force` (keep-mine) resolves in my favor.
+  // Deterministic order for stable assertions.
+  if (!force) {
+    for (const id of myEditedIds) if (srv.changed.has(id)) return conflict('both-edited-same-unit');
+    for (const id of myEditedIds)
+      if (srv.deleted.has(id)) return conflict('i-edited-server-deleted');
+    for (const id of myDeleted) if (srv.changed.has(id)) return conflict('i-deleted-server-edited');
+  }
+
+  // ADDITIVE merge, built from server.units so every foreign/server-new unit is preserved. My edits
+  // apply to units present on the server; my deletes drop them. (Under `force`/keep-mine these "win" over
+  // a server change to the same unit; under detect, such overlaps already returned a conflict above.)
   const myEditedById = new Map(myEdited.map((u) => [u.id, u]));
   const kept: Unit[] = [];
   for (const u of server.units) {
-    if (myDeleted.has(u.id)) continue; // my delete of a server-untouched unit (no-overlap proven above)
+    if (myDeleted.has(u.id)) continue; // my delete drops it
     const edit = myEditedById.get(u.id);
     kept.push(edit ? { ...u, content: edit.content } : u); // apply my content edit; keep server fields
   }
-  // Append my new units after the server's; renumber gap-free in final order. (A pure REORDER of
+  // Under `force`, an edit of mine to a unit the SERVER deleted is resurrected (keep-mine → my version
+  // survives); in detect mode that overlap already conflicted, so this is empty there.
+  const resurrected = myEdited.filter((u) => !srv.serverIds.has(u.id));
+  // Append my new units (+ any resurrected) after the server's; renumber gap-free. (A pure REORDER of
   // server-untouched units is conservatively dropped — server order wins, no content lost.)
-  const merged = [...kept, ...myNew].map((u, i) => ({ ...u, position: i }));
+  const merged = [...kept, ...myNew, ...resurrected].map((u, i) => ({ ...u, position: i }));
   const content: MathContent = {
     object_id: baseline.object_id,
     revision: server.revision,

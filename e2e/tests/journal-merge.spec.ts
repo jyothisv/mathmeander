@@ -36,6 +36,17 @@ const put200 = (r: { url(): string; request(): { method(): string }; status(): n
 
 const CONFLICT = 'Changed elsewhere — your edits are kept';
 
+/** The day's prose texts as the SERVER sees them (immune to either tab's shared-key local draft). */
+async function serverTexts(page: Page, date: string): Promise<(string | undefined)[]> {
+  const token = await page.evaluate(() => localStorage.getItem('mathmeander.session.token'));
+  const res = await page.request.get(`${API}/api/journal/days/${date}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  return (await res.json()).graph.content.flatMap(
+    (c: { units: { content: { text?: string } }[] }) => c.units.map((u) => u.content.text),
+  );
+}
+
 test('two-tab disjoint edits → additive merge keeps BOTH', async ({ context, page }) => {
   await login(page, `merge-additive-${Date.now()}@mathmeander.local`);
   const today = await openToday(page);
@@ -95,15 +106,70 @@ test('two-tab same-paragraph edits → conflict, no clobber, work preserved', as
   // …and the SERVER still has A's version — no silent overwrite. (Assert the server directly: a tab
   // reload would read the OTHER tab's shared-key draft, which is the separately-tracked two-tab
   // coordination follow-up, not a server-integrity question.)
-  const token = await page.evaluate(() => localStorage.getItem('mathmeander.session.token'));
-  const dayRes = await page.request.get(`${API}/api/journal/days/${today}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  const texts = (await dayRes.json()).graph.content.flatMap(
-    (c: { units: { content: { text?: string } }[] }) => c.units.map((u) => u.content.text),
-  );
-  expect(texts).toContain('Shared [A]');
-  expect(texts).not.toContain('Shared [B]');
+  expect(await serverTexts(page, today)).toContain('Shared [A]');
+  expect(await serverTexts(page, today)).not.toContain('Shared [B]');
+});
+
+/** Drive two tabs into a same-paragraph conflict where tab A ALSO added a separate paragraph. Returns
+ *  the tabs + date with tab B sitting in the conflict state ("Shared [B]" unsynced). */
+async function intoConflict(context: import('@playwright/test').BrowserContext, page: Page) {
+  await login(page, `merge-resolve-${Date.now()}@mathmeander.local`);
+  const today = await openToday(page);
+  await page.locator('.ProseMirror').click();
+  await page.keyboard.type('Shared');
+  await page.waitForResponse(put200, { timeout: 15000 });
+
+  const tabB = await context.newPage();
+  await tabB.goto(`/journal/${today}`);
+  await expect(tabB.locator('.ProseMirror')).toContainText('Shared');
+
+  // Tab A edits the shared paragraph AND adds a separate one, then syncs.
+  await page.locator('.ProseMirror').click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' [A]');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Extra from A');
+  await page.waitForResponse(put200, { timeout: 15000 });
+
+  // Tab B edits the SAME paragraph → conflict.
+  await tabB.locator('.ProseMirror').click();
+  await tabB.keyboard.press('End');
+  await tabB.keyboard.type(' [B]');
+  await expect(tabB.locator('.save-status')).toHaveText(CONFLICT, { timeout: 20000 });
+  return { tabB, today };
+}
+
+test('conflict → "Keep mine" wins on the clash but preserves the other side’s addition', async ({
+  context,
+  page,
+}) => {
+  const { tabB, today } = await intoConflict(context, page);
+
+  await tabB.getByRole('button', { name: 'Keep mine' }).click();
+  await tabB.waitForResponse(put200, { timeout: 20000 });
+  await expect(tabB.locator('.save-status')).toHaveText('Saved', { timeout: 15000 });
+
+  const texts = await serverTexts(page, today);
+  expect(texts).toContain('Shared [B]'); // my version won the clash
+  expect(texts).toContain('Extra from A'); // the other side's separate addition survived
+  expect(texts).not.toContain('Shared [A]'); // their clashing edit was overwritten (my choice)
+});
+
+test('conflict → "Load the latest" discards my unsaved changes and clears the conflict', async ({
+  context,
+  page,
+}) => {
+  const { tabB, today } = await intoConflict(context, page);
+
+  await tabB.getByRole('button', { name: 'Load the latest' }).click();
+  await expect(tabB.locator('.save-status')).toHaveText('Saved', { timeout: 15000 });
+
+  // Tab B now shows the server version; its unsaved "[B]" is gone, and the conflict is resolved.
+  await expect(tabB.locator('.ProseMirror')).toContainText('Shared [A]');
+  await expect(tabB.locator('.ProseMirror')).toContainText('Extra from A');
+  await expect(tabB.locator('.ProseMirror')).not.toContainText('[B]');
+  // The server is untouched by the discard.
+  expect(await serverTexts(page, today)).toContain('Shared [A]');
 });
 
 test('a deterministic 422 is latched — surfaced once, not re-sent every keystroke', async ({

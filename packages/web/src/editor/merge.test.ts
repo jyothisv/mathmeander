@@ -163,6 +163,60 @@ describe('planMerge — same-unit clashes are conflicts (never a silent overwrit
   });
 });
 
+describe('planMerge — force (keep-mine) resolves clashes my way, preserving the other side', () => {
+  it('both edited the same unit → mine wins, a foreign addition survives', () => {
+    const baseline = content([prose('p0', 0, 'P0')], 1);
+    const server = content([prose('p0', 0, 'P0-server'), prose('z', 1, 'Z')], 2);
+    const mine = delta([prose('p0', 0, 'P0-mine')]);
+    const r = planMerge({ baseline, server, mine, force: true });
+    expect(r.kind).toBe('merged');
+    if (r.kind !== 'merged') return;
+    expect(textOf(r.content.units.find((u) => u.id === 'p0')!)).toBe('P0-mine'); // mine wins
+    expect(ids(r.content)).toContain('z'); // foreign addition preserved
+  });
+
+  it('I deleted a unit the server edited → my delete wins, a foreign addition survives', () => {
+    const baseline = content([prose('p0', 0, 'P0'), prose('p1', 1, 'P1')], 1);
+    const server = content(
+      [prose('p0', 0, 'P0'), prose('p1', 1, 'P1-server'), prose('z', 2, 'Z')],
+      2,
+    );
+    const mine = delta([], ['p1']);
+    const r = planMerge({ baseline, server, mine, force: true });
+    expect(r.kind).toBe('merged');
+    if (r.kind !== 'merged') return;
+    expect(ids(r.content)).not.toContain('p1'); // my delete wins
+    expect(ids(r.content)).toContain('z'); // foreign addition preserved
+  });
+
+  it('I edited a unit the server deleted → my edit is resurrected, a foreign addition survives', () => {
+    const baseline = content([prose('p0', 0, 'P0'), prose('p1', 1, 'P1')], 1);
+    const server = content([prose('p0', 0, 'P0'), prose('z', 1, 'Z')], 2); // server deleted P1, added Z
+    const mine = delta([prose('p1', 1, 'P1-mine')]);
+    const r = planMerge({ baseline, server, mine, force: true });
+    expect(r.kind).toBe('merged');
+    if (r.kind !== 'merged') return;
+    expect(textOf(r.content.units.find((u) => u.id === 'p1')!)).toBe('P1-mine'); // resurrected
+    expect(ids(r.content)).toContain('z'); // foreign addition preserved
+  });
+});
+
+describe('planMerge — the new-id-collision guard (unreachable with UUIDv7; fails safe)', () => {
+  it('a "new" unit whose id already exists on the server → conflict, even under force', () => {
+    const baseline = content([prose('p0', 0, 'P0')], 1);
+    const server = content([prose('p0', 0, 'P0'), prose('x', 1, 'server-X')], 2);
+    const mine = delta([prose('x', 1, 'mine-X')]); // id 'x' not in baseline (so "new") but IS on server
+    expect(planMerge({ baseline, server, mine })).toEqual({
+      kind: 'conflict',
+      reason: 'new-id-collision',
+    });
+    expect(planMerge({ baseline, server, mine, force: true })).toEqual({
+      kind: 'conflict',
+      reason: 'new-id-collision',
+    });
+  });
+});
+
 describe('planMerge — invariants', () => {
   it('no-loss: every foreign + server-untouched unit survives a merge', () => {
     const baseline = content([prose('p0', 0, 'P0'), prose('p1', 1, 'P1')], 1);
