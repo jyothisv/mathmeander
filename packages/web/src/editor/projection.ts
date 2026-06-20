@@ -170,15 +170,18 @@ function stableStringify(v: unknown): string {
 }
 
 /** Canonical change-detection form: prose inline is sorted into canonical order, then key-order is
- *  normalized so wire-vs-local key ordering can't masquerade as a change. */
-function contentKey(c: Unit['content']): string {
+ *  normalized so wire-vs-local key ordering can't masquerade as a change. Exported so the merge
+ *  (merge.ts) detects "did the same unit change?" with the SAME comparison the flush uses. */
+export function contentKeyOf(c: Unit['content']): string {
   return stableStringify(
     c.kind === 'prose' ? { ...c, inline: canonicalInline((c as { inline: Inline[] }).inline) } : c,
   );
 }
 
 function proseUnchanged(next: Unit, prev: Unit): boolean {
-  return next.position === prev.position && contentKey(next.content) === contentKey(prev.content);
+  return (
+    next.position === prev.position && contentKeyOf(next.content) === contentKeyOf(prev.content)
+  );
 }
 
 /** Read the edited doc back into a DELTA against `prior`: the units that changed/were added

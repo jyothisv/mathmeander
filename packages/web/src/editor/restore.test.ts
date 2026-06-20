@@ -29,8 +29,12 @@ describe('decideRestore', () => {
     expect(decideRestore(draft(2), server(2), EQUAL)).toEqual({ action: 'discard' });
   });
 
-  it('discards when the server moved ahead (baseRevision < revision) — server wins', () => {
-    expect(decideRestore(draft(2), server(5), DIFFERS)).toEqual({ action: 'discard' });
+  it('CONFLICT when the server moved ahead AND the draft has unsynced edits (never discard it)', () => {
+    expect(decideRestore(draft(2), server(5), DIFFERS)).toEqual({ action: 'conflict' });
+  });
+
+  it('discards when the server moved ahead but the draft already equals the server', () => {
+    expect(decideRestore(draft(2), server(5), EQUAL)).toEqual({ action: 'discard' });
   });
 
   it('discards an impossible future draft (baseRevision > revision)', () => {

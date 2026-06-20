@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-router';
 import { logout } from './api/client';
 import { useAuth } from './auth/store';
+import { clearAllDrafts } from './editor/draftStore';
 import { DeskPage } from './pages/Desk';
 import { JournalPage } from './pages/Journal';
 import { JournalDayPage } from './pages/JournalDay';
@@ -37,10 +38,15 @@ function LogoutLink() {
   return (
     <a
       href="/login"
-      onClick={() => {
-        // Revoke server-side first (best effort), then clear local state.
-        void logout().catch(() => undefined);
-        signOut();
+      onClick={(e) => {
+        // Await the local-draft clear BEFORE navigating, or the full-page nav would cut off the async
+        // IndexedDB delete and leave unsynced drafts behind (shared-browser privacy).
+        e.preventDefault();
+        void (async () => {
+          signOut(); // clear the token FIRST → a racing unmount/exit writeDraft is suppressed (no session)
+          await Promise.allSettled([logout(), clearAllDrafts()]);
+          window.location.assign('/login');
+        })();
       }}
     >
       Sign out

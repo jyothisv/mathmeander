@@ -1,10 +1,10 @@
-// The journal-day editor (slice 2c) — local-first autosave. The IndexedDB DRAFT is the durability
-// guarantee: every edit is persisted locally (debounced ~200ms) before/independent of the network, so
-// it survives fast navigation, reload, and tab-close. The server flush is debounced (800ms) and SILENT
-// in the happy path; on success we seed the TanStack cache with the core's canonical echo so reopening
-// the day is always fresh (the old "missing on first reopen" bug was a stale cache). A 409 is rebased
-// and re-sent silently. A calm, persistent <SaveStatus> reflects state without the old per-cycle flash.
-// PM is a frontend adapter only (§6.0a); all canonical meaning lives in `saveContent`.
+// The journal-day editor (slice 2c) — local-first autosave with a SAFE ADDITIVE MERGE on conflict.
+// The IndexedDB DRAFT is the durability guarantee: every edit is persisted locally (~200ms) before the
+// network, so it survives navigation, reload, and tab-close. The flush is debounced (800ms), SILENT in
+// the happy path, and seeds the TanStack cache with the core's canonical echo so reopen is fresh.
+// On a 409 (another tab/device wrote) we fetch fresh content and try `planMerge`: disjoint changes keep
+// BOTH sides; a same-unit clash surfaces a CONFLICT (the user's work stays on screen + in the draft,
+// auto-save pauses). We NEVER silently lose or clobber content. PM is a frontend adapter only (§6.0a).
 import { useEffect, useRef, useState } from 'react';
 import { v7 as uuidv7 } from 'uuid';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,18 +15,21 @@ import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import type { MathContent } from '@mathmeander/schema';
-import {
-  ApiError,
-  getJournalDay,
-  saveContent,
-  saveContentBeacon,
-  type JournalDayEager,
-} from '../api/client';
+import { getJournalDay, saveContent, saveContentBeacon, type JournalDayEager } from '../api/client';
+import { currentToken } from '../auth/store';
 import { editorSchema } from './schema';
 import { flushToContent, projectToDoc } from './projection';
-import { clearDraft, getDraft, setDraft, type EditorDraft } from './draftStore';
+import {
+  clearDraft,
+  getDraft,
+  setDraft,
+  type EditorDraft,
+  CURRENT_DRAFT_VERSION,
+} from './draftStore';
 import { decideRestore } from './restore';
 import { seedDayContent } from './cacheSeed';
+import { planMerge } from './merge';
+import { classifyFlushError } from './errorClass';
 import { SaveStatusIndicator } from './SaveStatusIndicator';
 import type { SaveState } from './saveStatus';
 
@@ -46,7 +49,7 @@ const idStamper = new Plugin({
 
 const FLUSH_IDLE_MS = 800; // network sync debounce (the draft, not this, is durability)
 const DRAFT_IDLE_MS = 200; // IndexedDB draft debounce — a draft exists within 200ms of typing
-const MAX_CONFLICT_RETRIES = 3;
+const MAX_MERGE_RETRIES = 3;
 
 /** Does the restored draft still differ from the server content? (The one PM-touching restore bit.)
  *  An unparseable draft is treated as "equal" so decideRestore DISCARDS it rather than restoring junk. */
@@ -72,6 +75,7 @@ export function DayEditor({
   const mountRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const [status, setStatus] = useState<SaveState>(() => ({
+    conflict: false,
     error: false,
     offline: typeof navigator !== 'undefined' && navigator.onLine === false,
     saving: false,
@@ -87,15 +91,21 @@ export function DayEditor({
     let timer: number | null = null; // network-flush debounce
     let drafter: number | null = null; // IndexedDB-draft debounce
     let inFlight = false;
-    let conflictRetries = 0;
+    let conflict = false; // a 409 we couldn't merge — auto-save paused until reload
+    let semanticLatch: string | null = null; // doc signature of a deterministically-rejected (4xx) save
+    let mergeRetries = 0;
+    let dirtyMirror = false; // closure mirror of `dirty` (read synchronously in the online handler)
     const prior = { current: content }; // the flush baseline (mount-time content, advanced per save)
     const setIf = (next: (s: SaveState) => SaveState) => {
       if (!cancelled) setStatus(next);
     };
+    const docSig = (v: EditorView): string => JSON.stringify(v.state.doc.toJSON());
+    const isOnline = (): boolean => typeof navigator === 'undefined' || navigator.onLine;
 
     const writeDraft = (v: EditorView) => {
+      if (!currentToken()) return; // logged out — don't (re-)create a draft a sign-out just cleared
       void setDraft({
-        version: 1,
+        version: CURRENT_DRAFT_VERSION,
         objectId,
         doc: v.state.doc.toJSON(),
         baseRevision: prior.current.revision,
@@ -114,13 +124,44 @@ export function DayEditor({
         seedDayContent(prev, objectId, next),
       );
 
+    /** Replace the live doc with `c` WITHOUT going through dispatchTransaction (no spurious dirty/flush);
+     *  used after a merge to bring the merged content (incl. foreign units) on screen. Cursor resets. */
+    const reproject = (c: MathContent) => {
+      if (!view) return;
+      const tr = view.state.tr
+        .replaceWith(0, view.state.doc.content.size, projectToDoc(c).content)
+        .setMeta('addToHistory', false);
+      view.updateState(view.state.apply(tr));
+    };
+
+    const enterConflict = (v: EditorView) => {
+      conflict = true;
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      writeDraft(v); // keep the user's unsynced work
+      setIf((s) => ({ ...s, saving: false, conflict: true }));
+    };
+
+    const scheduleFlush = (v: EditorView) => {
+      if (timer != null) clearTimeout(timer);
+      timer = window.setTimeout(() => void flush(v), FLUSH_IDLE_MS);
+    };
+
     const flush = async (v: EditorView): Promise<void> => {
-      if (inFlight) return;
+      if (conflict || inFlight) return;
       const { upserts, deletes } = flushToContent(v.state.doc, prior.current);
       if (upserts.length === 0 && deletes.length === 0) {
+        semanticLatch = null; // doc returned to the server state
         void clearDraft(objectId);
-        setIf((s) => ({ ...s, dirty: false }));
+        dirtyMirror = false;
+        setIf((s) => ({ ...s, dirty: false, error: false }));
         return;
+      }
+      if (semanticLatch !== null) {
+        if (docSig(v) === semanticLatch) return; // known-bad delta, unchanged → don't re-send (no loop)
+        semanticLatch = null; // doc changed → worth another try
       }
       inFlight = true;
       setIf((s) => ({ ...s, saving: true }));
@@ -131,61 +172,118 @@ export function DayEditor({
           deletes,
         });
         prior.current = outcome.content; // ids are client-minted, so the doc stays anchored
-        seedCache(outcome.content); // cache coherence → reopen is fresh, no refetch needed
-        conflictRetries = 0;
+        seedCache(outcome.content);
         // Did the user type more while the PUT was in flight? Keep the draft if so, else drop it.
         const after = flushToContent(v.state.doc, prior.current);
         const stillDirty = after.upserts.length > 0 || after.deletes.length > 0;
         if (stillDirty) writeDraft(v);
         else void clearDraft(objectId);
+        dirtyMirror = stillDirty;
         setIf((s) => ({ ...s, saving: false, dirty: stillDirty, error: false }));
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'REVISION_CONFLICT') {
-          inFlight = false; // allow the rebased re-flush
-          await resolveConflict(v);
+        inFlight = false;
+        const cls = classifyFlushError(err);
+        if (cls === 'transient') {
+          // network/5xx: while OFFLINE keep the calm "Offline" status (auto-flushes on reconnect); a
+          // genuine online failure surfaces an error. Retries on next edit/online.
+          writeDraft(v);
+          setIf((s) => ({ ...s, saving: false, error: isOnline() }));
           return;
         }
-        // 422 core-reject / network error: keep the draft, surface for review, do NOT loop.
-        writeDraft(v);
-        setIf((s) => ({ ...s, saving: false, error: true }));
+        // conflict (409) OR semantic (4xx): the server may have advanced under us — a STALE delta can be
+        // rejected as 422 (it collides with newer content) BEFORE the 409 revision gate even fires. So
+        // both go through runMerge, which fetches fresh and decides: advanced → merge; not advanced → a
+        // genuine reject → latch.
+        await runMerge(v);
       } finally {
         inFlight = false;
       }
     };
 
-    // Silent 409 resolution (single-user last-write-wins): pull fresh server content, rebase the
-    // baseline, re-flush the delta against it. Capped + backoff so it can't hot-loop.
-    const resolveConflict = async (v: EditorView): Promise<void> => {
-      if (conflictRetries >= MAX_CONFLICT_RETRIES) {
+    /** A 409 → safe additive merge. We REPROJECT the merged content (incl. foreign units) into the doc
+     *  while it's stable, then persist the rebased delta; the normal flush handling then covers any
+     *  typed-during-PUT edits (the foreign units are already in the doc, so they won't be deleted). */
+    const runMerge = async (v: EditorView): Promise<void> => {
+      if (mergeRetries >= MAX_MERGE_RETRIES) return enterConflict(v);
+      mergeRetries += 1;
+      const baseline = prior.current;
+      const docAtStart = docSig(v);
+      const mineAtStart = flushToContent(v.state.doc, baseline);
+
+      let fresh: MathContent;
+      try {
+        const day = await getJournalDay(date);
+        if (cancelled) return;
+        const found = day.graph.content.find((c) => c.object_id === objectId);
+        if (!found) return enterConflict(v);
+        fresh = found;
+      } catch {
+        writeDraft(v); // transient (GET failed) — retry on next edit/online
+        setIf((s) => ({ ...s, saving: false, error: isOnline() }));
+        return;
+      }
+      if (cancelled) return;
+      if (docSig(v) !== docAtStart) return void runMerge(v); // typed during the GET → recompute
+
+      if (fresh.revision <= baseline.revision) {
+        // The server did NOT advance → the save was a GENUINE reject (not a stale-write race). Latch the
+        // offending doc so we don't re-send it every keystroke; surface for review.
+        mergeRetries = 0;
         writeDraft(v);
+        semanticLatch = docSig(v);
         setIf((s) => ({ ...s, saving: false, error: true }));
         return;
       }
-      conflictRetries += 1;
+
+      const plan = planMerge({ baseline, server: fresh, mine: mineAtStart });
+      if (plan.kind === 'conflict') return enterConflict(v);
+
+      // Doc is stable → bring the merged content on screen and rebase the baseline to the fresh server.
+      prior.current = fresh;
+      seedCache(fresh);
+      reproject(plan.content);
+
+      if (plan.rebasedDelta.upserts.length === 0 && plan.rebasedDelta.deletes.length === 0) {
+        // nothing of mine to persist (e.g. my only change was a dropped reorder) — already in sync.
+        seedCache(plan.content);
+        prior.current = plan.content;
+        mergeRetries = 0;
+        void clearDraft(objectId);
+        dirtyMirror = false;
+        setIf((s) => ({ ...s, saving: false, dirty: false, error: false, conflict: false }));
+        return;
+      }
+
+      inFlight = true;
+      setIf((s) => ({ ...s, saving: true, conflict: false }));
       try {
-        const fresh = await getJournalDay(date);
+        const outcome = await saveContent(objectId, {
+          expected_revision: fresh.revision,
+          upserts: plan.rebasedDelta.upserts,
+          deletes: plan.rebasedDelta.deletes,
+        });
         if (cancelled) return;
-        qc.setQueryData<JournalDayEager>(['journal', date], fresh);
-        const freshDay = fresh.graph.content.find((c) => c.object_id === objectId);
-        if (!freshDay) {
-          writeDraft(v);
-          setIf((s) => ({ ...s, saving: false, error: true }));
-          return;
-        }
-        prior.current = freshDay;
-        await new Promise((r) => setTimeout(r, 150 * conflictRetries));
-        if (cancelled) return;
-        await flush(v);
-      } catch {
+        prior.current = outcome.content;
+        seedCache(outcome.content);
+        mergeRetries = 0;
+        // The reprojected doc has the foreign units, so any typed-during-PUT edit is a normal delta.
+        const after = flushToContent(v.state.doc, prior.current);
+        const stillDirty = after.upserts.length > 0 || after.deletes.length > 0;
+        if (stillDirty) writeDraft(v);
+        else void clearDraft(objectId);
+        dirtyMirror = stillDirty;
+        setIf((s) => ({ ...s, saving: false, dirty: stillDirty, error: false, conflict: false }));
+      } catch (err) {
+        inFlight = false;
+        if (classifyFlushError(err) === 'conflict') return void runMerge(v); // another writer raced
         writeDraft(v);
-        setIf((s) => ({ ...s, saving: false, error: true }));
+        setIf((s) => ({ ...s, saving: false, error: isOnline() }));
+      } finally {
+        inFlight = false;
       }
     };
 
-    const scheduleFlush = (v: EditorView) => {
-      if (timer != null) clearTimeout(timer);
-      timer = window.setTimeout(() => void flush(v), FLUSH_IDLE_MS);
-    };
+    const stampNullIds = (v: EditorView) => v.dispatch(v.state.tr); // triggers idStamper.appendTransaction
 
     const buildView = (doc: Node, immediateSync: boolean) => {
       view = new EditorView(mount, {
@@ -204,10 +302,12 @@ export function DayEditor({
           view.updateState(view.state.apply(tr));
           if (tr.docChanged) {
             const v = view;
+            if (semanticLatch !== null) semanticLatch = null; // edited → the latched delta is stale
+            dirtyMirror = true;
             setIf((s) => (s.dirty ? s : { ...s, dirty: true }));
             if (drafter != null) clearTimeout(drafter);
             drafter = window.setTimeout(() => writeDraft(v), DRAFT_IDLE_MS);
-            scheduleFlush(v);
+            if (!conflict) scheduleFlush(v); // in conflict, keep drafting locally but pause network sync
           }
         },
         handleDOMEvents: {
@@ -223,24 +323,32 @@ export function DayEditor({
       if (immediateSync) scheduleFlush(view);
     };
 
-    // Restore-on-mount: prefer an unsynced local draft over the server projection, else project.
+    // Restore-on-mount: prefer an unsynced local draft over the server projection; never auto-delete a
+    // draft that still differs from the server (decideRestore: restore / conflict / discard).
     void (async () => {
       const draft = await getDraft(objectId);
       if (cancelled) return;
       const verdict = decideRestore(draft, content, draftEqualsServer);
-      if (verdict.action === 'restore' && draft) {
+      if ((verdict.action === 'restore' || verdict.action === 'conflict') && draft) {
         try {
           buildView(
             Node.fromJSON(editorSchema, draft.doc as Parameters<typeof Node.fromJSON>[1]),
-            true,
+            verdict.action === 'restore', // conflict: show the user's work but do NOT auto-sync
           );
-          setIf((s) => ({ ...s, dirty: true }));
+          if (view) stampNullIds(view); // a draft captured mid-stamp could carry a null id
+          dirtyMirror = true;
+          if (verdict.action === 'conflict') {
+            conflict = true;
+            setIf((s) => ({ ...s, conflict: true, dirty: true }));
+          } else {
+            setIf((s) => ({ ...s, dirty: true }));
+          }
           return;
         } catch {
           void clearDraft(objectId); // unparseable — fall back to the server projection
         }
       } else if (draft) {
-        void clearDraft(objectId); // stale/equal draft — drop it
+        void clearDraft(objectId); // discard (equal / impossible-future) — safe to clear
       }
       buildView(projectToDoc(content), false);
     })();
@@ -254,7 +362,10 @@ export function DayEditor({
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
     };
-    const onOnline = () => setIf((s) => ({ ...s, offline: false }));
+    const onOnline = () => {
+      setIf((s) => ({ ...s, offline: false }));
+      if (dirtyMirror && !conflict && view) scheduleFlush(view); // flush pending edits on reconnect
+    };
     const onOffline = () => setIf((s) => ({ ...s, offline: true }));
     window.addEventListener('pagehide', onHide);
     document.addEventListener('visibilitychange', onVisibility);
