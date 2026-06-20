@@ -28,7 +28,7 @@ test('journal editor: author prose, autosave, survive reload', async ({ page }) 
   await expect(page.getByRole('heading', { name: today })).toBeVisible();
 
   // Type two paragraphs into the (empty) ProseMirror editor, then wait for the debounced autosave's
-  // PUT to land (robust to the transient "Saving…" indicator — a missing save fails this loudly).
+  // PUT to land (the local-first draft + silent flush — a missing save fails this loudly).
   const editor = page.locator('.ProseMirror');
   await editor.click();
   await page.keyboard.type(p1);

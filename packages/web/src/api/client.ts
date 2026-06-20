@@ -158,3 +158,26 @@ export async function saveContent(
   return (await request('PUT', `/api/objects/${objectId}/content`, OpOutcomeEnvelope, body))
     .outcome;
 }
+
+/** Best-effort exit flush (slice 2c autosave): a fire-and-forget `keepalive` PUT used on
+ *  `visibilitychange→hidden` / `pagehide` so the last delta still reaches the server when the page is
+ *  going away. We use `fetch keepalive` (not `navigator.sendBeacon`, which is header-less) to carry the
+ *  bearer token. The keepalive body shares a ~64 KiB browser cap, so callers send only the pending
+ *  delta — and the IndexedDB draft, not this beacon, is the real durability guarantee. */
+export function saveContentBeacon(
+  objectId: string,
+  body: { expected_revision: number; upserts: Unit[]; deletes: string[] },
+): void {
+  const token = currentToken();
+  void fetch(`${API_ORIGIN}/api/objects/${objectId}/content`, {
+    method: 'PUT',
+    keepalive: true,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  }).catch(() => {
+    /* best-effort; the local draft covers durability */
+  });
+}
