@@ -1,6 +1,13 @@
 // draftStore behaviour against an injected async backend (no IndexedDB needed in node).
 import { describe, expect, it } from 'vitest';
-import { clearDraft, getDraft, setDraft, type DraftBackend, type EditorDraft } from './draftStore';
+import {
+  clearAllDrafts,
+  clearDraft,
+  getDraft,
+  setDraft,
+  type DraftBackend,
+  type EditorDraft,
+} from './draftStore';
 
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
 
@@ -22,6 +29,10 @@ function memBackend(opts: { failOn?: 'get' | 'set' | 'del' } = {}): DraftBackend
     del: async (k) => {
       guard('del');
       m.delete(k);
+    },
+    keys: async () => [...m.keys()],
+    delMany: async (ks) => {
+      for (const k of ks) m.delete(k);
     },
   };
 }
@@ -62,12 +73,18 @@ describe('draftStore', () => {
     expect(await getDraft(OBJ, memBackend())).toBeNull();
   });
 
-  it('returns null on a version mismatch (and clears the stale entry)', async () => {
+  it('an OLDER draft version is dropped (cleared) — stale schema', async () => {
     const backend = memBackend();
     await backend.set('mm:journal-draft:' + OBJ, { ...draft(), version: 0 });
     expect(await getDraft(OBJ, backend)).toBeNull();
-    // the corrupt entry was best-effort removed
-    expect(await backend.get('mm:journal-draft:' + OBJ)).toBeUndefined();
+    expect(await backend.get('mm:journal-draft:' + OBJ)).toBeUndefined(); // cleared
+  });
+
+  it('a NEWER draft version is ignored but NOT cleared (an old tab must not nuke a new deploy)', async () => {
+    const backend = memBackend();
+    await backend.set('mm:journal-draft:' + OBJ, { ...draft(), version: 999 });
+    expect(await getDraft(OBJ, backend)).toBeNull();
+    expect(await backend.get('mm:journal-draft:' + OBJ)).not.toBeUndefined(); // preserved
   });
 
   it('returns null when the stored objectId does not match the key', async () => {
@@ -86,5 +103,26 @@ describe('draftStore', () => {
     await expect(getDraft(OBJ, memBackend({ failOn: 'get' }))).resolves.toBeNull();
     await expect(setDraft(draft(), memBackend({ failOn: 'set' }))).resolves.toBeUndefined();
     await expect(clearDraft(OBJ, memBackend({ failOn: 'del' }))).resolves.toBeUndefined();
+  });
+
+  it('clearAllDrafts removes only the mm:journal-draft: namespace', async () => {
+    const backend = memBackend();
+    const other = '0197675f-71f4-7000-8000-000000000002';
+    await setDraft(draft(), backend);
+    await setDraft(draft({ objectId: other }), backend);
+    await backend.set('mathmeander.session.token', 'keep-me'); // unrelated key must survive
+    await clearAllDrafts(backend);
+    expect(await getDraft(OBJ, backend)).toBeNull();
+    expect(await getDraft(other, backend)).toBeNull();
+    expect(await backend.get('mathmeander.session.token')).toBe('keep-me');
+  });
+
+  it('clearAllDrafts never throws on a stub without keys/delMany', async () => {
+    const minimal: DraftBackend = {
+      get: async () => undefined,
+      set: async () => {},
+      del: async () => {},
+    };
+    await expect(clearAllDrafts(minimal)).resolves.toBeUndefined();
   });
 });

@@ -4,9 +4,12 @@
 // flickers per keystroke. We surface the risk states (offline / unsaved / couldn't-save) so a silent
 // failed save never loses content unnoticed. Rendering lives in the isolated <SaveStatus> component,
 // trivially swappable once the loop is trusted.
-export type SaveStatusKind = 'saved' | 'unsaved' | 'saving' | 'offline' | 'error';
+export type SaveStatusKind = 'saved' | 'unsaved' | 'saving' | 'offline' | 'error' | 'conflict';
 
 export interface SaveState {
+  /** The day changed elsewhere and couldn't be auto-merged; the user's edits are kept (doc + draft) and
+   *  auto-save is paused until reload. Highest severity — it needs the user to reconcile. */
+  conflict: boolean;
   /** A save failed/was rejected and is NOT auto-resolving — needs the user's attention. */
   error: boolean;
   /** The browser is offline; edits are held in the local draft. */
@@ -17,8 +20,9 @@ export interface SaveState {
   dirty: boolean;
 }
 
-/** Strict precedence: error > offline > saving > unsaved(dirty) > saved. */
+/** Strict precedence: conflict > error > offline > saving > unsaved(dirty) > saved. */
 export function describeSaveStatus(s: SaveState): { kind: SaveStatusKind; label: string } {
+  if (s.conflict) return { kind: 'conflict', label: 'Changed elsewhere — your edits are kept' };
   if (s.error) return { kind: 'error', label: 'Couldn’t save — review' };
   if (s.offline) return { kind: 'offline', label: 'Offline — saved locally' };
   if (s.saving) return { kind: 'saving', label: 'Saving…' };

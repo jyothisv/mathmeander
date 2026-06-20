@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { describeSaveStatus, type SaveState } from './saveStatus';
 
 const state = (over: Partial<SaveState> = {}): SaveState => ({
+  conflict: false,
   error: false,
   offline: false,
   saving: false,
@@ -29,9 +30,17 @@ describe('describeSaveStatus precedence', () => {
     );
   });
 
-  it('error outranks everything', () => {
+  it('error outranks offline/saving/dirty', () => {
     expect(
       describeSaveStatus(state({ error: true, offline: true, saving: true, dirty: true })).kind,
     ).toBe('error');
+  });
+
+  it('conflict outranks everything', () => {
+    expect(
+      describeSaveStatus(
+        state({ conflict: true, error: true, offline: true, saving: true, dirty: true }),
+      ),
+    ).toEqual({ kind: 'conflict', label: 'Changed elsewhere — your edits are kept' });
   });
 });
