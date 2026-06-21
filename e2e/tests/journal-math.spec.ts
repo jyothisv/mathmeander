@@ -83,6 +83,41 @@ test('double-click reveals the source; a single click does not', async ({ page }
   await expect(math.locator('.math-source')).toBeVisible();
 });
 
+test('clicking inside the revealed source keeps it open (caret placement, not collapse)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-clicksrc-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  const math = page.locator('.inline-math');
+  await editor.click();
+  await page.keyboard.type('$a + b + c');
+  await page.keyboard.type('$'); // close → rendered
+  await math.dblclick(); // open the source
+  await expect(math).toHaveClass(/math-open/);
+
+  // a single click INSIDE the source must place the caret there, NOT collapse back to rendered
+  await math.locator('.math-source').click();
+  await expect(math).toHaveClass(/math-open/);
+  await expect(math.locator('.math-source')).toBeVisible();
+});
+
+test('deleting all the source keeps an empty-open math (no stray char, no collapse)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-delempty-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  const math = page.locator('.inline-math');
+  await editor.click();
+  await page.keyboard.type('$ab'); // born-open, content "ab"
+  await expect(math).toHaveClass(/math-open/);
+  await page.keyboard.press('Backspace'); // → "a"
+  await page.keyboard.press('Backspace'); // → empty (the last-char delete is the buggy case)
+
+  await expect(math).toHaveClass(/math-open/); // still open with the caret inside (the born-open state)
+  await expect(math.locator('.math-source')).toHaveText(''); // empty — the deleted char does NOT reappear
+  await expect(math.locator('.katex')).toHaveCount(0); // did not collapse to the rendered view
+});
+
 test('Backspace just after a rendered equation opens its source (does not delete it)', async ({
   page,
 }) => {

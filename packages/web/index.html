@@ -136,19 +136,30 @@
            the caret inside it — without this an empty `$`-just-created node can't be typed into. */
         display: inline-block;
         min-width: 0.6ch;
+        vertical-align: baseline;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.9em;
         background: rgba(125, 125, 165, 0.1);
         border-radius: 3px;
-        padding: 0.05rem 0.15rem;
+        padding: 0 0.15rem; /* no vertical padding — keep the caret level with the `$` delimiters */
         white-space: pre;
       }
-      /* Show the `$…$` delimiters while editing the source, so it reads as math mode (the markers are an
-         affordance, not stored text). */
-      .day-editor .inline-math.math-open .math-source::before,
-      .day-editor .inline-math.math-open .math-source::after {
-        content: '$';
+      /* Give the (possibly EMPTY) inline-block a TEXT line, so it aligns by the text baseline rather than its
+         bottom edge — otherwise the caret in an empty source sits below the inline `$` spans. The ZWSP is
+         invisible, zero-width, and (being a pseudo-element) is not part of node.textContent. */
+      .day-editor .inline-math.math-open .math-source::before {
+        content: '\200B';
+      }
+      /* The `$…$` delimiters are sibling spans (the NodeView renders them), shown only while editing the
+         source so it reads as math mode — the caret sits in the source BETWEEN them. */
+      .day-editor .inline-math .math-delim {
+        display: none;
+      }
+      .day-editor .inline-math.math-open .math-delim {
+        display: inline;
         opacity: 0.5;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
       }
       .day-editor .inline-math.math-selected .math-render {
         outline: 1px solid rgba(125, 125, 165, 0.6);

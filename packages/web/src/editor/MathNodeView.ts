@@ -20,6 +20,15 @@ function isOpen(decorations: readonly Decoration[]): boolean {
   return decorations.some((d) => (d.spec as { mathOpen?: boolean } | undefined)?.mathOpen === true);
 }
 
+/** A non-editable `$` delimiter span (an affordance shown only when the source is open). */
+function delimiter(): HTMLElement {
+  const s = document.createElement('span');
+  s.className = 'math-delim';
+  s.contentEditable = 'false';
+  s.textContent = '$';
+  return s;
+}
+
 export class MathNodeView implements NodeView {
   dom: HTMLElement;
   contentDOM: HTMLElement; // PM renders the node's source TEXT here (the editing buffer)
@@ -48,7 +57,12 @@ export class MathNodeView implements NodeView {
     this.render.className = 'math-render';
     this.render.contentEditable = 'false';
 
+    // The `$…$` delimiters are real sibling spans (shown via CSS only when open), NOT pseudo-elements on the
+    // source: the caret lives in `contentDOM` BETWEEN them, so on an empty `$` it renders inside the pair
+    // (a `::before` would paint at the box edge → the caret appeared before the first `$`).
+    this.dom.appendChild(delimiter());
     this.dom.appendChild(this.contentDOM);
+    this.dom.appendChild(delimiter());
     this.dom.appendChild(this.render);
     // Double-click a RENDERED equation → reveal its source (a deliberate open; a single click does NOT).
     // A direct DOM listener is reliable here — PM's handleDoubleClickOn does not fire dependably on the
@@ -88,12 +102,23 @@ export class MathNodeView implements NodeView {
     return true;
   }
 
-  // PM must read the user's edits to the source (contentDOM) but IGNORE the KaTeX subtree we render and our
-  // own `math-open` class toggles (both would otherwise look like foreign DOM changes). Selection mutations
-  // pass through (PM tracks the caret crossing in/out of the source).
+  // While OPEN, let the DOM handle pointer events so a click lands the caret INSIDE the source. Because the
+  // node is `atom: true`, PM would otherwise turn a click into a NodeSelection — which mathOpen drops (it
+  // marks open only for a TextSelection inside the node), collapsing the source back to the rendered view.
+  // Keyboard/beforeinput are NOT stopped (PM must still apply typing); when closed this is inert, so a single
+  // click still NodeSelects and the dblclick listener still opens.
+  stopEvent(e: Event): boolean {
+    if (!this.open) return false;
+    const t = e.type;
+    return t.startsWith('mouse') || t.startsWith('pointer') || t === 'click' || t === 'dblclick';
+  }
+
+  // PM must read the user's edits to the source (contentDOM) but IGNORE everything we own — the KaTeX render,
+  // the static `$` delimiter spans, and our `math-open` class toggles. Selection mutations pass through (PM
+  // tracks the caret crossing in/out of the source).
   ignoreMutation(m: ViewMutationRecord): boolean {
     if (m.type === 'selection') return false;
-    return m.type === 'attributes' || this.render.contains(m.target);
+    return !this.contentDOM.contains(m.target);
   }
 
   selectNode(): void {

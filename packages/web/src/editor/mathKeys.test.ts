@@ -115,7 +115,17 @@ describe('exit gestures (caret inside math)', () => {
     expect(steppedOut!.selection.$from.parent.type.name).toBe('prose');
     expect(firstMath(steppedOut!.doc)).not.toBeNull(); // a single Backspace does NOT delete a non-empty eqn
 
-    expect(run(mathBackspace, stateAt([mathNode('x')], 3))).toBeNull(); // mid-source → char delete
+    // deleting the LAST char leaves an EMPTY, still-OPEN node with the caret inside (not a collapse)
+    const emptied = run(mathBackspace, stateAt([mathNode('x')], 3)); // off 1, size 1 → delete-to-empty
+    expect(emptied).not.toBeNull();
+    const m = firstMath(emptied!.doc);
+    expect(m).not.toBeNull();
+    expect(m!.content.size).toBe(0); // emptied, but the node is kept
+    expect(emptied!.selection.$from.parent.type.name).toBe('inlineMath'); // caret stays inside
+
+    // with MORE than one char, a mid-source Backspace falls through to the native char delete.
+    // mathNode('xy') = [1,5]; pos 3 = between x and y (off 1, size 2).
+    expect(run(mathBackspace, stateAt([mathNode('xy')], 3))).toBeNull();
   });
 });
 
