@@ -86,12 +86,107 @@ test('Backspace at a typed block start clears the type back to plain', async ({ 
     { timeout: 15000 },
   );
   await page.keyboard.press('Home');
+  await page.waitForTimeout(150); // let the caret land at offset 0 before Backspace (race under load)
   await page.keyboard.press('Backspace');
-  await clearType;
-
-  // Back to plain — no type label, text intact.
+  // The type clears in the doc immediately — assert that first so a caret-positioning race fails fast
+  // (a clear assertion) rather than as a 15s response timeout.
   await expect(page.locator('.ProseMirror p[data-unit-type]')).toHaveCount(0);
+  await clearType; // …and the background set_unit_type(null) persists it
+
+  // Survives a reload — text intact, type gone.
   await page.reload();
   await expect(page.locator('.ProseMirror p[data-unit-type]')).toHaveCount(0);
   await expect(page.locator('.ProseMirror')).toContainText('A group is a set with one operation.');
+});
+
+test('Enter inside a typed block adds a line — ONE multi-line unit, survives reload', async ({
+  page,
+}) => {
+  const today = await openToday(page, `journal-type-multiline-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Thm. Line one');
+  await page.waitForResponse((r) => r.url().includes('/ops/set-unit-type') && r.status() === 200, {
+    timeout: 15000,
+  });
+  await page.keyboard.press('Enter'); // stays in the block (a line break)
+  await page.keyboard.type('Line two');
+  await page.waitForResponse(
+    (r) => r.url().includes('/content') && r.request().method() === 'PUT' && r.status() === 200,
+    { timeout: 15000 },
+  );
+  // ONE theorem block, not two; both lines inside it.
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(1);
+  await expect(editor).toContainText('Line one');
+  await expect(editor).toContainText('Line two');
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: today })).toBeVisible();
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(1);
+});
+
+test('deleting a typed block clears-then-deletes (no stuck "Couldn’t save")', async ({ page }) => {
+  await openToday(page, `journal-type-delete-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Thm. To be deleted.');
+  await page.waitForResponse((r) => r.url().includes('/ops/set-unit-type') && r.status() === 200, {
+    timeout: 15000,
+  });
+  // Select all + delete the typed block.
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('Delete');
+  // The delete succeeds (type cleared first, then save_content delete) — a real PUT /content 200.
+  await page.waitForResponse(
+    (r) => r.url().includes('/content') && r.request().method() === 'PUT' && r.status() === 200,
+    { timeout: 15000 },
+  );
+  await page.waitForTimeout(800);
+  await expect(page.locator('.ProseMirror p[data-unit-type]')).toHaveCount(0); // gone
+  await expect(page.locator('.save-status')).not.toContainText('Couldn’t save');
+});
+
+test('a cued-but-empty block survives a reload (the draft is kept, not discarded)', async ({
+  page,
+}) => {
+  const today = await openToday(page, `journal-type-empty-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Thm. '); // cue only — an empty typed block (un-persistable)
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1);
+  await page.waitForTimeout(1000); // let the local draft settle
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: today })).toBeVisible();
+  // The cue is NOT lost: the draft is restored on reopen.
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1);
+});
+
+test('a cue typed BEFORE existing content keeps the first character (prepend)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-type-prepend-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('hello world');
+  await page.keyboard.press('Home'); // cursor to the very start of the line
+  await page.waitForTimeout(150); // let the caret land at offset 0 before the cue (race under load)
+  await page.keyboard.type('Thm. '); // cue prepended before the content
+  await page.waitForResponse((r) => r.url().includes('/ops/set-unit-type') && r.status() === 200, {
+    timeout: 15000,
+  });
+  // The first letter is NOT eaten.
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveText('hello world');
+
+  // Backspace at the start clears the type and keeps the content as plain prose (no "Thm." restored).
+  // (After the cue strips "Thm. ", the caret is already at offset 0.)
+  await page.keyboard.press('Backspace');
+  await expect(page.locator('.ProseMirror p[data-unit-type]')).toHaveCount(0);
+  await page.waitForResponse((r) => r.url().includes('/ops/set-unit-type') && r.status() === 200, {
+    timeout: 15000,
+  });
+  await expect(editor).toHaveText('hello world');
 });

@@ -8,14 +8,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { v7 as uuidv7 } from 'uuid';
 import { useQueryClient } from '@tanstack/react-query';
-import { EditorState, Plugin, TextSelection, type Command } from 'prosemirror-state';
+import { EditorState, Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { Node } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
-import { baseKeymap, chainCommands } from 'prosemirror-commands';
-import { inputRules, InputRule, undoInputRule } from 'prosemirror-inputrules';
+import { baseKeymap } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
-import type { MathContent, UnitType } from '@mathmeander/schema';
+import type { MathContent } from '@mathmeander/schema';
 import {
   getJournalDay,
   saveContent,
@@ -25,7 +24,8 @@ import {
 } from '../api/client';
 import { currentToken } from '../auth/store';
 import { editorSchema } from './schema';
-import { flushToContent, projectToDoc, typeNeeds, type TypeNeed } from './projection';
+import { flushToContent, projectToDoc, typeNeeds, typeIntents, type TypeNeed } from './projection';
+import { typeCueInputRules, clearTypeAtStart, enterInTypedBlock, insertHardBreak } from './cues';
 import {
   clearDraft,
   getDraft,
@@ -53,55 +53,6 @@ const idStamper = new Plugin({
   },
 });
 
-// ── Type cues (slice 2c-2, §9.x InputEnvironment seed) ──────────────────────────────────────────────
-// The first concrete InputEnvironment rule: a leading cue at block start (`Thm. ` / `Def: `) makes that
-// unit that type — "the way Markdown turns `#` into a heading" (§9.y). Recognition is a frontend adapter;
-// the type itself is applied by the canonical `set_unit_type` op (§6.0a) — the controller drains the
-// node's `unitType` attr after the prose flush. Types are drawn from the generated `UnitType` union
-// (never re-declared, §6.0a). Leading cue is the only gesture in 2c-2 (slash / select-then-mark later).
-const CUE_MAP: Record<string, UnitType> = {
-  Thm: 'theorem',
-  Lem: 'lemma',
-  Prop: 'proposition',
-  Cor: 'corollary',
-  Def: 'definition',
-  Conj: 'conjecture',
-  Claim: 'claim',
-  Q: 'question',
-  Pf: 'proof',
-  Ex: 'example',
-  Rmk: 'remark',
-  Idea: 'idea',
-  Note: 'note',
-};
-const CUE_RE = new RegExp(`^(${Object.keys(CUE_MAP).join('|')})[.:]\\s$`);
-
-/** Recognize a leading cue the user just typed (the trailing space triggers it): strip the cue text and
- *  set the block's `unitType` attr. inputRules fire on typing only (no re-derive on reproject/re-render),
- *  and integrate with `undoInputRule` so an immediate Backspace restores the literal `Thm. ` text. */
-const typeCueRule = new InputRule(CUE_RE, (state, match, start) => {
-  const word = match[1];
-  const type = word ? CUE_MAP[word] : undefined;
-  if (!type) return null;
-  const $start = state.doc.resolve(start);
-  if ($start.parent.type.name !== 'prose' || $start.parentOffset !== 0) return null; // block start only
-  const blockPos = $start.before();
-  return state.tr
-    .delete(start, start + match[0].length)
-    .setNodeAttribute(blockPos, 'unitType', type);
-});
-const typeCueInputRules = inputRules({ rules: [typeCueRule] });
-
-/** Backspace at the very start of a TYPED prose block clears its type back to plain (the owner's
- *  reversibility gesture). Returns false otherwise so the normal (undo-input-rule / merge) backspace runs. */
-const clearTypeAtStart: Command = (state, dispatch) => {
-  const { $cursor } = state.selection as TextSelection;
-  if (!$cursor || $cursor.parent.type.name !== 'prose') return false;
-  if ($cursor.parentOffset !== 0 || $cursor.parent.attrs.unitType == null) return false;
-  if (dispatch) dispatch(state.tr.setNodeAttribute($cursor.before(), 'unitType', null));
-  return true;
-};
-
 const FLUSH_IDLE_MS = 800; // network sync debounce (the draft, not this, is durability)
 const DRAFT_IDLE_MS = 200; // IndexedDB draft debounce — a draft exists within 200ms of typing
 
@@ -111,9 +62,10 @@ function draftEqualsServer(draft: EditorDraft, server: MathContent): boolean {
   try {
     const doc = Node.fromJSON(editorSchema, draft.doc as Parameters<typeof Node.fromJSON>[1]);
     const { upserts, deletes } = flushToContent(doc, server);
-    // A draft dirty ONLY by a pending type cue must NOT be judged equal (else it'd be discarded, losing
-    // the cue) — type lives on a separate axis from the prose delta (§2c-2).
-    return upserts.length === 0 && deletes.length === 0 && typeNeeds(doc, server).length === 0;
+    // A draft dirty ONLY by a pending type INTENT (incl. an unpersisted cued-but-empty block) must NOT be
+    // judged equal — else it'd be discarded on restore, losing the cue. `typeIntents` (vs the server),
+    // unlike `typeNeeds`, does not skip not-yet-persisted blocks. Type is a separate axis (§2c-2).
+    return upserts.length === 0 && deletes.length === 0 && typeIntents(doc, server).length === 0;
   } catch {
     return true;
   }
@@ -209,7 +161,11 @@ export function DayEditor({
       },
       delta: (baseline) =>
         view ? flushToContent(view.state.doc, baseline) : { upserts: [], deletes: [] },
-      signature: () => (view ? JSON.stringify(view.state.doc.toJSON()) : ''),
+      // PROSE-only signature: drop the `unitType` attr so a type-only edit can't lift a prose latch.
+      signature: () =>
+        view
+          ? JSON.stringify(view.state.doc.toJSON(), (k, v) => (k === 'unitType' ? undefined : v))
+          : '',
       reproject,
       persistDraft: () => {
         if (view) writeDraft(view);
@@ -223,6 +179,7 @@ export function DayEditor({
           unit_type: type,
         }).then((o) => o.content),
       docTypeNeeds: (server) => (view ? typeNeeds(view.state.doc, server) : []),
+      docTypeIntents: (baseline) => (view ? typeIntents(view.state.doc, baseline) : []),
       setStatus: setIf,
       cancelScheduledFlush: () => {
         if (timer != null) {
@@ -254,9 +211,12 @@ export function DayEditor({
           plugins: [
             history(),
             keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Shift-Mod-z': redo }),
-            // Backspace: first undo a just-applied cue (restore literal text), else clear a typed block's
-            // type at its start, else fall through to baseKeymap's normal backspace.
-            keymap({ Backspace: chainCommands(undoInputRule, clearTypeAtStart) }),
+            // Backspace at a typed block's start CLEARS its type (keeps the content as plain prose); else
+            // it falls through to baseKeymap's normal backspace. (The autoformat-undo is on Ctrl-Z.)
+            keymap({ Backspace: clearTypeAtStart }),
+            // Enter inside a TYPED block adds a line (one multi-line unit); a plain block falls through to
+            // baseKeymap (splits → new unit). Shift-Enter is a soft line break anywhere.
+            keymap({ Enter: enterInTypedBlock, 'Shift-Enter': insertHardBreak }),
             typeCueInputRules,
             keymap(baseKeymap),
             idStamper,

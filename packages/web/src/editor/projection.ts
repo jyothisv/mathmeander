@@ -71,7 +71,14 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
     const next = pts[i + 1];
     if (next != null && next > pos) {
       const slice = cpSlice(text, pos, next);
-      if (slice.length > 0) out.push(editorSchema.text(slice, marksAt(pos)));
+      const marks = marksAt(pos);
+      // A `\n` in prose text is a within-unit line break (2c-2 multi-line typed blocks) → a hard_break
+      // node, NOT a rendered character; split the slice around it (marks apply to each text segment).
+      const parts = slice.split('\n');
+      parts.forEach((part, j) => {
+        if (j > 0) out.push(editorSchema.nodes.hard_break.create());
+        if (part.length > 0) out.push(editorSchema.text(part, marks));
+      });
     }
   }
   return out;
@@ -124,6 +131,11 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
       const t = node.text ?? '';
       text += t;
       offset += cpLen(t);
+    } else if (node.type.name === 'hard_break') {
+      // a within-unit line break → one `\n` code point in the prose text; transparent to marks (like an
+      // atom), so a Mark region continues across it (offset advances by one).
+      text += '\n';
+      offset += 1;
     } else if (node.type.name === 'inlineMath') {
       // zero-width; transparent to marks (do not close/open) — offset unchanged
       inline.push({ kind: 'math', span: { start: offset, end: offset }, expr: node.attrs.expr });
@@ -227,11 +239,13 @@ export function flushToContent(
 /** A single pending type change (2c-2). `type: null` = clear to plain. */
 export type TypeNeed = { unitId: string; type: UnitType | null };
 
-/** The TYPE delta — the type-axis analog of `flushToContent`. For each prose block whose unit EXISTS on
- *  `server` and whose node `unitType` attr differs from the server unit's `type`, emit a `set_unit_type`
- *  need. Blocks NOT yet persisted (no id, or not on the server) are skipped — their type applies on a
- *  later drain, once the prose flush has created them. Type NEVER rides the prose `save_content` delta
- *  (§6.0a: the core freezes every semantic facet there); it flows only through `set_unit_type`. */
+/** The SENDABLE type delta — the type-axis analog of `flushToContent`. For each prose block whose unit
+ *  EXISTS on `server` and whose node `unitType` attr differs from the server unit's `type`, emit a
+ *  `set_unit_type` need. The operative skip is **server-absence**: a not-yet-persisted unit (no id, or
+ *  not on the server) is skipped because `set_unit_type` needs a persisted unit — its type applies on a
+ *  later drain once the prose flush has created it. (For "do I still have a pending type INTENT, incl.
+ *  unpersisted?", use `typeIntents` against the baseline.) Type NEVER rides the prose `save_content`
+ *  delta (§6.0a: the core freezes every semantic facet there); it flows only through `set_unit_type`. */
 export function typeNeeds(doc: Node, server: MathContent): TypeNeed[] {
   const serverById = new Map(server.units.map((u) => [u.id, u]));
   const needs: TypeNeed[] = [];
@@ -246,4 +260,26 @@ export function typeNeeds(doc: Node, server: MathContent): TypeNeed[] {
     if (want !== have) needs.push({ unitId, type: want });
   });
   return needs;
+}
+
+/** My pending type INTENTS vs `baseline` (what the server had when I last synced) — the type-axis analog
+ *  of `mine = flushToContent(doc, baseline)`. Unlike `typeNeeds` it does NOT skip not-in-baseline units:
+ *  a brand-new cued block (absent from baseline → `had=null`) IS a pending intent, so it is preserved
+ *  across a reproject (the §2c-2 keepTypes overlay) and re-applied after the prose flush creates it. An
+ *  untouched unit whose doc type equals baseline emits nothing — so a concurrent FOREIGN retype carried
+ *  in merged content is preserved, NOT clobbered. (This is why keepTypes is intents-vs-baseline, not a
+ *  snapshot-of-all-type-attrs.) `null` = a pending clear. */
+export function typeIntents(doc: Node, baseline: MathContent): TypeNeed[] {
+  const baseById = new Map(baseline.units.map((u) => [u.id, u]));
+  const out: TypeNeed[] = [];
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return; // unstamped placeholder — no identity yet
+    const want = (block.attrs.unitType as UnitType | null) ?? null;
+    const base = baseById.get(unitId);
+    const had = base ? (base.type ?? null) : null; // not in baseline → treat as null (a pending set)
+    if (want !== had) out.push({ unitId, type: want });
+  });
+  return out;
 }

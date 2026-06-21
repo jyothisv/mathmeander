@@ -68,20 +68,27 @@
         padding: 0 0.2rem;
         border-radius: 3px;
       }
-      /* Type cues (slice 2c-2): a typed prose block shows its §6.0 type as a small label, so a stripped
-         cue (`Thm.`) is visibly acknowledged. Full styling is the design pass; this is minimal feedback. */
+      /* Type cues (slice 2c-2): a typed prose block reads as a light, distinct callout — a subtle tint +
+         rounded corner + an uppercase type label — not a quote bar and not a heavy box (§9.y "light
+         affordances, not boxes"). The label is position:absolute (out of the text flow) so clicking the
+         text lands at offset 0 (the Backspace-clear gesture stays reliable). */
       .day-editor .ProseMirror p[data-unit-type] {
-        border-left: 2px solid rgba(127, 127, 127, 0.4);
-        padding-left: 0.6rem;
+        position: relative;
+        background: rgba(125, 125, 165, 0.08);
+        border-radius: 8px;
+        padding: 1.5rem 0.85rem 0.65rem;
+        margin: 0.7rem 0;
       }
       .day-editor .ProseMirror p[data-unit-type]::before {
         content: attr(data-unit-type);
-        display: block;
-        font-size: 0.7rem;
-        font-weight: 600;
-        text-transform: capitalize;
-        letter-spacing: 0.03em;
-        color: gray;
+        position: absolute;
+        top: 0.45rem;
+        left: 0.85rem;
+        font-size: 0.62rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: rgba(110, 110, 150, 0.95);
       }
     </style>
   </head>

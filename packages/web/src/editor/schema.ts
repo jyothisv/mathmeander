@@ -27,10 +27,30 @@ export const editorSchema = new Schema({
         },
         0,
       ],
-      parseDOM: [{ tag: 'p' }],
+      // Paste keeps a copied block's TYPE (`data-unit-type`) but NOT its id — a pasted block must get a
+      // fresh id (idStamper), never alias the source unit. unitId stays at its `null` default.
+      parseDOM: [
+        {
+          tag: 'p',
+          getAttrs: (dom) => ({
+            unitType: (dom as HTMLElement).getAttribute('data-unit-type') || null,
+          }),
+        },
+      ],
     },
 
     text: { group: 'inline' },
+
+    // A within-unit line break (2c-2): `Enter` inside a typed block, or `Shift-Enter` anywhere, inserts
+    // one of these; the projection maps it to/from a single `\n` in the unit's prose `text` (so a typed
+    // block is ONE multi-line unit, never split into two).
+    hard_break: {
+      group: 'inline',
+      inline: true,
+      selectable: false,
+      parseDOM: [{ tag: 'br' }],
+      toDOM: () => ['br'],
+    },
 
     // Inline math: a ZERO-WIDTH atom (§6.0). Its `expr` (the whole MathExpression) rides as an attr
     // so the round-trip is lossless; it contributes 0 chars to the prose text. Read-only in 2c-1
