@@ -1,0 +1,23 @@
+# mathmeander-surface-wasm — the ONLY crate that depends on wasm-bindgen (the browser seam,
+# mirroring core-node's napi seam, arch doc §5/§17). Zero logic: every #[wasm_bindgen] fn is a
+# thin delegation into mathmeander_surface, with strings (JSON for structured results) crossing
+# the boundary. Keeping wasm-bindgen out of mathmeander-surface is what keeps the surface crate
+# pure + WASM-clean (the cargo-tree purity guard audits `surface`, never this wrapper).
+[package]
+name = "mathmeander-surface-wasm"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mathmeander-surface = { path = "../surface" }
+wasm-bindgen = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

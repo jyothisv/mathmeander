@@ -12,6 +12,9 @@ crates/core-node/index.js
 crates/core-node/index.d.ts
 crates/core-node/browser.js
 
+# wasm build output (the client math runtime; built from source via `just build-math-wasm`)
+packages/web/src/wasm/
+
 # Environment & local secrets (.env.example is the committed contract)
 .env
 .dev/

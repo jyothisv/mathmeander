@@ -79,7 +79,10 @@ export function applyCue(
   return tr.setSelection(Selection.near($after, 1));
 }
 
-export const typeCueInputRules = inputRules({ rules: [new InputRule(CUE_RE, applyCue)] });
+/** The cue rule, exported so the editor can compose it with other input rules into ONE `inputRules`
+ *  plugin — ProseMirror invokes `handleTextInput` on only one inputRules plugin, so all rules must share. */
+export const cueRule = new InputRule(CUE_RE, applyCue);
+export const typeCueInputRules = inputRules({ rules: [cueRule] });
 
 // ── within-block line scan (lines = runs of inline content separated by hard_breaks) ──
 type LineScan = { curEmpty: boolean; prevEmpty: boolean };
@@ -177,8 +180,11 @@ export const exitTypedUnit: Command = (state, dispatch) => {
   return true;
 };
 
-/** Shift-Enter: ALWAYS a soft line break, never a split/exit (even on an empty line). */
+/** Shift-Enter: ALWAYS a soft line break, never a split/exit (even on an empty line). Inert inside a math
+ *  node — a `hard_break` is illegal in its `text*` content, and Shift-Enter there is a math-mode exit (the
+ *  math keymap, registered earlier, handles it). */
 export const insertHardBreak: Command = (state, dispatch) => {
+  if (state.selection.$from.parent.type.name === 'inlineMath') return false;
   if (dispatch) dispatch(state.tr.replaceSelectionWith(hardBreak()).scrollIntoView());
   return true;
 };

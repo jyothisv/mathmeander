@@ -59,6 +59,9 @@
         padding: 0.75rem;
         border: 1px solid rgba(127, 127, 127, 0.25);
         border-radius: 6px;
+        /* ProseMirror requires this — without it the browser collapses trailing spaces, which breaks
+           the text-input fast path (e.g. an input rule like `$`→math typed right after a space). */
+        white-space: pre-wrap;
       }
       .day-editor .ProseMirror p {
         margin: 0 0 0.6rem;
@@ -109,6 +112,53 @@
         font-size: 0.6rem;
         color: rgba(110, 110, 150, 0.7);
         pointer-events: none;
+      }
+      /* Math (slice 2d) — Obsidian-style live preview. RENDERED by default; the SOURCE is revealed inline,
+         in the prose flow, ONLY while the caret is inside (the `math-open` class, from the mathOpen
+         decoration). The switch is purely a CSS visibility flip, so source↔render is seamless. */
+      .day-editor .inline-math {
+        cursor: pointer;
+      }
+      .day-editor .inline-math .math-source {
+        display: none; /* hidden at rest — present so PM can manage the source text, revealed when open */
+      }
+      .day-editor .inline-math .math-render {
+        padding: 0 0.05rem;
+      }
+      .day-editor .inline-math.math-open {
+        cursor: text;
+      }
+      .day-editor .inline-math.math-open .math-render {
+        display: none;
+      }
+      .day-editor .inline-math.math-open .math-source {
+        /* inline-block + a min width gives the (possibly EMPTY) source span layout, so the browser can hold
+           the caret inside it — without this an empty `$`-just-created node can't be typed into. */
+        display: inline-block;
+        min-width: 0.6ch;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+        background: rgba(125, 125, 165, 0.1);
+        border-radius: 3px;
+        padding: 0.05rem 0.15rem;
+        white-space: pre;
+      }
+      /* Show the `$…$` delimiters while editing the source, so it reads as math mode (the markers are an
+         affordance, not stored text). */
+      .day-editor .inline-math.math-open .math-source::before,
+      .day-editor .inline-math.math-open .math-source::after {
+        content: '$';
+        opacity: 0.5;
+      }
+      .day-editor .inline-math.math-selected .math-render {
+        outline: 1px solid rgba(125, 125, 165, 0.6);
+        border-radius: 3px;
+      }
+      .day-editor .math-invalid {
+        color: #b00020;
+        border-bottom: 1px dotted #b00020;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
       }
     </style>
   </head>

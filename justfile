@@ -31,7 +31,7 @@ down:
     docker compose down
 
 # Dev servers (infra + addon first, explicitly — no implicit ordering surprises).
-dev: up build-addon
+dev: up build-addon build-math-wasm
     pnpm -r --parallel --stream dev
 
 # ── Build ────────────────────────────────────────────────────────────────────
@@ -42,6 +42,12 @@ build-core:
 # Debug build is the dev loop (FFI calls are non-hot-path; release rot is caught by CI on main).
 build-addon:
     pnpm --filter @mathmeander/core-node build
+
+# The client math runtime: compile the (WASM-clean) surface crate to WASM via wasm-bindgen, emitting
+# the ESM glue + .wasm into packages/web/src/wasm/ (gitignored), which the editor imports directly.
+# Mirrors build-addon (the napi seam) for the browser. Needs wasm-pack (cargo install wasm-pack).
+build-math-wasm:
+    wasm-pack build crates/surface-wasm --target web --out-dir ../../packages/web/src/wasm --no-pack
 
 build-addon-release:
     pnpm --filter @mathmeander/core-node build:release
@@ -89,7 +95,7 @@ test-node: build-addon
 test-integration: build-addon up
     pnpm --filter @mathmeander/server test:integration
 
-e2e: build-addon up
+e2e: build-addon build-math-wasm up
     pnpm --filter @mathmeander/e2e test
 
 # ── Lint ─────────────────────────────────────────────────────────────────────
