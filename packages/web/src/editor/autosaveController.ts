@@ -38,9 +38,12 @@ export interface AutosavePorts {
   /** Issue the §6.0a `set_unit_type` op (value=set, null=clear) at `expectedRevision`; resolves to the
    *  canonical echo; throws ApiError (409 stale revision / 422 the target unit was concurrently removed). */
   setType(unitId: string, type: UnitType | null, expectedRevision: number): Promise<MathContent>;
-  /** The pending TYPE delta vs `server` (= `typeNeeds` over the live doc): units whose node type attr
-   *  differs from the server's `type`. The type-axis analog of `delta`. */
+  /** The SENDABLE type delta vs `server` (= `typeNeeds` over the live doc): persisted units whose node
+   *  type attr differs from the server's `type`. What `drainTypes` can actually `set_unit_type` now. */
   docTypeNeeds(server: MathContent): TypeNeed[];
+  /** My pending type INTENTS vs `baseline` (= `typeIntents` over the live doc): includes brand-new cued
+   *  blocks not yet persisted. Used for the keepTypes reproject overlay and the dirty/draft decision. */
+  docTypeIntents(baseline: MathContent): TypeNeed[];
   /** Set the React save status; already cancellation-guarded by the caller (DayEditor's `setIf`). */
   setStatus(next: (s: SaveState) => SaveState): void;
   /** Clear the pending network-flush debounce timer (DayEditor owns the handle). */
@@ -97,12 +100,32 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   const settleAfterFlush = (error: boolean): void => {
     const d = ports.delta(prior.current);
     const proseLeft = d.upserts.length > 0 || d.deletes.length > 0;
-    const typesLeft = ports.docTypeNeeds(prior.current).length > 0;
+    // INTENTS, not just sendable needs: an empty cued block (un-persistable) stays dirty/drafted, not lost.
+    const typesLeft = ports.docTypeIntents(prior.current).length > 0;
     const stillDirty = proseLeft || typesLeft;
+    if (!proseLeft) semanticLatch = null; // prose is synced → any prose latch is now stale
     if (stillDirty) ports.persistDraft();
     else ports.clearDraft();
     dirtyMirror = stillDirty;
     setStatus((s) => ({ ...s, saving: false, dirty: stillDirty, error, conflict: false }));
+  };
+
+  /** A typed unit can't be deleted via `save_content` (§6.0a; reviewable dissolve is 2c-3). Before ANY
+   *  save_content that deletes units, clear the type of each to-be-deleted unit that's typed on the current
+   *  baseline (`set_unit_type` null), advancing the baseline — so the now-plain unit deletes cleanly. Used
+   *  by `flush` AND `runMerge` AND the `drainTypes` re-anchor, so a typed-delete NEVER 422s on any path
+   *  (incl. a delete that 409s into a merge — the source of an intermittent stuck "Couldn't save"). Caller
+   *  owns `busy`; a throw propagates to the caller's existing catch. */
+  const clearTypesForDeletes = async (deletes: string[]): Promise<void> => {
+    for (const id of deletes) {
+      const u = prior.current.units.find((x) => x.id === id);
+      if (u && (u.type ?? null) != null) {
+        const cleared = await ports.setType(id, null, prior.current.revision);
+        if (disposed) return;
+        prior.current = cleared;
+        ports.seedCache(cleared);
+      }
+    }
   };
 
   /** Apply pending TYPE changes (2c-2) via `set_unit_type`, AFTER the prose part of a sync. Stateless +
@@ -142,19 +165,26 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
         } catch {
           return 'deferred'; // GET failed (transient) — retry on the next flush
         }
+        if (fresh.revision <= baseline.revision) {
+          // The server did NOT advance → a deterministic set_unit_type reject, not a race. Surface (don't
+          // loop to the retry cap → conflict); retried on the next real edit. (Mirrors the prose latch.)
+          return 'deferred';
+        }
         const plan = planMerge({ baseline, server: fresh, mine: ports.delta(baseline) });
         if (plan.kind === 'conflict') {
           enterConflict();
           return 'conflict';
         }
-        const keep = ports.docTypeNeeds(fresh); // my pending cues, preserved across the reproject
+        const keep = ports.docTypeIntents(baseline); // my pending cues (incl. unpersisted), preserved
         prior.current = fresh;
         ports.seedCache(fresh);
         ports.reproject(plan.content, keep);
         if (plan.rebasedDelta.upserts.length > 0 || plan.rebasedDelta.deletes.length > 0) {
           try {
+            await clearTypesForDeletes(plan.rebasedDelta.deletes); // typed-delete → clear first
+            if (disposed) return 'done';
             const content = await ports.save({
-              expected_revision: fresh.revision,
+              expected_revision: prior.current.revision,
               upserts: plan.rebasedDelta.upserts,
               deletes: plan.rebasedDelta.deletes,
             });
@@ -173,11 +203,12 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   };
 
   /** Shared success tail of flush + runMerge: drain pending types, then settle the status (unless the
-   *  drain ended in a conflict, which already set the status). */
-  const finishWithTypes = async (): Promise<void> => {
+   *  drain ended in a conflict, which already set the status). `proseLatched` keeps `error:true` while a
+   *  known-bad prose delta is still pending (we drained types past it but the prose remains rejected). */
+  const finishWithTypes = async (proseLatched = false): Promise<void> => {
     const outcome = await drainTypes();
     if (outcome === 'conflict') return; // enterConflict already set the status
-    settleAfterFlush(outcome === 'deferred' ? ports.isOnline() : false);
+    settleAfterFlush(proseLatched ? true : outcome === 'deferred' ? ports.isOnline() : false);
   };
 
   /** A 409 (or a stale-write 422), and the "Keep mine" resolution (`force`) → safe additive merge. We
@@ -220,9 +251,11 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     if (plan.kind === 'conflict') return enterConflict();
 
     // Doc is stable → bring the merged content on screen and rebase the baseline to the fresh server.
-    // Capture my still-pending type cues BEFORE the reproject overwrites the doc's type attrs, and overlay
-    // them back, so a prose merge never silently drops a type the user just declared (§2c-2).
-    const keepTypes = ports.docTypeNeeds(fresh);
+    // Capture my still-pending type INTENTS vs the baseline (incl. a brand-new cued block not yet on the
+    // server) BEFORE the reproject overwrites the doc's type attrs, and overlay them back — so a prose
+    // merge never silently drops a type the user just declared (§2c-2 blocker), while a concurrent foreign
+    // retype on a unit I didn't touch is preserved (intents-vs-baseline, not snapshot-all).
+    const keepTypes = ports.docTypeIntents(baseline);
     prior.current = fresh;
     ports.seedCache(fresh);
     ports.reproject(plan.content, keepTypes);
@@ -238,8 +271,10 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
 
     setStatus((s) => ({ ...s, saving: true, conflict: false }));
     try {
+      await clearTypesForDeletes(plan.rebasedDelta.deletes); // typed-delete via the merge path → clear first
+      if (disposed) return;
       const content = await ports.save({
-        expected_revision: fresh.revision,
+        expected_revision: prior.current.revision,
         upserts: plan.rebasedDelta.upserts,
         deletes: plan.rebasedDelta.deletes,
       });
@@ -265,26 +300,44 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     if (conflict || busy) return;
     const { upserts, deletes } = ports.delta(prior.current);
     const hasProse = upserts.length > 0 || deletes.length > 0;
-    const hasTypes = ports.docTypeNeeds(prior.current).length > 0;
+    const hasTypeOps = ports.docTypeNeeds(prior.current).length > 0; // sendable set_unit_type now
 
-    if (!hasProse && !hasTypes) {
-      // Fully clean (no prose delta, no pending type) — settle and stop. A clean doc never flips `saving`.
+    if (!hasProse && !hasTypeOps) {
+      // No NETWORK work this cycle. But a pending unpersisted type INTENT (a cued-but-empty block — the
+      // model can't persist it until it has content) must keep its draft so the cue survives a reload;
+      // else fully clean → clear. A clean doc never flips `saving` either way.
       semanticLatch = null; // doc returned to the server state
-      ports.clearDraft();
-      dirtyMirror = false;
-      setStatus((s) => ({ ...s, dirty: false, error: false }));
+      if (ports.docTypeIntents(prior.current).length > 0) {
+        ports.persistDraft();
+        dirtyMirror = true;
+        setStatus((s) => ({ ...s, dirty: true, error: false }));
+      } else {
+        ports.clearDraft();
+        dirtyMirror = false;
+        setStatus((s) => ({ ...s, dirty: false, error: false }));
+      }
       return;
     }
-    // The latch is a PROSE concept — only gate (and lift) it when there's a prose delta, so a type-only
-    // flush never lifts a latch protecting a genuinely-rejected prose delta.
+    // The latch is a PROSE concept and gates only the prose SAVE: a type-only edit never lifts it, and a
+    // latch hit still drains pending types (they're an independent axis).
+    let proseLatched = false;
     if (hasProse && semanticLatch !== null) {
-      if (ports.signature() === semanticLatch) return; // known-bad prose, unchanged → don't re-send
-      semanticLatch = null; // doc changed → worth another try
+      if (ports.signature() === semanticLatch) {
+        if (!hasTypeOps) return; // known-bad prose, unchanged, nothing else to do → don't re-send
+        proseLatched = true; // skip the prose save, but still drain pending types
+      } else {
+        semanticLatch = null; // prose changed → worth another try
+      }
     }
     busy = true;
     setStatus((s) => ({ ...s, saving: true }));
     try {
-      if (hasProse) {
+      if (hasProse && !proseLatched) {
+        // A typed unit can't be deleted via save_content (§6.0a). Clear the type of any to-be-deleted typed
+        // unit first → save_content then deletes the now-plain unit. (Shared with runMerge/drainTypes so a
+        // typed-delete never 422s on any path.)
+        await clearTypesForDeletes(deletes);
+        if (disposed) return;
         const content = await ports.save({
           expected_revision: prior.current.revision,
           upserts,
@@ -293,12 +346,11 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
         prior.current = content; // ids are client-minted, so the doc stays anchored
         ports.seedCache(content);
       }
-      // Reached by BOTH the saved-prose and the type-only branches (a pure type change has no prose delta
-      // and must NOT early-return before the drain). Drains pending types, then settles (recomputing dirty
-      // from both axes — so a "typed more during the PUT" edit is caught here too).
-      await finishWithTypes();
+      // Reached by the saved-prose, the latched-prose, AND the type-only branches (a pure type change has
+      // no prose delta and must NOT early-return before the drain). Drains pending types, then settles.
+      await finishWithTypes(proseLatched);
     } catch (err) {
-      // Only the prose `save` can throw here (drainTypes/runMerge handle their own errors).
+      // The prose `save` (or a clear-then-delete `setType`) can throw here; drainTypes/runMerge own theirs.
       if (classifyFlushError(err) === 'transient') {
         // network/5xx: while OFFLINE keep the calm "Offline" status (auto-flushes on reconnect); a
         // genuine online failure surfaces an error. Retries on next edit/online.

@@ -2,7 +2,7 @@
 // inline-atom contract (§6.0) and Mark regions. Pure (prosemirror-model runs in node, no DOM).
 import { describe, expect, it } from 'vitest';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
-import { flushToContent, isFlatProse, projectToDoc, typeNeeds } from './projection';
+import { flushToContent, isFlatProse, projectToDoc, typeNeeds, typeIntents } from './projection';
 
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
 
@@ -241,5 +241,47 @@ describe('type round-trip + typeNeeds (2c-2)', () => {
       content([prose('u1', 0, 'A', [], 'lemma'), prose('u2', 1, 'B', [], 'theorem')]),
     );
     expect(typeNeeds(withNew, server)).toEqual([]); // u2 not persisted yet → skipped
+  });
+});
+
+describe('multi-line prose (2c-2 hard_break ↔ \\n)', () => {
+  it('a prose unit with line breaks round-trips', () => {
+    expect(roundTripIsClean(content([prose('u1', 0, 'line one\nline two\nthree')]))).toBe(true);
+  });
+
+  it('an inline atom after a line break keeps its code-point offset', () => {
+    const expr: MathExpression = {
+      id: '0197675f-71f4-7000-8000-0000000000e9',
+      surface_text: 'x',
+      surface_format: 'mathmeander',
+      original_input: 'x',
+      parse_status: 'renderable',
+      occurrences: [],
+    };
+    const c = content([
+      prose('u1', 0, 'a\nb', [{ kind: 'math', span: { start: 2, end: 2 }, expr }]),
+    ]);
+    expect(roundTripIsClean(c)).toBe(true);
+  });
+});
+
+describe('typeIntents vs typeNeeds (2c-2)', () => {
+  it('typeIntents INCLUDES a brand-new cued unit not in baseline; typeNeeds SKIPS it', () => {
+    const baseline = content([prose('u1', 0, 'A')]); // u2 not yet persisted
+    const doc = projectToDoc(content([prose('u1', 0, 'A'), prose('u2', 1, 'B', [], 'theorem')]));
+    expect(typeIntents(doc, baseline)).toEqual([{ unitId: 'u2', type: 'theorem' }]);
+    expect(typeNeeds(doc, baseline)).toEqual([]); // server-absent → skipped (can't set_unit_type yet)
+  });
+
+  it('typeIntents EXCLUDES an untouched unit (doc == baseline) so a foreign retype is preserved', () => {
+    const baseline = content([prose('u1', 0, 'A', [], 'theorem')]);
+    const doc = projectToDoc(content([prose('u1', 0, 'A', [], 'theorem')])); // I did not touch u1
+    expect(typeIntents(doc, baseline)).toEqual([]); // no pending intent → keepTypes won't clobber theirs
+  });
+
+  it('typeIntents reports a pending clear (null) on a unit I de-typed', () => {
+    const baseline = content([prose('u1', 0, 'A', [], 'theorem')]);
+    const doc = projectToDoc(content([prose('u1', 0, 'A')])); // type cleared in the doc
+    expect(typeIntents(doc, baseline)).toEqual([{ unitId: 'u1', type: null }]);
   });
 });

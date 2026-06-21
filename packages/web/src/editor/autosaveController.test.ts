@@ -38,8 +38,10 @@ const content = (units: Unit[], revision: number): MathContent => ({
   units,
 });
 
-/** The units-array analog of flushToContent — compares by id + position + canonical content, matching the
- *  real delta the editor produces (so harness assertions mean what the controller would see). */
+/** The units-array analog of flushToContent — compares by id + position + canonical content, AND freezes
+ *  the type axis exactly as the real flush does: an existing unit's upsert keeps prev's fields (type
+ *  frozen), a brand-new unit carries NO type. So `mine` in a merge never smuggles a cue's type through the
+ *  prose delta — the keepTypes overlay is the only thing that preserves it (which is what we test). */
 function diffContent(current: MathContent, baseline: MathContent): Delta {
   const baseById = new Map(baseline.units.map((u) => [u.id, u]));
   const seen = new Set<string>();
@@ -47,12 +49,25 @@ function diffContent(current: MathContent, baseline: MathContent): Delta {
   for (const u of current.units) {
     seen.add(u.id);
     const prev = baseById.get(u.id);
-    if (
-      !prev ||
+    if (!prev) {
+      const c = u.content;
+      if (c.kind === 'prose' && c.text === '' && c.inline.length === 0) continue; // empty new → dropped
+      // new unit carries NO type (mirrors newProseUnit) — only the plain-prose fields
+      upserts.push({
+        id: u.id,
+        object_id: u.object_id,
+        position: u.position,
+        status: u.status,
+        declared_by: u.declared_by,
+        content: u.content,
+        provenance_id: u.provenance_id,
+      });
+    } else if (
       u.position !== prev.position ||
       contentKeyOf(u.content) !== contentKeyOf(prev.content)
-    )
-      upserts.push(u);
+    ) {
+      upserts.push({ ...prev, position: u.position, content: u.content }); // freeze all but pos+content
+    }
   }
   const deletes = baseline.units.filter((u) => !seen.has(u.id)).map((u) => u.id);
   return { upserts, deletes };
@@ -84,6 +99,18 @@ class FakeDoc {
         needs.push({ unitId: u.id, type: u.type ?? null });
     }
     return needs;
+  }
+  /** Pending type INTENTS vs `baseline` — like docTypeNeeds but INCLUDES not-in-baseline units (a
+   *  brand-new cued block is a pending intent). The keepTypes / dirty-decision source. */
+  docTypeIntents(baseline: MathContent): TypeNeed[] {
+    const byId = new Map(baseline.units.map((u) => [u.id, u]));
+    const out: TypeNeed[] = [];
+    for (const u of this.current.units) {
+      const base = byId.get(u.id);
+      const had = base ? (base.type ?? null) : null;
+      if ((u.type ?? null) !== had) out.push({ unitId: u.id, type: u.type ?? null });
+    }
+    return out;
   }
   reproject(c: MathContent, keepTypes: TypeNeed[]): void {
     const want = new Map(keepTypes.map((t) => [t.unitId, t.type]));
@@ -198,6 +225,7 @@ function makeHarness(opts: {
       return Promise.resolve({ ...prior.current, revision: prior.current.revision + 1, units });
     },
     docTypeNeeds: (server) => doc.docTypeNeeds(server),
+    docTypeIntents: (baseline) => doc.docTypeIntents(baseline),
     setStatus: (fn) => {
       state = fn(state);
     },
@@ -827,5 +855,93 @@ describe('type cues (2c-2) — drainTypes after the prose part', () => {
     await p;
     expect(h.calls.setTypes).toHaveLength(1);
     expect(h.prior.current.revision).toBe(1); // disposed continuation never advanced the baseline
+  });
+});
+
+describe('type cues (2c-2) — review fixes', () => {
+  it('B1 blocker: a brand-new cue survives a prose-409 merge (keepTypes overlay)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      doc: content([prose('p0', 0, 'P0'), prose('pa', 1, 'Pa', [], 'theorem')], 1), // new cued block
+    });
+    h.setFetch(async () => content([prose('p0', 0, 'P0'), prose('z', 1, 'Z')], 2)); // server advanced
+    h.queueSave(() => Promise.reject(apiErr(409))); // prose PUT races
+    h.queueSave(ok(content([prose('p0', 0, 'P0'), prose('z', 1, 'Z'), prose('pa', 2, 'Pa')], 3))); // merge (pa type=null)
+    await h.ctl.flush();
+    // pa's cue is NOT lost: drained via set_unit_type after the merge re-created it.
+    expect(h.calls.setTypes.map((s) => s.unitId)).toContain('pa');
+    expect(h.prior.current.units.find((u) => u.id === 'pa')!.type).toBe('theorem');
+    expect(h.getState()).toMatchObject({ conflict: false, error: false, dirty: false });
+  });
+
+  it('B2 empty cued block: no save/setType, but the draft is KEPT (not discarded)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 1),
+      // a cued-but-empty new block (Thm. then pause) — unpersistable, lives only as intent
+      doc: content([prose('p0', 0, 'P0'), prose('pa', 1, '', [], 'theorem')], 1),
+    });
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0); // empty block isn't persisted
+    expect(h.calls.setTypes).toHaveLength(0); // can't set type on an unpersisted unit
+    expect(h.calls.persistDraft).toBeGreaterThanOrEqual(1); // draft KEPT (the cue survives reload)
+    expect(h.calls.clearDraft).toBe(0);
+    expect(h.getState().dirty).toBe(true);
+  });
+
+  it('B3 genuine reject: a non-advancing set_unit_type 409 defers (no loop → no conflict)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0')], 2),
+      doc: content([prose('p0', 0, 'P0', [], 'theorem')], 2), // pure type change
+    });
+    h.setFetch(async () => content([prose('p0', 0, 'P0')], 2)); // NOT advanced (rev unchanged)
+    h.queueSetType(() => Promise.reject(apiErr(409)));
+    await h.ctl.flush();
+    expect(h.calls.setTypes).toHaveLength(1); // one attempt, no retry storm
+    expect(h.getState()).toMatchObject({ error: true, conflict: false });
+  });
+
+  it('B0 clear-then-delete: deleting a typed block clears its type then deletes (no 422 stuck error)', async () => {
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0', [], 'theorem'), prose('p1', 1, 'P1')], 2),
+      doc: content([prose('p1', 0, 'P1')], 2), // the user removed the theorem block p0
+    });
+    h.queueSave(ok(content([prose('p1', 0, 'P1')], 4))); // delete succeeds once p0 is untyped
+    await h.ctl.flush();
+    expect(h.calls.setTypes).toEqual([{ unitId: 'p0', type: null, expectedRevision: 2 }]); // type cleared first
+    expect(h.calls.saves.at(-1)!.deletes).toEqual(['p0']); // then deleted via save_content
+    expect(h.prior.current.units.map((u) => u.id)).toEqual(['p1']);
+    expect(h.getState()).toMatchObject({ error: false, conflict: false });
+  });
+});
+
+describe('type cues (2c-2) — typed-delete via the merge path (the intermittent "Couldn’t save")', () => {
+  it('a disjoint typed-delete that 409s into runMerge clears-then-deletes (no 422, no stuck error)', async () => {
+    // baseline: a plain p0 @0 and a TYPED t1 @1 (last). The user deletes t1 (only); p0 stays put.
+    const h = makeHarness({
+      baseline: content([prose('p0', 0, 'P0'), prose('t1', 1, 'T1', [], 'theorem')], 1),
+      doc: content([prose('p0', 0, 'P0')], 1), // t1 removed
+    });
+    // The flush's clear-then-delete setType races (another tab advanced) → 409 → routes to runMerge.
+    h.queueSetType(() => Promise.reject(apiErr(409)));
+    // Fresh server: another tab edited p0 (disjoint from t1); t1 is STILL typed.
+    h.setFetch(async () =>
+      content([prose('p0', 0, 'P0x'), prose('t1', 1, 'T1', [], 'theorem')], 2),
+    );
+    // The merge's save behaves like the real save_content: deleting a STILL-typed t1 → 422. So this passes
+    // ONLY if runMerge cleared t1's type first (the fix); pre-fix t1 stays typed → 422 → stuck error.
+    h.queueSave(() => {
+      const t1StillTyped = h.prior.current.units.some(
+        (u) => u.id === 't1' && (u.type ?? null) != null,
+      );
+      return t1StillTyped
+        ? Promise.reject(apiErr(422))
+        : Promise.resolve(content([prose('p0', 0, 'P0x')], 4));
+    });
+    await h.ctl.flush();
+    // No stuck "Couldn’t save": t1 is gone, the merge applied, no error/conflict.
+    expect(h.prior.current.units.map((u) => u.id)).toEqual(['p0']);
+    expect(h.getState()).toMatchObject({ error: false, conflict: false });
+    // t1's type was cleared (once in the flush attempt, once in the merge) before any delete.
+    expect(h.calls.setTypes.every((s) => s.unitId === 't1' && s.type === null)).toBe(true);
   });
 });
