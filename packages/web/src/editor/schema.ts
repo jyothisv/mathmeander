@@ -52,20 +52,21 @@ export const editorSchema = new Schema({
       toDOM: () => ['br'],
     },
 
-    // Inline math: a ZERO-WIDTH atom (§6.0). Its `expr` (the whole MathExpression) rides as an attr
-    // so the round-trip is lossless; it contributes 0 chars to the prose text. Read-only in 2c-1
-    // (math INPUT is 2d) — rendered as a code chip.
+    // Inline math (slice 2d): a ZERO-WIDTH atom in the PROSE-text offset space (§6.0) — it contributes 0
+    // chars to the unit's prose `text`, so its `Inline::Math` span stays `[p, p]`. But it carries its
+    // surface SOURCE as real editable TEXT CONTENT (`content: "text*"`, the proven prosemirror-math shape):
+    // `atom: true` keeps the caret SKIPPING OVER rendered math (it enters the source only on a deliberate
+    // open), while the inner text is the live editing buffer that `mathSync` mirrors into `attrs.expr`. The
+    // whole MathExpression rides in `attrs.expr` (lossless round-trip; `exprStamper`/projection read it).
+    // The NodeView (MathNodeView) renders KaTeX by default and reveals the source text when the caret is in.
     inlineMath: {
       group: 'inline',
       inline: true,
       atom: true,
       selectable: true,
+      content: 'text*',
       attrs: { expr: {} },
-      toDOM: (node) => [
-        'code',
-        { class: 'math', 'data-inline-math': '' },
-        (node.attrs.expr as { surface_text?: string }).surface_text ?? '',
-      ],
+      toDOM: () => ['span', { class: 'inline-math' }, 0],
     },
 
     // Inline reference: a ZERO-WIDTH atom; its display `text` + optional `target` ride as attrs.

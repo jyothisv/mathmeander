@@ -6,7 +6,7 @@
 // units), so non-BMP glyphs anchor correctly. 2c-1 is FLAT PROSE only; see `isFlatProse`.
 import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
-import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
+import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
@@ -27,6 +27,18 @@ export function isFlatProse(content: MathContent): boolean {
       (i) => i.kind === 'mark' || i.kind === 'math' || i.kind === 'reference',
     );
   });
+}
+
+/** Build an inline-math node carrying its surface SOURCE as editable text content (slice 2d). The text is
+ *  the `surface_text` (what `mathSync` keeps as the editing buffer + sentinel), so a freshly-projected node
+ *  is already "in sync" and never triggers a spurious re-save. Empty `surface_text` → an empty node (the
+ *  `$`-just-created state). The whole expression still rides in `attrs.expr` for the lossless round-trip. */
+function mathNode(expr: MathExpression): Node {
+  const src = expr.surface_text ?? '';
+  return editorSchema.nodes.inlineMath.create(
+    { expr },
+    src.length > 0 ? editorSchema.text(src) : null,
+  );
 }
 
 /** Canonical inline order so an unchanged unit round-trips byte-identically (sort by span, then kind). */
@@ -61,7 +73,7 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
     for (const a of atoms.filter((x) => x.span.start === pos)) {
       out.push(
         a.kind === 'math'
-          ? editorSchema.nodes.inlineMath.create({ expr: (a as { expr: unknown }).expr })
+          ? mathNode((a as { expr: MathExpression }).expr)
           : editorSchema.nodes.reference.create({
               text: (a as { text: string }).text,
               target: (a as { target?: unknown }).target ?? null,

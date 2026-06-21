@@ -14,6 +14,7 @@
   "dependencies": {
     "@mathmeander/schema": "workspace:*",
     "@tanstack/react-query": "5.101.0",
+    "katex": "0.16.22",
     "@tanstack/react-router": "1.170.15",
     "idb-keyval": "6.2.5",
     "prosemirror-commands": "1.7.1",
@@ -31,6 +32,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@types/katex": "0.16.7",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",

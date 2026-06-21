@@ -60,6 +60,35 @@ describe('MathContent ⇄ ProseMirror round-trip', () => {
     expect(inline).toHaveLength(0); // the atom was removed → delta reflects it
   });
 
+  it('the inline-math node carries its surface_text as editable text content; prose text stays 0-width', () => {
+    // slice 2d live-preview: the math source rides as real text content (so it is edited natively), yet it
+    // still contributes 0 chars to the prose text — the canonical span stays [p, p] and the round-trip is
+    // clean. (blockToProse reads attrs.expr, kept in sync with the text by mathSync.)
+    const expr: MathExpression = {
+      id: '0197675f-71f4-7000-8000-0000000000e4',
+      surface_text: 'x^2 + y',
+      surface_format: 'mathmeander',
+      original_input: 'x^2 + y',
+      parse_status: 'renderable',
+      occurrences: [],
+    };
+    const src = content([
+      prose('u1', 0, 'a b', [{ kind: 'math', span: { start: 2, end: 2 }, expr }]),
+    ]);
+    const doc = projectToDoc(src);
+    let math: import('prosemirror-model').Node | null = null;
+    doc.descendants((n) => {
+      if (n.type.name === 'inlineMath') {
+        math = n;
+        return false;
+      }
+      return undefined;
+    });
+    expect(math).not.toBeNull();
+    expect(math!.textContent).toBe('x^2 + y'); // the source is the node's editable text content
+    expect(roundTripIsClean(src)).toBe(true); // prose text excludes it; span stays [2,2]
+  });
+
   it('a non-BMP glyph keeps char (code-point) offsets correct', () => {
     // "𝔽 x" — 𝔽 is a single code point but two UTF-16 units; an atom after it sits at offset 2.
     const expr: MathExpression = {

@@ -9,6 +9,7 @@ packages/schema/src/generated/
 packages/schema/artifact/
 crates/core-node/index.js
 crates/core-node/index.d.ts
+packages/web/src/wasm/
 db/schema.sql
 playwright-report/
 test-results/
