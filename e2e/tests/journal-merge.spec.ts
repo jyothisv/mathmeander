@@ -123,10 +123,12 @@ async function intoConflict(context: import('@playwright/test').BrowserContext, 
   await tabB.goto(`/journal/${today}`);
   await expect(tabB.locator('.ProseMirror')).toContainText('Shared');
 
-  // Tab A edits the shared paragraph AND adds a separate one, then syncs.
+  // Tab A edits the shared paragraph AND adds a separate one, then syncs. In the paragraph model a single
+  // Enter is a soft line (stays in the unit); a blank line (Enter twice) starts the SEPARATE new unit.
   await page.locator('.ProseMirror').click();
   await page.keyboard.press('End');
   await page.keyboard.type(' [A]');
+  await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await page.keyboard.type('Extra from A');
   await page.waitForResponse(put200, { timeout: 15000 });
