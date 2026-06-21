@@ -42,6 +42,9 @@ test('inline math: $ opens source inline → crossing $ renders with KaTeX → p
 
   await expect(math).not.toHaveClass(/math-open/); // back to rendered
   await expect(page.locator('.day-editor .katex')).toBeVisible(); // KaTeX rendered it
+  // real-WASM boundary: the mathmeander source `c^2` was transpiled to LaTeX `c^{2}` (in KaTeX's MathML
+  // annotation) — i.e. the actual surface→KaTeX transpile ran in the browser, not a stub.
+  await expect(page.locator('.day-editor .katex annotation').first()).toContainText('c^{2}');
   await expect(editor).toContainText('Energy is');
 
   await page.waitForResponse(put200, { timeout: 15000 });
@@ -116,6 +119,36 @@ test('deleting all the source keeps an empty-open math (no stray char, no collap
   await expect(math).toHaveClass(/math-open/); // still open with the caret inside (the born-open state)
   await expect(math.locator('.math-source')).toHaveText(''); // empty — the deleted char does NOT reappear
   await expect(math.locator('.katex')).toHaveCount(0); // did not collapse to the rendered view
+});
+
+test('opening + closing a rendered equation with no edit makes no save (no churn-PUT)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-nochurn-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  const math = page.locator('.inline-math');
+  await editor.click();
+  await page.keyboard.type('$x^2');
+  await page.keyboard.type('$'); // rendered
+  await page.waitForResponse(put200); // the real edit saves
+  await page.waitForTimeout(900); // let any trailing flush settle
+
+  let puts = 0;
+  const onResp = (r: {
+    url(): string;
+    request(): { method(): string };
+    status(): number;
+  }): void => {
+    if (put200(r)) puts++;
+  };
+  page.on('response', onResp);
+  await math.dblclick(); // open — a selection change only
+  await expect(math).toHaveClass(/math-open/);
+  await page.keyboard.press('Escape'); // close — a selection change only
+  await expect(math).not.toHaveClass(/math-open/);
+  await page.waitForTimeout(1100); // past the 800ms flush debounce
+  page.off('response', onResp);
+  expect(puts).toBe(0); // open/close with no content change must not write
 });
 
 test('Backspace just after a rendered equation opens its source (does not delete it)', async ({

@@ -11,11 +11,23 @@ import init, {
 import type { ParseStatus } from '@mathmeander/schema';
 
 let ready: Promise<void> | null = null;
+let loaded = false;
 
-/** Instantiate the WASM module once (idempotent). Awaited at app startup. */
+/** Instantiate the WASM module once (idempotent). Awaited at app startup. The returned promise REJECTS if
+ *  the module fails to load — callers (main.tsx) mount anyway and the editor degrades to source-only math
+ *  (see `isMathRuntimeReady`), rather than crashing on first math use. */
 export function initMathRuntime(): Promise<void> {
-  if (!ready) ready = init().then(() => undefined);
+  if (!ready)
+    ready = init().then(() => {
+      loaded = true;
+    });
   return ready;
+}
+
+/** Has the WASM module instantiated? When false, callers must NOT invoke the transpile/parse functions below
+ *  (they would throw); render the math source verbatim and skip normalization instead. */
+export function isMathRuntimeReady(): boolean {
+  return loaded;
 }
 
 /** The result of `normalizeFresh` (the keystone before-anchors normalization). */

@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./mathRuntime', () => ({
+  isMathRuntimeReady: () => true,
   normalizeFresh: (input: string) => ({
     canonicalText: input,
     parseStatus: input.includes('^^') ? 'invalid' : 'renderable',

@@ -1,10 +1,11 @@
 // Render a MathExpression into a DOM target with KaTeX. The KaTeX-input string always comes from the
 // WASM/surface transpile (`toKatex`) — never a TS reimplementation of LaTeX (single source of truth).
 // Un-parseable input is NEVER punished (§2.2): an `invalid` expression shows its `original_input` verbatim
-// with a quiet warning affordance, so nothing the user typed is ever lost or hidden.
+// with a quiet warning affordance, so nothing the user typed is ever lost or hidden. If the WASM runtime
+// failed to load, math degrades to source-only (verbatim, no KaTeX) rather than crashing.
 import katex from 'katex';
 import type { MathExpression } from '@mathmeander/schema';
-import { toKatex } from './mathRuntime';
+import { toKatex, isMathRuntimeReady } from './mathRuntime';
 
 /** Render `expr` into `into` (cleared first). `display` = block (centered) vs inline. */
 export function renderMathInto(
@@ -13,19 +14,36 @@ export function renderMathInto(
   opts: { display: boolean },
 ): void {
   into.replaceChildren();
-  into.classList.remove('math-invalid');
+  into.classList.remove('math-invalid', 'math-partial');
   const text = expr.surface_text ?? '';
+  const verbatim = expr.original_input || text;
+
+  // Runtime unavailable → show the source as plain text (never call toKatex → never throw). Keeps the editor
+  // usable (source-only math) when the WASM module fails to load.
+  if (!isMathRuntimeReady()) {
+    into.textContent = verbatim || '∅';
+    return;
+  }
+
+  // Un-parseable or empty → show exactly what the user typed; never KaTeX-throw, never blank their input.
   if (expr.parse_status === 'invalid' || text.length === 0) {
-    // show exactly what the user typed; never KaTeX-throw, never blank out their input
-    into.textContent = expr.original_input || text || '∅';
-    if (expr.original_input || text) {
+    into.textContent = verbatim || '∅';
+    if (verbatim) {
       into.classList.add('math-invalid');
       into.title = "couldn't parse this math — showing your original input";
     }
     return;
   }
+
   katex.render(toKatex(text), into, {
     displayMode: opts.display,
     throwOnError: false, // defense-in-depth; the surface transpile already escapes error fragments
   });
+
+  // Partially parsed: it DOES render (the transpiler shows the bad fragments verbatim), but flag the partial
+  // failure with a quiet affordance — distinct from the red `invalid` styling.
+  if (expr.parse_status === 'partially_resolved') {
+    into.classList.add('math-partial');
+    into.title = 'part of this math could not be parsed — shown as typed';
+  }
 }

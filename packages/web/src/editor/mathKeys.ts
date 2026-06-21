@@ -120,6 +120,36 @@ export const mathBackspace: Command = (state, dispatch) => {
   return false; // >1 char remaining → native single-char delete is fine
 };
 
+/** Delete (forward) INSIDE math — the mirror of mathBackspace:
+ *  - at the END of the source → empty: delete the node; non-empty: step out after it;
+ *  - before the ONLY char → leave an EMPTY-OPEN node with the caret inside (PM-controlled), avoiding the
+ *    native delete-to-empty that collapses the atom into a NodeSelection and re-renders the just-deleted char
+ *    (the same bug mathBackspace fixes);
+ *  - otherwise (>1 char) → fall through to the native forward delete. */
+export const mathDelete: Command = (state, dispatch) => {
+  const $from = state.selection.$from;
+  if (!inMath($from) || !state.selection.empty) return false;
+  const off = $from.parentOffset;
+  const size = $from.parent.content.size;
+  if (off === size) {
+    if (size === 0) {
+      if (dispatch) dispatch(state.tr.delete($from.before(), $from.after()).scrollIntoView());
+      return true;
+    }
+    return exitAfter(state, dispatch);
+  }
+  if (size === 1) {
+    if (dispatch) {
+      const inside = $from.before() + 1;
+      const tr = state.tr.delete(inside, inside + 1);
+      tr.setSelection(TextSelection.create(tr.doc, inside));
+      dispatch(tr.scrollIntoView());
+    }
+    return true;
+  }
+  return false; // >1 char remaining → native forward delete is fine
+};
+
 /** Backspace in PROSE right after a rendered (fresh) equation → OPEN it with the caret at the source END
  *  ("delete the closing `$`"), instead of deleting the whole equation. */
 export const openMathBackward: Command = (state, dispatch) => {
@@ -151,7 +181,7 @@ export const openMathForward: Command = (state, dispatch) => {
 /** A `$` typed inside math exits (the closing delimiter); on an EMPTY node it leaves a literal `$` (the
  *  `$`-then-`$` escape hatch). Registered as `handleTextInput` because `$` is text, not a keymap key, and
  *  input rules don't fire when the parent (`inlineMath`) is not a textblock. */
-function dollarExit(view: EditorView, _from: number, _to: number, text: string): boolean {
+export function dollarExit(view: EditorView, _from: number, _to: number, text: string): boolean {
   if (text !== '$') return false;
   const $from = view.state.selection.$from;
   if (!inMath($from)) return false;
