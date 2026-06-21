@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState, TextSelection, type Command, type Transaction } from 'prosemirror-state';
 import type { Node } from 'prosemirror-model';
+import type { EditorView } from 'prosemirror-view';
 import { editorSchema } from './schema';
 import {
   isFreshMath,
@@ -14,8 +15,10 @@ import {
   mathArrowLeft,
   mathArrowRight,
   mathBackspace,
+  mathDelete,
   openMathBackward,
   openMathForward,
+  dollarExit,
 } from './mathKeys';
 import { clearTypeAtStart, enterParagraph, insertHardBreak, mergeIntoPrevious } from './cues';
 
@@ -165,5 +168,68 @@ describe('prose-mode commands self-disable inside math', () => {
     expect(mergeIntoPrevious(inside, () => {})).toBe(false);
     expect(clearTypeAtStart(inside, () => {})).toBe(false);
     expect(insertHardBreak(inside, () => {})).toBe(false);
+  });
+});
+
+describe('mathDelete (forward-delete symmetry)', () => {
+  it('deleting the last char (caret before the only char) leaves an empty-open node, caret inside', () => {
+    // math('x') = [1,4]; pos 2 = before 'x' (off 0, size 1) → forward-delete empties it.
+    const out = run(mathDelete, stateAt([mathNode('x')], 2));
+    expect(out).not.toBeNull();
+    const m = firstMath(out!.doc);
+    expect(m).not.toBeNull();
+    expect(m!.content.size).toBe(0); // emptied, node kept
+    expect(out!.selection.$from.parent.type.name).toBe('inlineMath'); // caret stays inside
+  });
+
+  it('at the END of the source → steps out after the node', () => {
+    const out = run(mathDelete, stateAt(MIX(), 5)); // end of "x" in [ab][x][cd]
+    expect(out).not.toBeNull();
+    expect(out!.selection.$from.parent.type.name).toBe('prose');
+    expect(firstMath(out!.doc)).not.toBeNull(); // the equation survives
+  });
+
+  it('removes an empty node', () => {
+    const out = run(mathDelete, stateAt([mathNode('')], 2));
+    expect(out).not.toBeNull();
+    expect(firstMath(out!.doc)).toBeNull();
+  });
+
+  it('with >1 char, a mid-source Delete falls through to the native forward delete', () => {
+    // math('xy') = [1,5]; pos 3 = between x and y (off 1, size 2).
+    expect(run(mathDelete, stateAt([mathNode('xy')], 3))).toBeNull();
+  });
+});
+
+describe('dollarExit ($ typed inside math)', () => {
+  function runDollar(state: EditorState, text = '$'): EditorState | null {
+    let tr: Transaction | null = null;
+    const view = {
+      state,
+      dispatch: (t: Transaction) => {
+        tr = t;
+      },
+    } as unknown as EditorView;
+    if (!dollarExit(view, 0, 0, text)) return null;
+    return tr ? state.apply(tr) : state;
+  }
+
+  it('on an EMPTY node, `$` leaves a literal dollar sign (the `$`-then-`$` escape hatch)', () => {
+    const out = runDollar(stateAt([mathNode('')], 2));
+    expect(out).not.toBeNull();
+    expect(firstMath(out!.doc)).toBeNull(); // the empty node is gone
+    expect(out!.doc.child(0).textContent).toBe('$'); // replaced by a literal dollar
+  });
+
+  it('on a non-empty node, `$` exits after the node (the closing delimiter)', () => {
+    const out = runDollar(stateAt(MIX(), 5)); // end of "x"
+    expect(out).not.toBeNull();
+    expect(out!.selection.$from.parent.type.name).toBe('prose');
+    expect(firstMath(out!.doc)).not.toBeNull(); // the math survives
+  });
+
+  it('is inert for a non-`$` char, and outside math', () => {
+    expect(runDollar(stateAt(MIX(), 5), 'a')).toBeNull(); // not a `$`
+    expect(runDollar(stateAt(MIX(), 2))).toBeNull(); // caret in prose ("ab")
   });
 });

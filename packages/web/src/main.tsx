@@ -10,8 +10,7 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
 });
 
-// Instantiate the WASM math runtime before mount so the editor can parse/render math synchronously.
-void initMathRuntime().finally(() => {
+function mount(): void {
   createRoot(document.getElementById('root') as HTMLElement).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
@@ -19,4 +18,12 @@ void initMathRuntime().finally(() => {
       </QueryClientProvider>
     </StrictMode>,
   );
+}
+
+// Instantiate the WASM math runtime before mount so the editor can parse/render math synchronously. On
+// FAILURE, mount anyway: prose editing is unaffected and math degrades to source-only (renderMath/mathSync
+// guard on isMathRuntimeReady) — never a silently-broken editor that crashes on first math use.
+void initMathRuntime().then(mount, (err: unknown) => {
+  console.error('Math runtime failed to load — math will display as source only.', err);
+  mount();
 });

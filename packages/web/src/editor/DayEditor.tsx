@@ -45,6 +45,7 @@ import {
   mathArrowLeft,
   mathArrowRight,
   mathBackspace,
+  mathDelete,
   openMathBackward,
   openMathForward,
   mathDollarExit,
@@ -243,9 +244,10 @@ export function DayEditor({
                 mergeIntoPrevious,
               ),
             }),
-            // Delete (forward) in prose right before a rendered equation → OPEN its source. Ahead of
-            // baseKeymap so it pre-empts the default node delete.
-            keymap({ Delete: openMathForward }),
+            // Delete (forward): INSIDE math → mirror mathBackspace (mathDelete); in prose right before a
+            // rendered equation → OPEN its source (openMathForward). Ahead of baseKeymap so it pre-empts the
+            // default node delete.
+            keymap({ Delete: chainCommands(mathDelete, openMathForward) }),
             // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
             // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).
             // Shift-Enter is always a soft line break; ⌘/Ctrl-Enter finishes a unit and starts a new one.

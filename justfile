@@ -13,11 +13,13 @@ bootstrap:
     @command -v docker >/dev/null || (echo "ERROR: docker is required (https://docs.docker.com/get-docker/)" && exit 1)
     @command -v rustup >/dev/null || (echo "ERROR: rustup is required (https://rustup.rs)" && exit 1)
     @test -f .env || (cp .env.example .env && echo "Created .env from .env.example")
+    @command -v wasm-pack >/dev/null || cargo install wasm-pack
     pnpm install --frozen-lockfile
     just up
     just db-migrate
     cargo build --workspace
     just build-addon
+    just build-math-wasm
     just codegen-check
     @echo "✓ bootstrap complete — run 'just dev' → http://localhost:5173"
 
@@ -89,7 +91,9 @@ test: test-rust test-node
 test-rust:
     cargo test --workspace --all-features --locked
 
-test-node: build-addon
+# build-math-wasm too: the web vitest/typecheck import the wasm glue, whose output is gitignored (the
+# napi addon's .d.ts is committed, so build-addon needs no such gate; the wasm's is not).
+test-node: build-addon build-math-wasm
     pnpm -r --no-bail --filter '!@mathmeander/e2e' test
 
 test-integration: build-addon up
@@ -106,7 +110,8 @@ lint-rust:
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
 
-lint-ts:
+# build-math-wasm first: `pnpm typecheck` checks packages/web, which imports the (gitignored) wasm glue.
+lint-ts: build-math-wasm
     pnpm lint
     pnpm format
     pnpm typecheck

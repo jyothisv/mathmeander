@@ -171,6 +171,11 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.9em;
       }
+      /* Partially-parsed math DOES render (bad fragments shown verbatim by the transpiler); a quiet amber
+         underline signals the partial failure — deliberately softer than the red `math-invalid`. */
+      .day-editor .math-partial {
+        border-bottom: 1px dotted #b8860b;
+      }
     </style>
   </head>
   <body>
