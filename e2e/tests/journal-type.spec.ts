@@ -190,3 +190,102 @@ test('a cue typed BEFORE existing content keeps the first character (prepend)', 
   });
   await expect(editor).toHaveText('hello world');
 });
+
+const put200 = (r: { url(): string; request(): { method(): string }; status(): number }) =>
+  r.url().includes('/content') && r.request().method() === 'PUT' && r.status() === 200;
+const setType200 = (r: { url(): string; status(): number }) =>
+  r.url().includes('/ops/set-unit-type') && r.status() === 200;
+
+test('plain prose: single Enter stays in the unit; a blank line starts a new one', async ({
+  page,
+}) => {
+  await openToday(page, `journal-para-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('first line');
+  await page.keyboard.press('Enter'); // soft line — stays in the unit
+  await page.keyboard.type('still the same unit');
+  await expect(page.locator('.ProseMirror p')).toHaveCount(1);
+  await page.keyboard.press('Enter'); // now on an empty line…
+  await page.keyboard.press('Enter'); // …a blank line → a NEW plain unit
+  await page.keyboard.type('second unit');
+  await expect(page.locator('.ProseMirror p')).toHaveCount(2);
+
+  await page.waitForResponse(put200, { timeout: 15000 });
+  await expect(page.locator('.save-status')).not.toContainText('Couldn’t save');
+  await page.reload();
+  await expect(page.locator('.ProseMirror p')).toHaveCount(2);
+});
+
+test('a proof keeps multiple paragraphs in ONE unit (survives reload)', async ({ page }) => {
+  const today = await openToday(page, `journal-proof-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Pf. First, we note X.');
+  await page.waitForResponse(setType200, { timeout: 15000 });
+  await page.keyboard.press('Enter'); // soft line (stays)
+  await page.keyboard.press('Enter'); // blank line → a paragraph break, STILL the proof
+  await page.keyboard.type('Then, Y follows.');
+  // ONE proof unit, two paragraphs — not split out.
+  await expect(page.locator('.ProseMirror p[data-unit-type="proof"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(1);
+
+  await page.waitForResponse(put200, { timeout: 15000 });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: today })).toBeVisible();
+  await expect(page.locator('.ProseMirror p[data-unit-type="proof"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(1);
+  await expect(editor).toContainText('First, we note X.');
+  await expect(editor).toContainText('Then, Y follows.');
+});
+
+test('⌘/Ctrl+Enter exits a typed unit into a new plain unit', async ({ page }) => {
+  await openToday(page, `journal-exit-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Thm. A statement.');
+  await page.waitForResponse(setType200, { timeout: 15000 });
+  await page.keyboard.press('ControlOrMeta+Enter'); // finish the theorem → a new plain unit
+  await page.keyboard.type('plain follow-up');
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(2);
+  await expect(page.locator('.ProseMirror p:not([data-unit-type])')).toHaveText('plain follow-up');
+});
+
+test('a cue on a new line inside a unit spawns a new typed unit (mid-block)', async ({ page }) => {
+  await openToday(page, `journal-spawn-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Some intro prose.');
+  await page.keyboard.press('Enter'); // soft line — still one plain unit
+  await page.keyboard.type('Def: A widget is a thing.'); // cue at the soft-line start → spawn a definition
+  await page.waitForResponse(setType200, { timeout: 15000 });
+  await expect(page.locator('.ProseMirror p[data-unit-type="definition"]')).toHaveCount(1);
+  await expect(page.locator('.ProseMirror p')).toHaveCount(2);
+  await expect(page.locator('.ProseMirror p[data-unit-type="definition"]')).toHaveText(
+    'A widget is a thing.',
+  );
+  await expect(page.locator('.ProseMirror p:not([data-unit-type])')).toHaveText(
+    'Some intro prose.',
+  );
+});
+
+test('Backspace peels a type without merging into the previous typed unit', async ({ page }) => {
+  await openToday(page, `journal-peel-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('Thm. The theorem.');
+  await page.waitForResponse(setType200, { timeout: 15000 });
+  await page.keyboard.press('ControlOrMeta+Enter'); // → a new plain unit after the theorem
+  await page.keyboard.type('Def. The definition.');
+  await page.waitForResponse(setType200, { timeout: 15000 });
+  await expect(page.locator('.ProseMirror p[data-unit-type]')).toHaveCount(2); // theorem + definition
+
+  // Backspace at the definition's start clears its TYPE (peel) — it must NOT fuse into the theorem.
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(150); // let the caret settle at offset 0
+  await page.keyboard.press('Backspace');
+  await expect(page.locator('.ProseMirror p[data-unit-type="definition"]')).toHaveCount(0); // peeled
+  await expect(page.locator('.ProseMirror p[data-unit-type="theorem"]')).toHaveCount(1); // intact
+  await expect(page.locator('.ProseMirror p')).toHaveCount(2); // still two units — NOT merged
+});

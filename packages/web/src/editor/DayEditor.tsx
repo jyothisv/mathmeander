@@ -6,13 +6,12 @@
 // BOTH sides; a same-unit clash surfaces a CONFLICT (the user's work stays on screen + in the draft,
 // auto-save pauses). We NEVER silently lose or clobber content. PM is a frontend adapter only (§6.0a).
 import { useEffect, useRef, useState } from 'react';
-import { v7 as uuidv7 } from 'uuid';
 import { useQueryClient } from '@tanstack/react-query';
-import { EditorState, Plugin } from 'prosemirror-state';
+import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { Node } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
-import { baseKeymap } from 'prosemirror-commands';
+import { baseKeymap, chainCommands } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import type { MathContent } from '@mathmeander/schema';
 import {
@@ -25,7 +24,16 @@ import {
 import { currentToken } from '../auth/store';
 import { editorSchema } from './schema';
 import { flushToContent, projectToDoc, typeNeeds, typeIntents, type TypeNeed } from './projection';
-import { typeCueInputRules, clearTypeAtStart, enterInTypedBlock, insertHardBreak } from './cues';
+import {
+  typeCueInputRules,
+  clearTypeAtStart,
+  enterParagraph,
+  exitTypedUnit,
+  insertHardBreak,
+  mergeIntoPrevious,
+} from './cues';
+import { idStamper } from './idStamper';
+import { activeUnit } from './activeUnit';
 import {
   clearDraft,
   getDraft,
@@ -38,20 +46,6 @@ import { seedDayContent } from './cacheSeed';
 import { createAutosaveController } from './autosaveController';
 import { SaveStatusIndicator } from './SaveStatusIndicator';
 import type { SaveState } from './saveStatus';
-
-/** Stamp every new prose block (null `unitId`) with a fresh client-minted id (§6.3) so its identity
- *  is stable from creation — flush distinguishes new-vs-existing by id and never double-creates. */
-const idStamper = new Plugin({
-  appendTransaction(_trs, _oldState, newState) {
-    let tr: ReturnType<typeof newState.tr.setNodeAttribute> | null = null;
-    newState.doc.descendants((node, pos) => {
-      if (node.type.name === 'prose' && node.attrs.unitId == null) {
-        tr = (tr ?? newState.tr).setNodeAttribute(pos, 'unitId', uuidv7());
-      }
-    });
-    return tr ?? null;
-  },
-});
 
 const FLUSH_IDLE_MS = 800; // network sync debounce (the draft, not this, is durability)
 const DRAFT_IDLE_MS = 200; // IndexedDB draft debounce — a draft exists within 200ms of typing
@@ -211,15 +205,21 @@ export function DayEditor({
           plugins: [
             history(),
             keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Shift-Mod-z': redo }),
-            // Backspace at a typed block's start CLEARS its type (keeps the content as plain prose); else
-            // it falls through to baseKeymap's normal backspace. (The autoformat-undo is on Ctrl-Z.)
-            keymap({ Backspace: clearTypeAtStart }),
-            // Enter inside a TYPED block adds a line (one multi-line unit); a plain block falls through to
-            // baseKeymap (splits → new unit). Shift-Enter is a soft line break anywhere.
-            keymap({ Enter: enterInTypedBlock, 'Shift-Enter': insertHardBreak }),
+            // Backspace at a unit's start: TYPED → clear its type (peel); else PLAIN → merge into the
+            // previous unit with a soft line break. Otherwise falls through to baseKeymap's char delete.
+            keymap({ Backspace: chainCommands(clearTypeAtStart, mergeIntoPrevious) }),
+            // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
+            // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).
+            // Shift-Enter is always a soft line break; ⌘/Ctrl-Enter finishes a unit and starts a new one.
+            keymap({
+              Enter: enterParagraph,
+              'Shift-Enter': insertHardBreak,
+              'Mod-Enter': exitTypedUnit,
+            }),
             typeCueInputRules,
             keymap(baseKeymap),
             idStamper,
+            activeUnit,
           ],
         }),
         dispatchTransaction(tr) {

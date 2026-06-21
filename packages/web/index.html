@@ -62,6 +62,15 @@
       }
       .day-editor .ProseMirror p {
         margin: 0 0 0.6rem;
+        border-radius: 4px;
+        transition: box-shadow 0.12s ease;
+      }
+      /* Reveal a unit's boundary only when you're working in it (hover, or the caret is inside — the
+         `unit-active` decoration): a quiet left gutter, so plain prose reads clean at rest while the
+         paragraph = unit structure stays legible on interaction (the chosen "reveal on focus/hover"). */
+      .day-editor .ProseMirror p:hover,
+      .day-editor .ProseMirror p.unit-active {
+        box-shadow: inset 3px 0 0 rgba(125, 125, 165, 0.4);
       }
       .day-editor code.math {
         background: rgba(127, 127, 127, 0.12);
@@ -89,6 +98,17 @@
         text-transform: uppercase;
         letter-spacing: 0.07em;
         color: rgba(110, 110, 150, 0.95);
+      }
+      /* A typed unit is a multi-paragraph container; when the caret is inside, hint how to leave it (the
+         other exit is a 2nd consecutive blank line). pointer-events:none so it never eats a click. */
+      .day-editor .ProseMirror p[data-unit-type].unit-active::after {
+        content: '⌘↵ to finish';
+        position: absolute;
+        top: 0.45rem;
+        right: 0.85rem;
+        font-size: 0.6rem;
+        color: rgba(110, 110, 150, 0.7);
+        pointer-events: none;
       }
     </style>
   </head>
