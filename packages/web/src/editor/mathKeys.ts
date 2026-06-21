@@ -89,16 +89,35 @@ export const mathArrowLeft: Command = (state, dispatch) => {
   return exitBefore(state, dispatch);
 };
 
-/** Backspace INSIDE math: at the start of an empty node → delete it; at the start of a non-empty node →
- *  step out before it (a second Backspace then removes it); mid-source → fall through to a char delete. */
+/** Backspace INSIDE math:
+ *  - at the start of an EMPTY node → delete the node;
+ *  - at the start of a non-empty node → step out before it (a 2nd Backspace then removes it);
+ *  - deleting the LAST remaining char → leave an EMPTY-OPEN node with the caret inside (the born-open state),
+ *    via a PM-controlled delete. A native delete would instead empty the atom and let PM collapse the caret
+ *    into a NodeSelection (mathOpen drops → it re-renders the just-deleted char) — the reported bug;
+ *  - otherwise (>1 char) → fall through to the native single-char delete. */
 export const mathBackspace: Command = (state, dispatch) => {
   const $from = state.selection.$from;
-  if (!inMath($from) || !state.selection.empty || $from.parentOffset !== 0) return false;
-  if ($from.parent.content.size === 0) {
-    if (dispatch) dispatch(state.tr.delete($from.before(), $from.after()).scrollIntoView());
+  if (!inMath($from) || !state.selection.empty) return false;
+  const off = $from.parentOffset;
+  const size = $from.parent.content.size;
+  if (off === 0) {
+    if (size === 0) {
+      if (dispatch) dispatch(state.tr.delete($from.before(), $from.after()).scrollIntoView());
+      return true;
+    }
+    return exitBefore(state, dispatch);
+  }
+  if (size === 1) {
+    if (dispatch) {
+      const inside = $from.before() + 1; // the single interior position (becomes the empty node's caret home)
+      const tr = state.tr.delete(inside, inside + 1);
+      tr.setSelection(TextSelection.create(tr.doc, inside));
+      dispatch(tr.scrollIntoView());
+    }
     return true;
   }
-  return exitBefore(state, dispatch);
+  return false; // >1 char remaining → native single-char delete is fine
 };
 
 /** Backspace in PROSE right after a rendered (fresh) equation → OPEN it with the caret at the source END
