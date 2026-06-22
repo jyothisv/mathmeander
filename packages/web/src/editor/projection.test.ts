@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
 import { flushToContent, isFlatProse, projectToDoc, typeNeeds, typeIntents } from './projection';
+import { editorSchema } from './schema';
 
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
 
@@ -60,10 +61,10 @@ describe('MathContent ⇄ ProseMirror round-trip', () => {
     expect(inline).toHaveLength(0); // the atom was removed → delta reflects it
   });
 
-  it('the inline-math node carries its surface_text as editable text content; prose text stays 0-width', () => {
-    // slice 2d live-preview: the math source rides as real text content (so it is edited natively), yet it
-    // still contributes 0 chars to the prose text — the canonical span stays [p, p] and the round-trip is
-    // clean. (blockToProse reads attrs.expr, kept in sync with the text by mathSync.)
+  it('inline math is literal $…$ text carrying the mathExpr mark; prose text stays 0-width', () => {
+    // slice 2d editable-syntax: the math source is LITERAL `$…$` text (editable + copy/pasteable), tagged
+    // with the mathExpr mark that carries the expr identity. It still contributes 0 chars to the canonical
+    // prose text — the span stays [p, p] and the round-trip is clean (the `$…$` is stripped at the seam).
     const expr: MathExpression = {
       id: '0197675f-71f4-7000-8000-0000000000e4',
       surface_text: 'x^2 + y',
@@ -76,17 +77,17 @@ describe('MathContent ⇄ ProseMirror round-trip', () => {
       prose('u1', 0, 'a b', [{ kind: 'math', span: { start: 2, end: 2 }, expr }]),
     ]);
     const doc = projectToDoc(src);
-    let math: import('prosemirror-model').Node | null = null;
+    let mathNode: import('prosemirror-model').Node | null = null;
     doc.descendants((n) => {
-      if (n.type.name === 'inlineMath') {
-        math = n;
+      if (n.isText && n.marks.some((m) => m.type.name === 'mathExpr')) {
+        mathNode = n;
         return false;
       }
       return undefined;
     });
-    expect(math).not.toBeNull();
-    expect(math!.textContent).toBe('x^2 + y'); // the source is the node's editable text content
-    expect(roundTripIsClean(src)).toBe(true); // prose text excludes it; span stays [2,2]
+    expect(mathNode).not.toBeNull();
+    expect(mathNode!.text).toBe('$x^2 + y$'); // literal, editable, copy/pasteable source
+    expect(roundTripIsClean(src)).toBe(true); // stripped to a zero-width Math at [2,2]
   });
 
   it('a non-BMP glyph keeps char (code-point) offsets correct', () => {
@@ -312,5 +313,41 @@ describe('typeIntents vs typeNeeds (2c-2)', () => {
     const baseline = content([prose('u1', 0, 'A', [], 'theorem')]);
     const doc = projectToDoc(content([prose('u1', 0, 'A')])); // type cleared in the doc
     expect(typeIntents(doc, baseline)).toEqual([{ unitId: 'u1', type: null }]);
+  });
+});
+
+describe('flush — surface_text keystone guard (§6.3a)', () => {
+  function mathExprOf(id: string, surface: string, occurrences = 0): MathExpression {
+    return {
+      id,
+      surface_text: surface,
+      surface_format: 'mathmeander',
+      input_syntax: 'mathmeander',
+      original_input: surface,
+      parse_status: 'renderable',
+      occurrences: Array.from({ length: occurrences }, () => ({})) as MathExpression['occurrences'],
+    };
+  }
+  /** A doc with a single prose unit whose only content is a `mathExpr`-marked text node. */
+  function docWithMath(displayed: string, expr: MathExpression) {
+    return editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [
+        editorSchema.text(displayed, [editorSchema.marks.mathExpr.create({ expr })]),
+      ]),
+    ]);
+  }
+  const flushedMath = (displayed: string, expr: MathExpression): MathExpression => {
+    const { upserts } = flushToContent(docWithMath(displayed, expr), content([prose('u1', 0, '')]));
+    const inline = (upserts[0]!.content as { inline: Inline[] }).inline;
+    return (inline.find((i) => i.kind === 'math') as { expr: MathExpression }).expr;
+  };
+
+  it('an ANCHORED expr keeps its stored surface_text (never overwritten from displayed text)', () => {
+    // displayed "$xy$" but the cited surface is "x" — must NOT be clobbered to "xy".
+    expect(flushedMath('$xy$', mathExprOf('a1', 'x', 1)).surface_text).toBe('x');
+  });
+
+  it('a FRESH expr rebuilds surface_text from the displayed text', () => {
+    expect(flushedMath('$xy$', mathExprOf('f1', 'x')).surface_text).toBe('xy');
   });
 });

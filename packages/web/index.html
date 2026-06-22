@@ -60,7 +60,7 @@
         border: 1px solid rgba(127, 127, 127, 0.25);
         border-radius: 6px;
         /* ProseMirror requires this — without it the browser collapses trailing spaces, which breaks
-           the text-input fast path (e.g. an input rule like `$`→math typed right after a space). */
+           the text-input fast path (e.g. a cue input rule typed right after a space). */
         white-space: pre-wrap;
       }
       .day-editor .ProseMirror p {
@@ -113,57 +113,21 @@
         color: rgba(110, 110, 150, 0.7);
         pointer-events: none;
       }
-      /* Math (slice 2d) — Obsidian-style live preview. RENDERED by default; the SOURCE is revealed inline,
-         in the prose flow, ONLY while the caret is inside (the `math-open` class, from the mathOpen
-         decoration). The switch is purely a CSS visibility flip, so source↔render is seamless. */
-      .day-editor .inline-math {
+      /* Math (slice 2d) — editable-syntax live preview. Inline math is the LITERAL `$…$` source text carrying
+         the `mathExpr` mark (`.math-src`). The mathLivePreview plugin RENDERS it with KaTeX (a `.math-render`
+         widget) while the caret is outside the span, and HIDES the raw text (`.math-hidden`); the moment the
+         caret touches the span the decorations drop and the raw `$…$` shows for editing. */
+      .day-editor .math-src {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+        color: rgba(90, 90, 150, 0.95);
+      }
+      .day-editor .math-hidden {
+        display: none;
+      }
+      .day-editor .math-render {
         cursor: pointer;
-      }
-      .day-editor .inline-math .math-source {
-        display: none; /* hidden at rest — present so PM can manage the source text, revealed when open */
-      }
-      .day-editor .inline-math .math-render {
         padding: 0 0.05rem;
-      }
-      .day-editor .inline-math.math-open {
-        cursor: text;
-      }
-      .day-editor .inline-math.math-open .math-render {
-        display: none;
-      }
-      .day-editor .inline-math.math-open .math-source {
-        /* inline-block + a min width gives the (possibly EMPTY) source span layout, so the browser can hold
-           the caret inside it — without this an empty `$`-just-created node can't be typed into. */
-        display: inline-block;
-        min-width: 0.6ch;
-        vertical-align: baseline;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.9em;
-        background: rgba(125, 125, 165, 0.1);
-        border-radius: 3px;
-        padding: 0 0.15rem; /* no vertical padding — keep the caret level with the `$` delimiters */
-        white-space: pre;
-      }
-      /* Give the (possibly EMPTY) inline-block a TEXT line, so it aligns by the text baseline rather than its
-         bottom edge — otherwise the caret in an empty source sits below the inline `$` spans. The ZWSP is
-         invisible, zero-width, and (being a pseudo-element) is not part of node.textContent. */
-      .day-editor .inline-math.math-open .math-source::before {
-        content: '\200B';
-      }
-      /* The `$…$` delimiters are sibling spans (the NodeView renders them), shown only while editing the
-         source so it reads as math mode — the caret sits in the source BETWEEN them. */
-      .day-editor .inline-math .math-delim {
-        display: none;
-      }
-      .day-editor .inline-math.math-open .math-delim {
-        display: inline;
-        opacity: 0.5;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.9em;
-      }
-      .day-editor .inline-math.math-selected .math-render {
-        outline: 1px solid rgba(125, 125, 165, 0.6);
-        border-radius: 3px;
       }
       .day-editor .math-invalid {
         color: #b00020;

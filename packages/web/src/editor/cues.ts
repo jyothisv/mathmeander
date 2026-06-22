@@ -180,11 +180,10 @@ export const exitTypedUnit: Command = (state, dispatch) => {
   return true;
 };
 
-/** Shift-Enter: ALWAYS a soft line break, never a split/exit (even on an empty line). Inert inside a math
- *  node — a `hard_break` is illegal in its `text*` content, and Shift-Enter there is a math-mode exit (the
- *  math keymap, registered earlier, handles it). */
+/** Shift-Enter: ALWAYS a soft line break, never a split/exit (even on an empty line). (Inline math is editable
+ *  `$…$` text now, not a node — a soft break inside it simply breaks the region back to raw text, like any
+ *  other edit; there is no special math-mode case here.) */
 export const insertHardBreak: Command = (state, dispatch) => {
-  if (state.selection.$from.parent.type.name === 'inlineMath') return false;
   if (dispatch) dispatch(state.tr.replaceSelectionWith(hardBreak()).scrollIntoView());
   return true;
 };

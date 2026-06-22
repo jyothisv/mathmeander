@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clearAllDrafts,
   clearDraft,
+  CURRENT_DRAFT_VERSION,
   getDraft,
   setDraft,
   type DraftBackend,
@@ -38,7 +39,7 @@ function memBackend(opts: { failOn?: 'get' | 'set' | 'del' } = {}): DraftBackend
 }
 
 const draft = (over: Partial<EditorDraft> = {}): EditorDraft => ({
-  version: 1,
+  version: CURRENT_DRAFT_VERSION,
   objectId: OBJ,
   doc: { type: 'doc', content: [] },
   baseRevision: 2,

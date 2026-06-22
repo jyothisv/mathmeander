@@ -20,37 +20,37 @@ the pure-core / model-driven architecture (no library's format becomes the truth
 
 ## Core principles (the decisions)
 
-1. **Notation, not scripting.** Representations *denote* values (declarative terms), they don't
-   *perform* effects. Heuristic: *does this text denote a value, or do something?* Stay on the denote
+1. **Notation, not scripting.** Representations _denote_ values (declarative terms), they don't
+   _perform_ effects. Heuristic: _does this text denote a value, or do something?_ Stay on the denote
    side. The stored truth is a structured model; any text form is a faithful, round-tripping
    **projection** of it — exactly as the `mathmeander` surface language already is for math.
 
 2. **One declarative family, shared substrate — not one grammar.** Everything shares: typed schemas,
    the **scope cascade**, **provenance**, **versioning**, and a **text projection that round-trips**.
-   Each domain keeps its own small schema. **Config is the simplest tier**, and it *embeds* the richer
+   Each domain keeps its own small schema. **Config is the simplest tier**, and it _embeds_ the richer
    languages where a value is itself content (a snippet expansion is math content; a notation's display
    is a small arrangement). Tiers are layered so the simple tier ships first and independently.
 
 3. **Content × arrangement + overlays.** "Subsystems" (prose/math/diagram) are not peers; they are
-   **(content) × (arrangement)**. Content = what a thing *is* (and where computation/generation lives);
+   **(content) × (arrangement)**. Content = what a thing _is_ (and where computation/generation lives);
    arrangement = how it's laid out. **Annotations are overlays** — anchored + secondary, with their own
-   placement. "Diagram"/"math"/"prose" are *registers*, not primitives.
+   placement. "Diagram"/"math"/"prose" are _registers_, not primitives.
 
 4. **Three arrangement paradigms + three interfaces.** Arrangements: **box/typographic**,
    **coordinate/Cartesian**, **constraint/relational**. Content exposes **structural interfaces** —
-   *relational*, *metric*, *syntactic* — which the three paradigms consume generically (you write "lay
+   _relational_, _metric_, _syntactic_ — which the three paradigms consume generically (you write "lay
    out relational structure" once, not "draw a set"). A content object may expose several interfaces →
-   it affords several arrangements. Boundary test: *if I changed this, would the math change, or only
-   how it looks?* (math → content; looks → arrangement/style). Default the residue toward arrangement
+   it affords several arrangements. Boundary test: _if I changed this, would the math change, or only
+   how it looks?_ (math → content; looks → arrangement/style). Default the residue toward arrangement
    to keep content lean (pending confirmation).
 
 5. **Scope cascade + tri-state; gesture → stored binding.** Scope levels: `global → space/notebook →
-   document → region → environment`. Resolution is most-specific-wins over **structural containment**,
-   never ordinal stream position. **Tri-state**: a level can add / override / *remove*; *unset ≠
-   cleared*; never backfill. Intuitive positional gestures ("from now on…") compile to explicit,
+document → region → environment`. Resolution is most-specific-wins over **structural containment**,
+   never ordinal stream position. **Tri-state**: a level can add / override / _remove_; _unset ≠
+   cleared_; never backfill. Intuitive positional gestures ("from now on…") compile to explicit,
    structural, stored bindings — never hidden stream markers.
 
-6. **Conventions are lexical config the content reads.** A convention changes *interpretation*
+6. **Conventions are lexical config the content reads.** A convention changes _interpretation_
    (ℕ-includes-0). It travels with content from its authoring site (lexical capture on embed); when it
    lands somewhere with a conflicting convention, the clash is **surfaced for review, never silently
    reinterpreted** (meaning stays canonical). Positional conventions = a structural **region** in the
@@ -79,6 +79,7 @@ config language reads as a member of the same family — and so math fragments i
 activation. **All tokens below are placeholders to convey shape.**
 
 Notation entry (meaning + display + canonicalization):
+
 ```
 notation Nat {
   triggers  "NN", "\N", "Nat"      // input shortcuts that resolve here
@@ -90,12 +91,14 @@ notation Nat {
 ```
 
 Snippet (pure input shortcut — the degenerate tier):
+
 ```
 snippet ";ra"  →
 snippet ";NN"  Nat                  // expands to the Nat notation (semantic), not a bare string
 ```
 
 Convention (changes interpretation; lexical; clash-keyed by `about`):
+
 ```
 convention nat-has-zero {
   about  Nat                        // what it governs → the clash-detection key (§6.3c applies_to)
@@ -104,58 +107,65 @@ convention nat-has-zero {
 ```
 
 Define vs use — **a block defines; `use {…}` activates** (availability ≠ activation):
+
 - **Define** with a block, placeable anywhere: out-of-band in a config surface (global/notebook
   settings), or in-flow where its position sets the region. Defining makes a convention/notation
-  *available*; a library or notebook may define several **mutually-exclusive** ones (ℕ-with-0 vs
+  _available_; a library or notebook may define several **mutually-exclusive** ones (ℕ-with-0 vs
   ℕ-without-0) — both available, neither forced.
 - **Use/activate** with an in-flow `use {…}` directive — switch available conventions on at a point, and
   optionally define-and-use local notation inline (`:=`). It reads as a **local preamble**, mirroring
   how a math section opens ("Throughout, assume R commutative; let ε > 0"). Extent follows **structural
   containment**: a `use` at a region's start is active within that region and reverts at its end (no
   explicit un-use); a top-level `use` applies onward.
+
 ```
 use {
   nat-has-zero,            // reference: activate an available convention
   eps := epsilon           // binding: define + use a local notation inline
 }
 ```
+
 (Keyword is taste: `use` covers both; `assume` reads more like mathematics for conventions.)
 
 Tri-state removal (distinct from simply not mentioning it):
+
 ```
 unset notation Nat                  // explicitly remove an inherited entry
 ```
 
 Conventions for the surface:
+
 - **Scope by location**: where a block lives sets its scope (global config / notebook config / document
   front-matter / inline region). Entries don't each carry a `scope:` tag.
 - **Provenance/version are system-attached**, not written in the surface text — the projection
-  round-trips *meaning*; the system records who/when/derived-from (like blame, not like a field).
+  round-trips _meaning_; the system records who/when/derived-from (like blame, not like a field).
 - **Config embeds content**: `display ℕ`, snippet expansions, etc. are math-surface fragments — the
   concrete face of "the simple tier embeds the richer language."
 
 ## Notation & convention machinery (near-term — slice 2c-2+)
 
 Three deliberately separate concepts (already reserved in the arch, §6.3a/§6.3c):
+
 - **Snippet** — input shortcut only (`;NN` → …). No meaning.
 - **NotationEntry** — meaning / display / canonicalization (+ optional link to a definition).
-- **Convention** — a scoped *setting that changes interpretation* (not an alias).
+- **Convention** — a scoped _setting that changes interpretation_ (not an alias).
 
 Mechanics:
+
 - **Resolution**: walk the scope cascade, most-specific-wins, over structural containment. Tri-state:
   add / override / `unset`; inherit when unmentioned.
 - **Conventions travel (lexical capture).** An embed carries (or references) the conventions resolved at
-  its *source* region, so meaning travels. Clash detection = per-`about`-key comparison of captured-
+  its _source_ region, so meaning travels. Clash detection = per-`about`-key comparison of captured-
   source vs host. A clash becomes a **`review_items` entry** (reuse the §6.4 conflict model + review
   queue) showing both readings — no new conflict subsystem.
 - **Authoring config vs interpretation config** (sets how deep the cascade goes). Config splits by
-  *who reads it, and when*:
-  - *Authoring config* — cues, snippets — read by the **editor at input time** (shapes how you type).
+  _who reads it, and when_:
+  - _Authoring config_ — cues, snippets — read by the **editor at input time** (shapes how you type).
     Rides the cascade to **document** level, **stable** (not region-bound), does **not travel**.
     Region-scoping it would be confusing — one cue meaning different things within a single doc.
-  - *Interpretation config* — conventions — read by **content at interpretation time** (shapes what the
+  - _Interpretation config_ — conventions — read by **content at interpretation time** (shapes what the
     math means). Wants **region** scope and **travels** with content (lexical; clash-on-embed).
-  - Notation is the **hybrid**: its *trigger* is authoring-time/stable; only its *meaning* link is
+  - Notation is the **hybrid**: its _trigger_ is authoring-time/stable; only its _meaning_ link is
     interpretation-like.
 - **Leading cues (in flight now)** are authoring config — a `cue → unit_type` table, scope-cascaded to
   document with provenance + tri-state, buildable now on this discipline:
@@ -166,18 +176,18 @@ Mechanics:
 Same family and substrate (declarative, provenance, scope/anchor selectors, text projection) — opposite
 direction and role:
 
-| | Notation / Convention (config) | Annotation |
-|---|---|---|
-| Role | a **rule the content reads** | a **mark about a target** |
-| Direction | content *pulls* it (config → content) | annotation *points at* content |
-| Cardinality | one rule → many occurrences (a class) | one mark → one target (or a predicate set) |
-| Selected by | **scope** (cascade level / region) | **anchor** (this span / expr / element) |
-| Effect | changes interpretation / display | adds commentary / emphasis |
-| Layout footprint | none — it governs, it isn't "placed" | has placement (overlay / gutter / embrace) |
-| Authoring | declared (config surface or inline directive) | attached on a target (gesture) |
-| Lifecycle | lexical; travels; clash→review | anchored; orphan→review when target moves |
+|                  | Notation / Convention (config)                | Annotation                                 |
+| ---------------- | --------------------------------------------- | ------------------------------------------ |
+| Role             | a **rule the content reads**                  | a **mark about a target**                  |
+| Direction        | content _pulls_ it (config → content)         | annotation _points at_ content             |
+| Cardinality      | one rule → many occurrences (a class)         | one mark → one target (or a predicate set) |
+| Selected by      | **scope** (cascade level / region)            | **anchor** (this span / expr / element)    |
+| Effect           | changes interpretation / display              | adds commentary / emphasis                 |
+| Layout footprint | none — it governs, it isn't "placed"          | has placement (overlay / gutter / embrace) |
+| Authoring        | declared (config surface or inline directive) | attached on a target (gesture)             |
+| Lifecycle        | lexical; travels; clash→review                | anchored; orphan→review when target moves  |
 
-Essence: **config is *read by* content (general, by scope); an annotation is *attached to* content
+Essence: **config is _read by_ content (general, by scope); an annotation is _attached to_ content
 (specific, by anchor).** Both are secondary and declarative; that's why they're siblings, but their
 direction (pull-rule vs point-at), cardinality (class vs instance), and placement (none vs placed) are
 what keep them distinct.
@@ -231,7 +241,7 @@ Open: snapshot-vs-live defaults; exact path/predicate surface syntax (harmonize 
 - Reserved tables: `notation_entries`, `conventions`, `snippets` (designed in §6.3a/§6.3c, not yet
   created); `scope` enums (`global|space|source|trail|document|environment`).
 - `review_items` + §6.4 conflict model — the seam for convention clashes.
-- `crates/core/src/mathpack.rs` — export already carries config as *data*; round-trip is a proptest
+- `crates/core/src/mathpack.rs` — export already carries config as _data_; round-trip is a proptest
   invariant.
 
 ## Open questions
@@ -244,14 +254,14 @@ Open: snapshot-vs-live defaults; exact path/predicate surface syntax (harmonize 
 ## Verification (how the principles get enforced when implemented)
 
 - **Round-trip proptests**: `model → text → model` is identity (mirror surface-language + `mathpack`
-  invariants) — the mechanical proof that text is a *projection*, not a separate truth.
+  invariants) — the mechanical proof that text is a _projection_, not a separate truth.
 - **Purity guards** stay green: no eval / I/O / clock / entropy introduced into the core (layout/eval
-  are pure *adapters*, not core).
+  are pure _adapters_, not core).
 - **Provenance/AI**: system/AI-produced config or illustrations appear as `review_items` candidates and
   require explicit acceptance to materialize.
 
 ## Provenance of this note
 
-Distilled from a design discussion (2026-06). It records *direction and rationale*, not committed
+Distilled from a design discussion (2026-06). It records _direction and rationale_, not committed
 architecture; when a section is built, the decision graduates into `docs/mvp_architecture.md` (with the
 arch doc remaining authoritative) and this note is updated to point at it.

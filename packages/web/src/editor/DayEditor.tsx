@@ -35,22 +35,9 @@ import {
 } from './cues';
 import { idStamper } from './idStamper';
 import { activeUnit } from './activeUnit';
-import { exprStamper } from './exprStamper';
-import { mathSync } from './mathSync';
-import { mathOpen } from './mathOpen';
-import { mathRule } from './mathInput';
-import {
-  mathExit,
-  mathEscape,
-  mathArrowLeft,
-  mathArrowRight,
-  mathBackspace,
-  mathDelete,
-  openMathBackward,
-  openMathForward,
-  mathDollarExit,
-} from './mathKeys';
-import { MathNodeView } from './MathNodeView';
+import { mathRecognize } from './mathRecognize';
+import { mathLivePreview } from './mathLivePreview';
+import { mathBackspace, mathDelete } from './mathKeys';
 import {
   clearDraft,
   getDraft,
@@ -222,32 +209,15 @@ export function DayEditor({
           plugins: [
             history(),
             keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Shift-Mod-z': redo }),
-            // Math mode owns its keys when the caret is INSIDE a math node (each command no-ops in prose and
-            // falls through): Enter/Tab/Shift-Enter/Esc exit; arrows exit at the source boundary. Placed
-            // before the prose Enter keymap so it wins inside math.
+            // Backspace: at the start of a TYPED unit → clear type (peel); at the start of a PLAIN unit →
+            // merge into the previous unit; next to a `$…$` equation → a controlled single-char delete
+            // (mathBackspace) so native deletion next to the rendered math's hidden source can't destroy the
+            // whole equation. Otherwise falls through to baseKeymap's native char delete. Delete (forward) gets
+            // the mirror guard (mathDelete). Both are placed before baseKeymap so they pre-empt native.
             keymap({
-              Enter: mathExit,
-              Tab: mathExit,
-              'Shift-Enter': mathExit,
-              Escape: mathEscape,
-              ArrowLeft: mathArrowLeft,
-              ArrowRight: mathArrowRight,
+              Backspace: chainCommands(clearTypeAtStart, mergeIntoPrevious, mathBackspace),
             }),
-            // Backspace: INSIDE math → remove an empty node / step out (mathBackspace); in prose right after a
-            // rendered equation → OPEN its source (openMathBackward); else TYPED → clear type (peel); else
-            // PLAIN → merge into the previous unit. Otherwise falls through to baseKeymap's char delete.
-            keymap({
-              Backspace: chainCommands(
-                mathBackspace,
-                openMathBackward,
-                clearTypeAtStart,
-                mergeIntoPrevious,
-              ),
-            }),
-            // Delete (forward): INSIDE math → mirror mathBackspace (mathDelete); in prose right before a
-            // rendered equation → OPEN its source (openMathForward). Ahead of baseKeymap so it pre-empts the
-            // default node delete.
-            keymap({ Delete: chainCommands(mathDelete, openMathForward) }),
+            keymap({ Delete: mathDelete }),
             // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
             // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).
             // Shift-Enter is always a soft line break; ⌘/Ctrl-Enter finishes a unit and starts a new one.
@@ -256,26 +226,16 @@ export function DayEditor({
               'Shift-Enter': insertHardBreak,
               'Mod-Enter': exitTypedUnit,
             }),
-            // A `$` typed INSIDE math exits (the closing delimiter); before the inputRules plugin so it
-            // pre-empts a literal insertion. (In prose, it no-ops → the `$` create rule below fires.)
-            mathDollarExit,
-            // ONE inputRules plugin: cue (`Thm.`) + math (`$`) rules together — ProseMirror invokes
-            // handleTextInput on a single inputRules plugin, so all text-input rules must share it.
-            inputRules({ rules: [cueRule, mathRule] }),
+            // The cue input rule (`Thm.` etc.). Inline math needs no input rule — `$` is just typed text;
+            // mathRecognize (below) scans `$…$` and applies the identity mark + live preview.
+            inputRules({ rules: [cueRule] }),
             keymap(baseKeymap),
             idStamper,
-            exprStamper, // mint/de-dup MathExpression ids (copy-mints-fresh, §6.3a)
-            mathSync, // mirror each inline-math node's source text into attrs.expr (+ drop abandoned empties)
-            mathOpen, // mark the inline-math node containing the caret as open → NodeView reveals its source
+            mathRecognize, // scan `$…$` text → the mathExpr identity mark + synced expr (id/surface/status)
+            mathLivePreview, // render KaTeX over a marked span when the caret is outside it; raw when inside
             activeUnit,
           ],
         }),
-        // Inline math renders by default and reveals its source inline (math mode) while the caret is inside;
-        // the `decorations` carry the `math-open` marker (mathOpen) that drives that toggle.
-        nodeViews: {
-          inlineMath: (node, nodeView, getPos, decorations) =>
-            new MathNodeView(node, nodeView, getPos, decorations),
-        },
         dispatchTransaction(tr) {
           if (!view) return;
           view.updateState(view.state.apply(tr));
