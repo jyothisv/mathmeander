@@ -4,6 +4,8 @@
 **Scope basis:** the MVP direction document (§4–§7) plus architecture decisions reached in design discussion
 **How to read this:** Sections 1–4 set scope and the one governing principle. Sections 5–11 are the architecture proper. Section 12 onward covers posture (sync, ops, testing), build sequencing, the decided language split, and the assumptions this draft rests on. If an assumption in §18 is wrong, the affected section will say which.
 
+**Companion design note (forward-looking, not authoritative):** [`docs/declarative-representation.md`](declarative-representation.md) — the declarative representation family (config · notation · conventions · annotations · illustrations). Its notation/convention machinery is the near-term buildable part (slice 2c-2+); the rest is §14/later.
+
 ---
 
 ## 1. What this MVP is (and is not)
