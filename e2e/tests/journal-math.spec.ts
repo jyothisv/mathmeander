@@ -1,9 +1,13 @@
-// Slice 2d: inline math — Obsidian-style LIVE PREVIEW. Typing `$` opens an inline math node born-OPEN, its
-// `$…$` source revealed inline in the prose flow as editable text (math mode). Crossing the closing `$` (or
-// arrowing out) re-renders via KaTeX, parsed LOCALLY (the WASM build of the owned `mathmeander` grammar). A
-// RENDERED equation reveals its source only on a deliberate gesture — double-click, or Backspace-after /
-// Delete-before — never on a single click. Source is visible ONLY while the caret is inside.
+// Slice 2d: inline math — EDITABLE-SYNTAX live preview. Inline math is literal `$…$` TEXT carrying an invisible
+// `mathExpr` mark (so it copy/pastes as text — the decisive win over the old atom). A live-preview decoration
+// RENDERS it with KaTeX (`.math-render`, parsed locally via the WASM `mathmeander` grammar) while the caret is
+// outside the span, and shows the RAW `$…$` source (`.math-src`) once the selection touches it. While a region
+// is still being typed (unclosed `$x`), its source is colored (`.math-src` open-region). A rendered equation
+// reveals its source on DOUBLE-click (single click only positions the caret beside it). Recognition is
+// NON-DESTRUCTIVE: an intact `$…$` is never silently un-marked by adjacent edits.
 import { expect, test } from '@playwright/test';
+
+const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 
 function todayLocalISO(): string {
   const d = new Date();
@@ -27,156 +31,153 @@ async function openToday(page: import('@playwright/test').Page, email: string): 
 const put200 = (r: { url(): string; request(): { method(): string }; status(): number }): boolean =>
   r.url().includes('/content') && r.request().method() === 'PUT' && r.status() === 200;
 
-test('inline math: $ opens source inline → crossing $ renders with KaTeX → persists across reload', async ({
+test('inline $…$ renders with KaTeX once the caret leaves it, and persists across reload', async ({
   page,
 }) => {
   const today = await openToday(page, `journal-math-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
   await editor.click();
-  await page.keyboard.type('Energy is ');
-  await page.keyboard.type('$'); // born-open inline math (source revealed in flow)
-  await expect(math).toHaveClass(/math-open/);
-  await page.keyboard.type('E = m c^2'); // type the source directly — the caret is inside the math
-  await page.keyboard.type('$'); // the closing delimiter → exit + render
+  // Type the math as literal text, then keep typing so the caret leaves the `$…$` → it renders.
+  await page.keyboard.type('Energy is $E = m c^2$ qed');
 
-  await expect(math).not.toHaveClass(/math-open/); // back to rendered
-  await expect(page.locator('.day-editor .katex')).toBeVisible(); // KaTeX rendered it
-  // real-WASM boundary: the mathmeander source `c^2` was transpiled to LaTeX `c^{2}` (in KaTeX's MathML
-  // annotation) — i.e. the actual surface→KaTeX transpile ran in the browser, not a stub.
+  await expect(page.locator('.day-editor .math-render .katex')).toBeVisible(); // rendered by KaTeX
+  // real-WASM boundary: the mathmeander source `c^2` was transpiled to LaTeX `c^{2}` (KaTeX MathML annotation).
   await expect(page.locator('.day-editor .katex annotation').first()).toContainText('c^{2}');
   await expect(editor).toContainText('Energy is');
+  await expect(editor).toContainText('qed');
 
   await page.waitForResponse(put200, { timeout: 15000 });
   await page.reload();
   await expect(page.getByRole('heading', { name: today })).toBeVisible();
-  // persisted + re-rendered from the canonical surface
-  await expect(page.locator('.day-editor .katex')).toBeVisible();
+  await expect(page.locator('.day-editor .math-render .katex')).toBeVisible(); // re-rendered from canonical surface
   await expect(editor).toContainText('Energy is');
 });
 
-test('a $ then Escape leaves a literal dollar sign (no empty math node)', async ({ page }) => {
-  await openToday(page, `journal-math-lit-${Date.now()}@mathmeander.local`);
+test('copy yields literal $…$ text (the decisive win over the old atom)', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openToday(page, `journal-math-copy-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
   await editor.click();
-  await page.keyboard.type('costs ');
-  await page.keyboard.type('$'); // born-open empty math
-  await expect(page.locator('.inline-math')).toHaveClass(/math-open/);
-  await page.keyboard.press('Escape'); // empty → a literal `$`, no math node
-  await expect(page.locator('.inline-math')).toHaveCount(0);
-  await expect(page.locator('.day-editor .katex')).toHaveCount(0);
-  await expect(editor).toContainText('costs $');
+  await page.keyboard.type('$x^2$ end');
+  await expect(page.locator('.day-editor .math-render')).toBeVisible(); // rendered (caret past it)
+
+  await page.keyboard.press(`${MOD}+a`); // select all
+  await page.keyboard.press(`${MOD}+c`); // copy
+  const clip = await page.evaluate(() =>
+    (navigator as unknown as { clipboard: { readText(): Promise<string> } }).clipboard.readText(),
+  );
+  expect(clip).toContain('$x^2$'); // copying a rendered equation yields its source text
+});
+
+test('pasting $…$ text renders it as math', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openToday(page, `journal-math-paste-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.evaluate(() =>
+    (
+      navigator as unknown as { clipboard: { writeText(t: string): Promise<void> } }
+    ).clipboard.writeText('see $a + b$ here'),
+  );
+  await page.keyboard.press(`${MOD}+v`);
+  await expect(page.locator('.day-editor .math-render .katex')).toBeVisible(); // the pasted source rendered
+  await expect(editor).toContainText('see');
+});
+
+test('an unclosed $x is colored as math source while the caret is inside it (open-region feedback)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-open-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$x'); // no closing $ yet — still being typed
+  await expect(page.locator('.day-editor .math-src')).toBeVisible(); // the open source is colored
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(0); // not rendered yet (incomplete)
+});
+
+test('currency stays plain text — $5 and $10 are not math', async ({ page }) => {
+  await openToday(page, `journal-math-cur-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('I have $5 and $10 left');
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(0); // never rendered as math
+  await expect(editor).toContainText('$5 and $10');
+});
+
+test('digit-leading math $3x$ renders (the digit guard is on the close, not the open)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-digit-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$3x$ ok'); // typing past it leaves the span → renders
+  await expect(page.locator('.day-editor .math-render .katex')).toBeVisible();
+});
+
+test('non-destructive: typing a digit right after a complete $x^2$ keeps it as math', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-nondestruct-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$x^2$'); // caret now right after the closing $
+  await page.keyboard.type('2'); // a trailing digit must NOT revert the equation to literal text
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(1); // the equation survived
+  await expect(editor).toContainText('2');
+});
+
+test('adjacent equations $x$$y$ both render cleanly (no source styling leaks into the 2nd)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-adj-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$x$$y$ z'); // two ADJACENT equations, then move the caret past both → both render
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(2); // both rendered as KaTeX
+  // the 2nd equation's KaTeX must NOT be nested inside the 1st's `$…$` source span (the adjacency bug)
+  await expect(page.locator('.day-editor .math-src .math-render')).toHaveCount(0);
+});
+
+test('Backspace after "$x$ " deletes only the trailing space, keeping the equation', async ({
+  page,
+}) => {
+  await openToday(page, `journal-math-bksp-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$x$ '); // $x$ renders; caret sits after the space
+  await page.keyboard.press('Backspace'); // must delete ONLY the space, not the whole equation
+  await expect(editor).toContainText('$x$'); // equation source still present (revealed, caret adjacent)
+  await page.keyboard.type(' done'); // move the caret past it → it re-renders, proving it survived
+  await expect(page.locator('.day-editor .math-render .katex')).toBeVisible();
+  await expect(editor).toContainText('done');
 });
 
 test('double-click reveals the source; a single click does not', async ({ page }) => {
   await openToday(page, `journal-math-dbl-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
+  const render = page.locator('.day-editor .math-render');
   await editor.click();
-  await page.keyboard.type('$x^2');
-  await page.keyboard.type('$'); // close → rendered
-  await expect(math).not.toHaveClass(/math-open/);
-  await expect(page.locator('.day-editor .katex')).toBeVisible();
+  await page.keyboard.type('$x^2$ ok');
+  await expect(render).toBeVisible(); // rendered
 
-  await math.click(); // single click → stays rendered
-  await expect(math).not.toHaveClass(/math-open/);
+  await render.click(); // single click → stays rendered (caret placed beside it)
+  await expect(render).toBeVisible();
 
-  await math.dblclick(); // double click → source revealed
-  await expect(math).toHaveClass(/math-open/);
-  await expect(math.locator('.math-source')).toBeVisible();
-});
-
-test('clicking inside the revealed source keeps it open (caret placement, not collapse)', async ({
-  page,
-}) => {
-  await openToday(page, `journal-math-clicksrc-${Date.now()}@mathmeander.local`);
-  const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
-  await editor.click();
-  await page.keyboard.type('$a + b + c');
-  await page.keyboard.type('$'); // close → rendered
-  await math.dblclick(); // open the source
-  await expect(math).toHaveClass(/math-open/);
-
-  // a single click INSIDE the source must place the caret there, NOT collapse back to rendered
-  await math.locator('.math-source').click();
-  await expect(math).toHaveClass(/math-open/);
-  await expect(math.locator('.math-source')).toBeVisible();
-});
-
-test('deleting all the source keeps an empty-open math (no stray char, no collapse)', async ({
-  page,
-}) => {
-  await openToday(page, `journal-math-delempty-${Date.now()}@mathmeander.local`);
-  const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
-  await editor.click();
-  await page.keyboard.type('$ab'); // born-open, content "ab"
-  await expect(math).toHaveClass(/math-open/);
-  await page.keyboard.press('Backspace'); // → "a"
-  await page.keyboard.press('Backspace'); // → empty (the last-char delete is the buggy case)
-
-  await expect(math).toHaveClass(/math-open/); // still open with the caret inside (the born-open state)
-  await expect(math.locator('.math-source')).toHaveText(''); // empty — the deleted char does NOT reappear
-  await expect(math.locator('.katex')).toHaveCount(0); // did not collapse to the rendered view
-});
-
-test('opening + closing a rendered equation with no edit makes no save (no churn-PUT)', async ({
-  page,
-}) => {
-  await openToday(page, `journal-math-nochurn-${Date.now()}@mathmeander.local`);
-  const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
-  await editor.click();
-  await page.keyboard.type('$x^2');
-  await page.keyboard.type('$'); // rendered
-  await page.waitForResponse(put200); // the real edit saves
-  await page.waitForTimeout(900); // let any trailing flush settle
-
-  let puts = 0;
-  const onResp = (r: {
-    url(): string;
-    request(): { method(): string };
-    status(): number;
-  }): void => {
-    if (put200(r)) puts++;
-  };
-  page.on('response', onResp);
-  await math.dblclick(); // open — a selection change only
-  await expect(math).toHaveClass(/math-open/);
-  await page.keyboard.press('Escape'); // close — a selection change only
-  await expect(math).not.toHaveClass(/math-open/);
-  await page.waitForTimeout(1100); // past the 800ms flush debounce
-  page.off('response', onResp);
-  expect(puts).toBe(0); // open/close with no content change must not write
-});
-
-test('Backspace just after a rendered equation opens its source (does not delete it)', async ({
-  page,
-}) => {
-  await openToday(page, `journal-math-bksp-${Date.now()}@mathmeander.local`);
-  const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
-  await editor.click();
-  await page.keyboard.type('$a + b');
-  await page.keyboard.type('$'); // close → rendered, caret now right after the equation
-  await expect(math).not.toHaveClass(/math-open/);
-
-  await page.keyboard.press('Backspace'); // right after a rendered eqn → OPEN it, don't delete
-  await expect(math).toHaveCount(1); // still present
-  await expect(math).toHaveClass(/math-open/); // its source is revealed
-  await expect(math.locator('.math-source')).toContainText('a + b');
+  await render.dblclick(); // double click → reveals the raw source
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(0);
+  await expect(editor).toContainText('$x^2$');
 });
 
 test('unparseable math is preserved, never dropped (§2.2)', async ({ page }) => {
   await openToday(page, `journal-math-bad-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
-  const math = page.locator('.inline-math');
   await editor.click();
-  await page.keyboard.type('$x ^^');
-  await page.keyboard.type('$'); // close
-  await expect(math).toHaveCount(1); // the input was NOT dropped
-
-  await math.dblclick(); // reveal the source
-  await expect(math.locator('.math-source')).toContainText('x ^^'); // exactly what was typed, preserved
+  await page.keyboard.type('$x ^^$ z'); // unparseable surface, then leave it
+  // It still renders a node (showing the original input verbatim with a quiet warning) — input not dropped.
+  await expect(page.locator('.day-editor .math-render')).toHaveCount(1);
+  await page.locator('.day-editor .math-render').dblclick(); // reveal the source
+  await expect(editor).toContainText('x ^^'); // exactly what was typed, preserved
 });

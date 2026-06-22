@@ -29,16 +29,18 @@ export function isFlatProse(content: MathContent): boolean {
   });
 }
 
-/** Build an inline-math node carrying its surface SOURCE as editable text content (slice 2d). The text is
- *  the `surface_text` (what `mathSync` keeps as the editing buffer + sentinel), so a freshly-projected node
- *  is already "in sync" and never triggers a spurious re-save. Empty `surface_text` → an empty node (the
- *  `$`-just-created state). The whole expression still rides in `attrs.expr` for the lossless round-trip. */
-function mathNode(expr: MathExpression): Node {
-  const src = expr.surface_text ?? '';
-  return editorSchema.nodes.inlineMath.create(
-    { expr },
-    src.length > 0 ? editorSchema.text(src) : null,
-  );
+/** The `$…$` text node for a canonical inline `Math` (slice 2d editable-syntax): the surface rides as LITERAL
+ *  text wrapped in the `mathExpr` mark, so it is editable + copy/pasteable, and the expr identity (id etc.)
+ *  rides the mark. Zero-width in the canonical prose `text` (the `$…$` chars are an editor-only
+ *  representation, stripped at flush).
+ *  TODO(.mathpack import): a surface containing a literal `$`/`\`, empty, or with a trailing space does NOT
+ *  round-trip to a self-recognizing `$…$` (mathRecognize would release it on first edit). Add `\$` escaping
+ *  here (+ unescape in blockToProse / the recognizer) when import lands; until then anchored exprs are
+ *  protected by the recognizer's keystone keep. */
+function mathText(expr: MathExpression): Node {
+  return editorSchema.text(`$${expr.surface_text ?? ''}$`, [
+    editorSchema.marks.mathExpr.create({ expr }),
+  ]);
 }
 
 /** Canonical inline order so an unchanged unit round-trips byte-identically (sort by span, then kind). */
@@ -71,9 +73,11 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
   for (let i = 0; i < pts.length; i++) {
     const pos = pts[i]!;
     for (const a of atoms.filter((x) => x.span.start === pos)) {
+      // Math → literal `$…$` text + the mathExpr mark (editable syntax); Reference → a zero-width atom.
+      // Both are zero-width in the canonical prose `text`, so they share a breakpoint here.
       out.push(
         a.kind === 'math'
-          ? mathNode((a as { expr: MathExpression }).expr)
+          ? mathText((a as { expr: MathExpression }).expr)
           : editorSchema.nodes.reference.create({
               text: (a as { text: string }).text,
               target: (a as { target?: unknown }).target ?? null,
@@ -135,6 +139,23 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
   };
   block.forEach((node) => {
     if (node.isText) {
+      const mathMark = node.marks.find((m) => m.type.name === 'mathExpr');
+      if (mathMark) {
+        // `$…$` math (editable syntax) → a ZERO-WIDTH canonical `Math` at `offset`: take the expr from the
+        // mark; for a FRESH expr rebuild `surface_text` from the displayed text (strip the one leading + one
+        // trailing `$` — mathRecognize guarantees a marked span is always a well-formed `$…$`). Transparent to
+        // styled marks (no open/close) and offset unchanged — exactly like the prior zero-width atom.
+        // KEYSTONE (§6.3a): an ANCHORED expr's `surface_text` is canonical (edited only via the core's
+        // `rewrite_surface`), so it is NEVER overwritten from the displayed text here.
+        const markExpr = mathMark.attrs.expr as MathExpression;
+        const surface =
+          (markExpr.occurrences?.length ?? 0) > 0
+            ? markExpr.surface_text
+            : (node.text ?? '').replace(/^\$/, '').replace(/\$$/, '');
+        const expr = { ...markExpr, surface_text: surface };
+        inline.push({ kind: 'math', span: { start: offset, end: offset }, expr });
+        return;
+      }
       const active = new Set(
         node.marks.filter((m) => m.type.name === 'styled').map((m) => m.attrs.style as string),
       );
@@ -148,9 +169,6 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
       // atom), so a Mark region continues across it (offset advances by one).
       text += '\n';
       offset += 1;
-    } else if (node.type.name === 'inlineMath') {
-      // zero-width; transparent to marks (do not close/open) — offset unchanged
-      inline.push({ kind: 'math', span: { start: offset, end: offset }, expr: node.attrs.expr });
     } else if (node.type.name === 'reference') {
       inline.push({
         kind: 'reference',

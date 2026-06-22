@@ -13,8 +13,11 @@ import {
 } from 'idb-keyval';
 
 /** Bump when the draft schema changes. An OLDER tab (lower CURRENT) must NOT delete a NEWER deploy's
- *  draft, so the version gate clears only on `stored < CURRENT`, never on `stored > CURRENT`. */
-export const CURRENT_DRAFT_VERSION = 1;
+ *  draft, so the version gate clears only on `stored < CURRENT`, never on `stored > CURRENT`.
+ *  v2 (slice 2d editable-syntax): inline math moved from the `inlineMath` ATOM node to `$…$` text + the
+ *  `mathExpr` mark, so a v1 draft's `inlineMath` node JSON would throw in `Node.fromJSON`. The bump makes a
+ *  v1 draft a clean version-gated discard instead of relying on the parse-throw fallback. */
+export const CURRENT_DRAFT_VERSION = 2;
 
 /** One day's unsynced editor state. `doc` is `view.state.doc.toJSON()` (structured-cloneable). */
 export interface EditorDraft {

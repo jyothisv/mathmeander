@@ -1,9 +1,10 @@
 // The ProseMirror schema for the journal editor (slice 2c-1) — a FRONTEND ADAPTER only (§6.0a: PM
 // vocabulary never leaks into the core model). Node/mark names are editor terms; the projection
 // (projection.ts) maps them to/from the canonical `MathContent`/`Inline`. Slice 2c-1 edits FLAT
-// PROSE: a doc is prose blocks; a prose block's inline is text + zero-width atoms (inline math /
-// reference) + `styled` marks. (Display math, embeds, groups, and type cues arrive in 2c-2/2c-3; a
-// day containing them falls back to the read-only view — see DayEditor.)
+// PROSE: a doc is prose blocks; a prose block's inline is text + the zero-width `reference` atom +
+// `styled` marks + the `mathExpr` mark (inline math as editable `$…$` source text — slice 2d). (Display
+// math, embeds, groups, and type cues arrive in 2c-2/2c-3; a day containing them falls back to the
+// read-only view — see DayEditor.)
 import { Schema } from 'prosemirror-model';
 
 export const editorSchema = new Schema({
@@ -52,23 +53,6 @@ export const editorSchema = new Schema({
       toDOM: () => ['br'],
     },
 
-    // Inline math (slice 2d): a ZERO-WIDTH atom in the PROSE-text offset space (§6.0) — it contributes 0
-    // chars to the unit's prose `text`, so its `Inline::Math` span stays `[p, p]`. But it carries its
-    // surface SOURCE as real editable TEXT CONTENT (`content: "text*"`, the proven prosemirror-math shape):
-    // `atom: true` keeps the caret SKIPPING OVER rendered math (it enters the source only on a deliberate
-    // open), while the inner text is the live editing buffer that `mathSync` mirrors into `attrs.expr`. The
-    // whole MathExpression rides in `attrs.expr` (lossless round-trip; `exprStamper`/projection read it).
-    // The NodeView (MathNodeView) renders KaTeX by default and reveals the source text when the caret is in.
-    inlineMath: {
-      group: 'inline',
-      inline: true,
-      atom: true,
-      selectable: true,
-      content: 'text*',
-      attrs: { expr: {} },
-      toDOM: () => ['span', { class: 'inline-math' }, 0],
-    },
-
     // Inline reference: a ZERO-WIDTH atom; its display `text` + optional `target` ride as attrs.
     reference: {
       group: 'inline',
@@ -97,6 +81,19 @@ export const editorSchema = new Schema({
                 : 'span';
         return [tag, { 'data-style': style }, 0];
       },
+    },
+
+    // Inline math as EDITABLE SYNTAX (slice 2d rework): the `$…$` source is LITERAL TEXT in the prose,
+    // carrying its MathExpression identity via this mark — so copy/paste yields `$…$` text and a cited
+    // expr keeps its id across in-place edits (§6.3a). A live-preview decoration (mathLivePreview) renders
+    // the marked span when the caret is outside it; the projection seam maps a marked `$…$` span ⇄ the
+    // canonical zero-width `Inline::Math` atom (so the model is unchanged). `surface_text` is authoritative
+    // from the inner text (between the `$`); the mark carries the rest of the expr. `inclusive: false` so
+    // typing past the closing `$` doesn't extend the mark; the recognizer (mathRecognize) re-fits it anyway.
+    mathExpr: {
+      attrs: { expr: {} },
+      inclusive: false,
+      toDOM: () => ['span', { class: 'math-src' }, 0],
     },
   },
 });

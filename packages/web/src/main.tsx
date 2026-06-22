@@ -21,8 +21,8 @@ function mount(): void {
 }
 
 // Instantiate the WASM math runtime before mount so the editor can parse/render math synchronously. On
-// FAILURE, mount anyway: prose editing is unaffected and math degrades to source-only (renderMath/mathSync
-// guard on isMathRuntimeReady) — never a silently-broken editor that crashes on first math use.
+// FAILURE, mount anyway: prose editing is unaffected and math degrades to source-only (renderMath/
+// mathRecognize guard on isMathRuntimeReady) — never a silently-broken editor that crashes on first math use.
 void initMathRuntime().then(mount, (err: unknown) => {
   console.error('Math runtime failed to load — math will display as source only.', err);
   mount();

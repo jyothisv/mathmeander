@@ -50,9 +50,60 @@ gestures. Legend: ✅ shipped · ◻ planned (this program) · ⬚ later · ↻ 
   yields `$…$` text.** Expr identity rides an invisible mark so citations survive edits; the projection seam
   parses/serializes `$…$` ↔ the canonical zero-width `Inline::Math` atom (no model change). Reworked from the
   2d atom NodeView (§9.z).
-- ◻ `$$ … $$` — display-math block (math Phase C), same editable-syntax model, centered block.
+- ◻ `$$ … $$` — display-math block (math Phase C), same editable-syntax model, centered block. (A
+  deliberate divergence from Typst's own space-delimited display `$ … $`: in mixed prose the space convention
+  is fragile and collides with the inline currency heuristic, so explicit `$$` is unambiguous and familiar.)
+  Maps to a block-level `UnitContent::Math` _unit_, not an inline atom.
 - ⬚ diagrams — a _second_ editing mode (declarative source → rendered diagram, a second WASM runtime); the
   multi-mode generalization of math mode.
+
+#### Math input assistance — ⬚ deferred (parked; part of the mode-specific keymaps + autocompletions program)
+
+Goal: make typing math symbols as fast as possible. Two separable features, both **display-only / model-safe**
+(`surface_text` stays the truth — no schema/ops/hash change, the same property that makes `$…$` live-preview
+safe):
+
+- **(A) Suggestions / autocomplete** — as you type in math mode, offer `cal(`, `alpha`, `frac(`, … and insert
+  the **source**. The real "easy typing" lever; cheapest; driven by the grammar's symbol/function registry
+  exposed from Rust (single source of truth — `crates/surface/src/latex.rs`). Do this **first**.
+- **(B) Token concealment while editing** — render a token like `cal(F)` as its glyph 𝓕 _inside_ the source
+  while the caret is elsewhere in the same `$…$`, revealing the raw source on caret-enter; atomic on
+  delete/undo/copy. It is "our live-preview, recursively" (the `mathLivePreview` mechanism scoped to a token).
+  Lower marginal value — the whole `$…$` already renders the moment the caret leaves it — and higher cost:
+  needs a **`Call` source-span from the serializer** (`crates/surface/src/serializer.rs` emits identifier
+  spans only today; rendering needs no new WASM fn since `cal(F)` is itself a valid surface), a nested
+  region+token reveal state, and token-boundary atomic deletion (extend `mathKeys`). Copy stays the source.
+
+**Prose interplay:** `cal(F)` in prose stays **literal text** — math notation is interpreted ONLY inside
+`$…$` (the §6 math/presentation layer boundary). Never auto-mathify prose; fast entry from prose, if ever, is
+an opt-in "wrap in `$…$`" suggestion.
+
+#### `$…$` recognition & math-mode entry (decided)
+
+The math _content_ language between the delimiters is **our own Typst-inspired notation** (`pi`, `a/b`,
+`frac(a, b)`, `x^2`, `sum`, …) — **not LaTeX**. The `$` delimiters and their recognition are our editing
+layer; what follows is independent of that content language.
+
+- **Recognition rule (pandoc-style, digit-on-close):** a `$` _opens_ math when immediately followed by a
+  non-space; a `$` _closes_ math when immediately preceded by a non-space **and not immediately followed by a
+  digit**. So `$x^2$` and **`$3x$`, `$2\pi$`, `$0$`** are math, while `$5 and $10`, `$20,000 and $30,000`, and
+  `it costs $5` stay plain text (no valid closer). The digit guard sits on the **close**, not the open — that
+  is what lets digit-leading math (very common) coexist with currency (rare in maths notes). `\$` is the
+  explicit escape for a literal dollar. The one ergonomic cost is pandoc's standard one: no space immediately
+  _before_ the closing `$` (`$x = y$` is fine; write `$x=$`, not `$x = $`); to write a tight literal currency
+  like `$5$` use `\$5`.
+- **No second (asymmetric) delimiter family.** LaTeX's `\(…\)`/`\[…\]` were considered and **dropped**: the
+  content is Typst-inspired, not LaTeX, so they buy neither paste-from-LaTeX compatibility nor coherence, and
+  the heuristic + `\$` escape already make every expression writable. Revisit only if a concrete need appears.
+- **Math mode engages on the recognized OPEN region, not just a completed `$…$`.** Principle: _math mode =
+  the caret is inside a `$…` region classified as math (open or closed)._ ✅ Shipped now: the **live source
+  coloring** — typing `$x` colors `$x…` immediately (the open-region decoration, `openRegionStart`), reverting
+  cleanly to prose if the caret leaves. The open rule for live styling is **conservative — non-space AND
+  non-digit** after the `$`: so `$x…` engages but `$5 in my pocket` stays prose (currency-safe), and a lone `$`
+  or `$` + space is mode-neutral. Digit-leading math (`$3x$`) is **not** live-styled while open — it becomes
+  math the moment the closing `$` is typed (the recognizer's digit-on-close rule), consistent with currency
+  safety. ⬚ Deferred: a math **keymap / completions / WASM-assist** keyed off the open region (only the visual
+  coloring lands now; the recognizer marks + renders on close).
 
 ### Type cues (line start + trailing `.`/`:` + space) — ✅ shipped (`cues.ts`)
 
