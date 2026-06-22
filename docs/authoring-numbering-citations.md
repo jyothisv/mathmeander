@@ -97,6 +97,13 @@ the seam).
   anchor's id → renders the live computed number thereafter.
 - **Footnote:** ◻ our own gesture (not `[^1]`) → an inline marker anchor + a footnote unit (reuses the
   anchor+link+number substrate below).
+- **Cite-then-edit stability:** a citation binds to the target's **id**, not its text or number — so editing
+  an equation **in place** keeps every citation pointing at it (now modified); the keystone (`rewrite_surface`)
+  preserves the id while updating `surface_text`/`parse_status`, and in the editor the id rides the `$…$` mark
+  (editing within the span never re-mints). Delete-and-re-add = a new id → old citations go **stale** (surfaced
+  for review, never silently wrong, §6.1b). A sub-span anchor that's edited away **remaps or stales** (never a
+  wrong reference); whole-equation citations have no sub-span to lose. So: edit in place → citations follow;
+  replace wholesale → old citations are flagged, not broken.
 
 ## Resolving the ambiguities
 
