@@ -26,6 +26,8 @@ interface Span {
   from: number;
   to: number;
   expr: MathExpression;
+  /** A whole-line `$$…$$` display equation (rendered centered, source revealed only on focus) vs inline `$…$`. */
+  display: boolean;
 }
 interface PluginState {
   spans: Span[];
@@ -36,42 +38,78 @@ interface PluginState {
 
 const KEY = new PluginKey<PluginState>('mathLivePreview');
 
-/** All `mathExpr`-marked spans in the doc (adjacent same-expr text nodes merged — a span split by an
- *  overlapping `styled` mark is rejoined into one rendered region). */
+/** All `mathExpr`-marked spans in the doc, computed PER BLOCK. A DISPLAY block (a whole-block `$$…$$`, possibly
+ *  MULTI-LINE) yields ONE span over the entire block content (text + hard_breaks) — so a multi-line equation is
+ *  a single rendered region. An inline block yields its `$…$` runs, adjacent same-expr runs merged (a span split
+ *  by an overlapping `styled` mark is rejoined). Per-block so two consecutive display blocks never over-merge. */
 function computeSpans(doc: PMNode): Span[] {
-  const raw: Span[] = [];
-  doc.descendants((node, pos) => {
-    if (!node.isText) return;
-    const m = node.marks.find((x) => x.type === MARK);
-    if (m) raw.push({ from: pos, to: pos + node.nodeSize, expr: m.attrs.expr as MathExpression });
-    return false;
+  const spans: Span[] = [];
+  doc.forEach((block, offset) => {
+    if (block.type.name !== 'prose') return;
+    const contentStart = offset + 1;
+    // DISPLAY: if any text node carries a display mark, the whole block is one display equation.
+    let displayExpr: MathExpression | undefined;
+    block.forEach((child) => {
+      if (!child.isText) return;
+      const m = child.marks.find((x) => x.type === MARK);
+      if (m && (m.attrs.display as boolean)) displayExpr = m.attrs.expr as MathExpression;
+    });
+    if (displayExpr) {
+      spans.push({
+        from: contentStart,
+        to: contentStart + block.content.size,
+        expr: displayExpr,
+        display: true,
+      });
+      return;
+    }
+    // INLINE: marked text runs in this block, merging adjacent same-expr runs.
+    const merged: Span[] = [];
+    let pos = contentStart;
+    block.forEach((child) => {
+      if (child.isText) {
+        const m = child.marks.find((x) => x.type === MARK);
+        if (m) {
+          const s: Span = {
+            from: pos,
+            to: pos + child.nodeSize,
+            expr: m.attrs.expr as MathExpression,
+            display: false,
+          };
+          const prev = merged[merged.length - 1];
+          if (prev && prev.to === s.from && prev.expr.id === s.expr.id) prev.to = s.to;
+          else merged.push(s);
+        }
+      }
+      pos += child.nodeSize;
+    });
+    spans.push(...merged);
   });
-  const merged: Span[] = [];
-  for (const s of raw) {
-    const prev = merged[merged.length - 1];
-    if (prev && prev.to === s.from && prev.expr.id === s.expr.id) prev.to = s.to;
-    else merged.push({ ...s });
-  }
-  return merged;
+  return spans;
 }
 
-/** Build the KaTeX widget DOM for a rendered `$…$` span. Single click → caret beside (stays rendered, suppress
- *  flag); double click → caret just inside (reveal). */
-function renderWidget(expr: MathExpression) {
+/** Build the KaTeX widget DOM for a rendered span. INLINE (`display:false`): single click → caret beside (stays
+ *  rendered, suppress flag); double click → caret just inside (reveal). DISPLAY (`display:true`, centered): the
+ *  render stays ALWAYS visible, so a click just reveals the source for editing — caret at the source end
+ *  (best-effort; precise click→sub-expression position is the deferred F3 capability). */
+function renderWidget(expr: MathExpression, display: boolean) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
-    el.className = 'math-render';
+    el.className = display ? 'math-render math-render-display' : 'math-render';
     el.contentEditable = 'false';
-    renderMathInto(expr, el, { display: false });
+    renderMathInto(expr, el, { display });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      const from = view.posAtDOM(el, 0); // the span's start (before the opening `$`)
-      if (e.detail >= 2) {
-        const sel = Selection.near(view.state.doc.resolve(from + 1), 1); // just inside → reveal
+      const pos = view.posAtDOM(el, 0);
+      if (display) {
+        const sel = Selection.near(view.state.doc.resolve(pos), -1); // into the source (end) → reveal it
+        view.dispatch(view.state.tr.setSelection(sel));
+      } else if (e.detail >= 2) {
+        const sel = Selection.near(view.state.doc.resolve(pos + 1), 1); // just inside → reveal
         view.dispatch(view.state.tr.setSelection(sel));
       } else {
-        const sel = Selection.near(view.state.doc.resolve(from), -1); // beside → stays rendered (suppressed)
-        view.dispatch(view.state.tr.setSelection(sel).setMeta(KEY, from));
+        const sel = Selection.near(view.state.doc.resolve(pos), -1); // beside → stays rendered (suppressed)
+        view.dispatch(view.state.tr.setSelection(sel).setMeta(KEY, pos));
       }
       view.focus();
     });
@@ -130,10 +168,24 @@ export const mathLivePreview = new Plugin<PluginState>({
       const decos: Decoration[] = [];
       for (const span of ps.spans) {
         const touches = selFrom <= span.to && selTo >= span.from;
-        if (touches && ps.suppress !== span.from) continue; // reveal raw
+        if (span.display) {
+          // DISPLAY: the centered render is ALWAYS shown (a widget after the source); the `$$…$$` source is
+          // hidden UNLESS the selection is in the block, where it appears ABOVE the render for editing.
+          decos.push(
+            Decoration.widget(span.to, renderWidget(span.expr, true), {
+              side: 1,
+              marks: [],
+              key: `mathd:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}`,
+              ignoreSelection: true,
+            }),
+          );
+          if (!touches) decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
+          continue;
+        }
+        if (touches && ps.suppress !== span.from) continue; // inline: reveal raw on touch
         decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
         decos.push(
-          Decoration.widget(span.from, renderWidget(span.expr), {
+          Decoration.widget(span.from, renderWidget(span.expr, false), {
             side: -1,
             // No marks: a widget defaults to inheriting the marks at its position, so for two ADJACENT `$…$`
             // spans the second equation's KaTeX would render INSIDE the first's `mathExpr` (`.math-src`) span

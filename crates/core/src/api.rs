@@ -264,11 +264,13 @@ pub fn set_unit_type(
     OpOutcomeResult::from_result(result).to_json()
 }
 
-/// Apply a prose-authoring delta (§6.0a coarse path, slice 2c) → `OpOutcomeResult` JSON. The glue
-/// loads `prior` content, mints ids for any new units, then persists the DELTA (`upserts`/`deletes`);
+/// Apply a content-authoring delta (§6.0a coarse path, slice 2c) → `OpOutcomeResult` JSON. The glue
+/// loads `prior` content and `current_links` (the latter for the display-math keystone check, like
+/// `rewrite_surface`), mints ids for any new units, then persists the DELTA (`upserts`/`deletes`);
 /// the returned `content` is the whole applied result for the editor to re-anchor against.
 pub fn save_content(
     prior_json: &str,
+    current_links_json: &str,
     upserts_json: &str,
     deletes_json: &str,
     ctx_json: &str,
@@ -276,12 +278,18 @@ pub fn save_content(
 ) -> String {
     let result = (|| {
         let prior: MathContent = parse_input("prior content", prior_json)?;
+        let current_links: Vec<Link> = parse_input("current links", current_links_json)?;
         let upserts: Vec<Unit> = parse_input("upserts", upserts_json)?;
         let deletes: Vec<UnitId> = parse_input("deletes", deletes_json)?;
         let ctx: OpContext = parse_input("op context", ctx_json)?;
         let now = parse_now(now_iso)?;
         Ok(crate::ops::save_content(
-            &prior, &upserts, &deletes, &ctx, now,
+            &prior,
+            &current_links,
+            &upserts,
+            &deletes,
+            &ctx,
+            now,
         )?)
     })();
     OpOutcomeResult::from_result(result).to_json()

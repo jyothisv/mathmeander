@@ -152,6 +152,17 @@ export async function loadCurrentLinks(db: Queryable, objectId: string): Promise
   return res.rows.map(rowToLink);
 }
 
+/** Edges pointing INTO this object from elsewhere (target-side, excluding its own outbound). The §6.3a
+ *  keystone needs these so a CROSS-OBJECT citation (`TargetSelector::ExpressionRef`) into one of this object's
+ *  expressions blocks a `save_content` re-author/delete of that equation (which would orphan the citation). */
+export async function loadInboundLinks(db: Queryable, objectId: string): Promise<Link[]> {
+  const res = await db.query<LinkRow>(
+    `SELECT ${LINK_COLUMNS} FROM links WHERE target_object_id = $1 AND source_object_id <> $1`,
+    [objectId],
+  );
+  return res.rows.map(rowToLink);
+}
+
 /** Taggings on this object's units (merge_units re-points / dedups these). */
 export async function loadCurrentTaggings(db: Queryable, objectId: string): Promise<Tagging[]> {
   const res = await db.query<TaggingRow>(

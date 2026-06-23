@@ -20,7 +20,7 @@ use mathmeander_core::ids::{ExpressionId, LinkId, ObjectVersionId, TagId, Taggin
 use mathmeander_core::model::{
     CharSpan, ContentLocator, DeclaredBy, ExtractedStructureEnvelope, Inline, Link, LinkStatus,
     LinkType, MathExpression, Occurrence, OccurrenceTarget, ParseStatus, SurfaceFormat, Tagging,
-    Unit, UnitContent, UnitStatus, UnitType,
+    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use mathmeander_core::ops::{
     ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
@@ -1296,7 +1296,8 @@ fn prose_content(units: Vec<Unit>) -> MathContent {
 fn save_content_empty_delta_is_identity_plus_revision() {
     let u = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "Hello.", vec![]);
     let prior = prose_content(vec![u.clone()]);
-    let out = save_content(&prior, &[], &[], &op_ctx(), op_now()).expect("empty delta applies");
+    let out =
+        save_content(&prior, &[], &[], &[], &op_ctx(), op_now()).expect("empty delta applies");
     assert_eq!(out.content.revision, 2);
     assert_eq!(out.content.units, vec![u]); // byte-identical content
 }
@@ -1312,6 +1313,7 @@ fn save_content_edits_prose_text_and_appends_and_deletes() {
     let c = a_prose_unit(UnitId(v7(4)), ObjectId(v7(1)), 1, "third", vec![]);
     let out = save_content(
         &prior,
+        &[],
         &[a_edited.clone(), c.clone()],
         &[UnitId(v7(3))],
         &op_ctx(),
@@ -1328,7 +1330,7 @@ fn save_content_rejects_type_change_on_existing_unit() {
     let prior = prose_content(vec![a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![])]);
     let mut typed = a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![]);
     typed.unit_type = Some(UnitType::Theorem); // a type change is set_unit_type's job
-    let err = save_content(&prior, &[typed], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[typed], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1340,7 +1342,7 @@ fn save_content_rejects_kind_change_on_existing_unit() {
     as_math.content = UnitContent::Math {
         expr: an_expr(ExpressionId(v7(40)), "y", vec![]),
     };
-    let err = save_content(&prior, &[as_math], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[as_math], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1355,7 +1357,7 @@ fn save_content_rejects_a_typed_new_unit() {
     )]);
     let mut bad = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, "y", vec![]);
     bad.unit_type = Some(UnitType::Theorem); // a NEW unit must be untyped rough prose
-    let err = save_content(&prior, &[bad], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[bad], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1365,7 +1367,7 @@ fn save_content_rejects_deleting_a_typed_unit() {
     let mut typed = a_prose_unit(id, ObjectId(v7(1)), 0, "x", vec![]);
     typed.unit_type = Some(UnitType::Theorem);
     let prior = prose_content(vec![typed]);
-    let err = save_content(&prior, &[], &[id], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[], &[id], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid"); // dissolve, don't coarse-delete
 }
 
@@ -1380,7 +1382,7 @@ fn save_content_rejects_position_collision() {
     )]);
     // a NEW unit at the same position 0 as the untouched existing unit (editor failed to renumber)
     let b = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 0, "b", vec![]);
-    let err = save_content(&prior, &[b], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[b], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1398,7 +1400,7 @@ fn save_content_runs_inline_bounds_validation() {
             style: "emph".into(),
         }],
     );
-    let err = save_content(&prior, &[bad], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[bad], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "inline_span_out_of_bounds");
 }
 
@@ -1412,7 +1414,8 @@ fn save_content_allows_reordering_prose() {
     a2.position = 1;
     let mut b2 = b;
     b2.position = 0;
-    let out = save_content(&prior, &[a2, b2], &[], &op_ctx(), op_now()).expect("reorder applies");
+    let out =
+        save_content(&prior, &[], &[a2, b2], &[], &op_ctx(), op_now()).expect("reorder applies");
     let pos = |id: UnitId| {
         out.content
             .units
@@ -1434,7 +1437,7 @@ fn save_content_allows_middle_delete_with_renumber() {
     let prior = prose_content(vec![a, b, c.clone()]);
     let mut c1 = c;
     c1.position = 1; // shifted up after B's deletion
-    let out = save_content(&prior, &[c1], &[UnitId(v7(3))], &op_ctx(), op_now())
+    let out = save_content(&prior, &[], &[c1], &[UnitId(v7(3))], &op_ctx(), op_now())
         .expect("middle delete applies");
     assert_eq!(out.content.units.len(), 2);
     assert_eq!(
@@ -1454,7 +1457,7 @@ fn save_content_rejects_reparenting_an_existing_unit() {
     let prior = prose_content(vec![a.clone()]);
     let mut moved = a;
     moved.parent_unit_id = Some(UnitId(v7(9))); // re-parenting is rehome's job
-    let err = save_content(&prior, &[moved], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[moved], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1465,7 +1468,7 @@ fn save_content_rejects_changing_declared_by() {
     let prior = prose_content(vec![a.clone()]);
     let mut relabeled = a;
     relabeled.declared_by = DeclaredBy::Imported;
-    let err = save_content(&prior, &[relabeled], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[relabeled], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1480,7 +1483,7 @@ fn save_content_rejects_new_unit_smuggling_a_parent() {
     )]);
     let mut child = a_prose_unit(UnitId(v7(3)), ObjectId(v7(1)), 0, "b", vec![]);
     child.parent_unit_id = Some(UnitId(v7(2))); // a "new prose unit" may not nest (structural, §6.0b)
-    let err = save_content(&prior, &[child], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[child], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1502,7 +1505,7 @@ fn save_content_rejects_new_unit_forging_extracted_structure() {
         base_object_revision: 1,
         accepted_into: None,
     });
-    let err = save_content(&prior, &[forged], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[forged], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1517,7 +1520,7 @@ fn save_content_rejects_object_id_mismatch() {
         vec![],
     )]);
     let foreign = a_prose_unit(UnitId(v7(3)), ObjectId(v7(99)), 1, "b", vec![]);
-    let err = save_content(&prior, &[foreign], &[], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[foreign], &[], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
@@ -1530,13 +1533,42 @@ fn save_content_rejects_deleting_unknown_unit() {
         "a",
         vec![],
     )]);
-    let err = save_content(&prior, &[], &[UnitId(v7(999))], &op_ctx(), op_now()).unwrap_err();
+    let err = save_content(&prior, &[], &[], &[UnitId(v7(999))], &op_ctx(), op_now()).unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 
+// ── save_content + display math (§6.3a editable equation; the relaxed gate) ──
+
 #[test]
-fn save_content_rejects_editing_nonprose_content() {
-    // A day may already hold a display-math unit; save_content carries it unchanged, never edits it.
+fn save_content_allows_creating_a_display_math_unit() {
+    // Typing `$$x^2$$` directly is a NEW top-level Math unit — accepted like a new prose unit (a
+    // fresh expression has zero inbound anchors, so authoring its surface is keystone-safe).
+    let p = a_prose_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, "before", vec![]);
+    let prior = prose_content(vec![p]);
+    let m = a_math_unit(
+        UnitId(v7(3)),
+        ObjectId(v7(1)),
+        1,
+        an_expr(ExpressionId(v7(40)), "x^2", vec![]),
+    );
+    let out = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&m),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("math create applies");
+    assert_eq!(out.content.units.len(), 2);
+    assert!(out.content.units.contains(&m));
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_allows_editing_a_zero_anchor_math_unit() {
+    // Editing an uncited display equation's surface in place rides the same delta as prose: the
+    // expression keeps its id, has zero occurrences, and no edge anchors into it → keystone-safe.
     let m = a_math_unit(
         UnitId(v7(2)),
         ObjectId(v7(1)),
@@ -1546,9 +1578,349 @@ fn save_content_rejects_editing_nonprose_content() {
     let prior = prose_content(vec![m.clone()]);
     let mut edited = m;
     edited.content = UnitContent::Math {
-        expr: an_expr(ExpressionId(v7(40)), "y", vec![]),
+        expr: an_expr(ExpressionId(v7(40)), "y + 1", vec![]),
     };
-    let err = save_content(&prior, &[edited], &[], &op_ctx(), op_now()).unwrap_err();
+    let out = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&edited),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("zero-anchor math edit applies");
+    assert_eq!(out.content.units, vec![edited]);
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_rejects_editing_math_with_occurrences() {
+    // Once an expression carries occurrence selectors (resolvable ident-sites), a free re-author
+    // would corrupt their char spans — the editor must rename via rewrite_surface, not save_content.
+    let m = a_math_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        an_expr(
+            ExpressionId(v7(40)),
+            "x + y",
+            vec![Occurrence {
+                selector: CharSpan::new(0, 1),
+                target: None,
+            }],
+        ),
+    );
+    let prior = prose_content(vec![m.clone()]);
+    let mut edited = m;
+    edited.content = UnitContent::Math {
+        expr: an_expr(ExpressionId(v7(40)), "z + y", vec![]),
+    };
+    let err = save_content(&prior, &[], &[edited], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_editing_a_cited_math_unit() {
+    // An inbound ExpressionSpan edge anchors into the equation; a free re-author would silently
+    // corrupt that anchor (only rewrite_surface remaps/stales it) → reject.
+    let e = ExpressionId(v7(40));
+    let m = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let prior = prose_content(vec![m.clone()]);
+    let link = Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(1)),
+        target_object_id: Some(ObjectId(v7(9))),
+        target_unit_id: None,
+        unresolved_text: None,
+        target_selector: None,
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: true,
+        source_unit_id: Some(UnitId(v7(2))),
+        content_locator: Some(ContentLocator::ExpressionSpan {
+            expression_id: e,
+            start: 0,
+            end: 1,
+        }),
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    };
+    let mut edited = m;
+    edited.content = UnitContent::Math {
+        expr: an_expr(e, "y", vec![]),
+    };
+    let err = save_content(
+        &prior,
+        std::slice::from_ref(&link),
+        &[edited],
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_allows_editing_math_when_a_link_targets_a_different_expression() {
+    // The keystone is per-expression: an edge anchored into a DIFFERENT expr must not block editing
+    // this uncited one (the `expression_id` filter, not "any inbound edge exists").
+    let e = ExpressionId(v7(40));
+    let other = ExpressionId(v7(41));
+    let m = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let prior = prose_content(vec![m.clone()]);
+    let link = Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(1)),
+        target_object_id: Some(ObjectId(v7(9))),
+        target_unit_id: None,
+        unresolved_text: None,
+        target_selector: None,
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: true,
+        source_unit_id: Some(UnitId(v7(2))),
+        content_locator: Some(ContentLocator::ExpressionSpan {
+            expression_id: other, // anchors a different expression
+            start: 0,
+            end: 1,
+        }),
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    };
+    let mut edited = m;
+    edited.content = UnitContent::Math {
+        expr: an_expr(e, "y", vec![]),
+    };
+    let out = save_content(
+        &prior,
+        std::slice::from_ref(&link),
+        &[edited],
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("editing an uncited expr is allowed even when another expr is cited");
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_rejects_a_typed_new_math_unit() {
+    // The relaxed create allows ONLY a rough/untyped/top-level Math unit — a typed one must go
+    // through the unit ops, never the coarse delta.
+    let prior = prose_content(vec![a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "x",
+        vec![],
+    )]);
+    let mut bad = a_math_unit(
+        UnitId(v7(3)),
+        ObjectId(v7(1)),
+        1,
+        an_expr(ExpressionId(v7(40)), "x", vec![]),
+    );
+    bad.unit_type = Some(UnitType::Theorem);
+    let err = save_content(&prior, &[], &[bad], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_allows_deleting_a_zero_anchor_math_unit() {
+    // Erasing an uncited display equation is a normal edit (the symmetric delete relaxation).
+    let m = a_math_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        an_expr(ExpressionId(v7(40)), "x", vec![]),
+    );
+    let prior = prose_content(vec![m]);
+    let out = save_content(&prior, &[], &[], &[UnitId(v7(2))], &op_ctx(), op_now())
+        .expect("zero-anchor math delete applies");
+    assert!(out.content.units.is_empty());
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_rejects_deleting_a_math_unit_with_occurrences() {
+    // A cited expression (occurrence selectors) can't be silently dropped — use a reviewable op.
+    let m = a_math_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        an_expr(
+            ExpressionId(v7(40)),
+            "x + y",
+            vec![Occurrence {
+                selector: CharSpan::new(0, 1),
+                target: None,
+            }],
+        ),
+    );
+    let prior = prose_content(vec![m]);
+    let err = save_content(&prior, &[], &[], &[UnitId(v7(2))], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_deleting_a_cited_math_unit() {
+    // An inbound ExpressionSpan edge anchors into the equation → deleting it would orphan the edge.
+    let e = ExpressionId(v7(40));
+    let m = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let prior = prose_content(vec![m]);
+    let link = Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(1)),
+        target_object_id: Some(ObjectId(v7(9))),
+        target_unit_id: None,
+        unresolved_text: None,
+        target_selector: None,
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: true,
+        source_unit_id: Some(UnitId(v7(2))),
+        content_locator: Some(ContentLocator::ExpressionSpan {
+            expression_id: e,
+            start: 0,
+            end: 1,
+        }),
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    };
+    let err = save_content(
+        &prior,
+        std::slice::from_ref(&link),
+        &[],
+        &[UnitId(v7(2))],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_two_units_sharing_an_expression_id() {
+    // §6.3a expr-id-stability backstop: two units may never carry the same MathExpression id (the editor
+    // copy-mints-fresh on paste; this is the integrity assertion that catches a duplicate that slips through).
+    let e = ExpressionId(v7(40));
+    let prior = prose_content(vec![]);
+    let m1 = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let m2 = a_math_unit(UnitId(v7(3)), ObjectId(v7(1)), 1, an_expr(e, "y", vec![]));
+    let err = save_content(&prior, &[], &[m1, m2], &[], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_editing_a_cross_object_cited_math_unit() {
+    // A CROSS-OBJECT citation INTO this expr is a TARGET-side `ExpressionRef` edge (glue loads it inbound).
+    // The keystone must refuse a save_content re-author of the cited equation (it would orphan the citation).
+    let e = ExpressionId(v7(40));
+    let m = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let prior = prose_content(vec![m.clone()]);
+    let citation = Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(9)), // a DIFFERENT object…
+        target_object_id: Some(ObjectId(v7(1))), // …cites this object's expr
+        target_unit_id: Some(UnitId(v7(2))),
+        unresolved_text: None,
+        target_selector: Some(TargetSelector::ExpressionRef {
+            expression_id: e,
+            span: None,
+        }),
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: false,
+        source_unit_id: None,
+        content_locator: None,
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    };
+    let mut edited = m;
+    edited.content = UnitContent::Math {
+        expr: an_expr(e, "y", vec![]),
+    };
+    let err = save_content(
+        &prior,
+        std::slice::from_ref(&citation),
+        &[edited],
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+/// A cross-object citation INTO `e`: a target-side `ExpressionRef` edge (the glue loads it inbound).
+fn cross_object_citation(e: ExpressionId) -> Link {
+    Link {
+        id: LinkId(v7(80)),
+        source_object_id: ObjectId(v7(9)),
+        target_object_id: Some(ObjectId(v7(1))),
+        target_unit_id: Some(UnitId(v7(2))),
+        unresolved_text: None,
+        target_selector: Some(TargetSelector::ExpressionRef {
+            expression_id: e,
+            span: None,
+        }),
+        link_type: LinkType::Related,
+        status: LinkStatus::Active,
+        from_content: false,
+        source_unit_id: None,
+        content_locator: None,
+        provenance_id: ProvenanceId(v7(9)),
+        created_at: op_now(),
+    }
+}
+
+#[test]
+fn save_content_rejects_deleting_a_cross_object_cited_math_unit() {
+    // The delete path shares the keystone with edit — a cross-object-cited equation can't be dropped either.
+    let e = ExpressionId(v7(40));
+    let m = a_math_unit(UnitId(v7(2)), ObjectId(v7(1)), 0, an_expr(e, "x", vec![]));
+    let prior = prose_content(vec![m]);
+    let citation = cross_object_citation(e);
+    let err = save_content(
+        &prior,
+        std::slice::from_ref(&citation),
+        &[],
+        &[UnitId(v7(2))],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn rewrite_surface_refuses_a_cross_object_cited_rename() {
+    // save_content routes a cited edit to rewrite_surface; rewrite_surface itself must REFUSE a cross-object
+    // (target-side `ExpressionRef`) rename — it can't re-anchor that citation yet, so it must not corrupt it.
+    let e = ExpressionId(v7(40));
+    let m = a_math_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        an_expr(e, "x + y", vec![]),
+    );
+    let content = prose_content(vec![m]);
+    let citation = cross_object_citation(e);
+    let err = rewrite_surface(
+        content,
+        std::slice::from_ref(&citation),
+        &RewriteSurfaceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            from: "x".into(),
+            to: "z".into(),
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
     assert_eq!(err_code(&err), "content_save_invalid");
 }
 

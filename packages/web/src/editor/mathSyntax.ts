@@ -37,6 +37,18 @@ function opensLiveAt(text: string, i: number): boolean {
   return opensAt(text, i) && !isDigit(text[i + 1]);
 }
 
+/** Display math fills its whole block (the inline recognizer skips `$$`, reserving it for here). If `text` (the
+ *  block's source, with `\n` for each within-block line break) is exactly `$$<inner>$$` with a non-empty inner,
+ *  return the inner source; else null. The inner MAY span multiple lines (`[\s\S]`), and the closing `$$` need
+ *  only be the last two chars — on its own line or at the end of a content line. (`$$$$`/partials aren't display.) */
+export function wholeDisplaySource(text: string): string | null {
+  // Tolerate only HORIZONTAL trailing whitespace after the closing `$$` (a stray space/tab) — NOT a newline:
+  // a trailing `\n` (a Shift-Enter after a closed equation) must stay a real line break (round-trippable),
+  // never be silently absorbed into the equation.
+  const m = /^\$\$([\s\S]+?)\$\$[ \t]*$/.exec(text);
+  return m ? m[1]! : null;
+}
+
 /** Find the inline-math regions in `text`. Each region is `[start, end)` over the string, covering the whole
  *  `$…$` (both `$`); the inner source is `text.slice(start + 1, end - 1)`. */
 export function findMathRegions(text: string): { start: number; end: number }[] {

@@ -390,16 +390,27 @@ pub fn set_unit_type(
     Ok(OpOutcome::new(content, ctx, now))
 }
 
-/// Apply a **prose-authoring delta** to an object's content — the §6.0a coarse, core-VALIDATED
+/// Apply a **content-authoring delta** to an object's content — the §6.0a coarse, core-VALIDATED
 /// authoring path (slice 2c). The editor sends only the units that changed (`upserts`) and the ids
 /// it removed (`deletes`); this applies them to `prior`, re-validates the result, and bumps the
-/// revision. It may edit a prose unit's `text`/`inline`, **re-order prose units** (a `position`
-/// change), add brand-new prose units, and delete prose units. It may NOT change any SEMANTIC facet
-/// of an existing unit — type / content-kind / parent / slot / status / declared_by / example_kind /
-/// extracted_structure / provenance are frozen; those transitions are the fine-grained ops' territory
-/// (`set_unit_type`/`rehome_subtree`/`split_unit`/`merge_units`). That freeze is what keeps coarse
-/// prose sync from reintroducing the editor-as-truth problem (§6.0a): the editor proposes content +
-/// ordering, the core adjudicates everything else.
+/// revision. It may edit a prose unit's `text`/`inline`, **re-order units** (a `position` change),
+/// add brand-new prose OR display-`Math` units, edit a display equation's surface in place (the
+/// editable-equation path, §6.3a — see below), and delete prose units. It may NOT change any SEMANTIC
+/// facet of an existing unit — type / content-KIND / parent / slot / status / declared_by /
+/// example_kind / extracted_structure / provenance are frozen; those transitions are the fine-grained
+/// ops' territory (`set_unit_type`/`toggle_expression_placement`/`rehome_subtree`/`split_unit`/
+/// `merge_units`). That freeze is what keeps coarse sync from reintroducing the editor-as-truth
+/// problem (§6.0a): the editor proposes content + ordering, the core adjudicates everything else.
+///
+/// **Display math (§6.3a editable equation).** A new top-level `Math` unit is accepted like a new
+/// prose unit (a brand-new expression has zero inbound anchors by construction, so authoring its
+/// surface is keystone-safe). An *edit* of an existing `Math` unit's surface is accepted ONLY while
+/// the expression is keystone-safe — zero occurrence selectors AND no inbound edge anchored into it
+/// (an `ExpressionSpan` locator in `current_links`); a cited equation must keep its char spans valid,
+/// which only `rewrite_surface` (span-remapping) guarantees, so the editor routes those through it.
+/// Promote/demote (inline↔display of an EXISTING expr) stays `toggle_expression_placement`; a `Math`
+/// unit is never DELETED here (op-managed). `current_links` is the glue-loaded edge set (the route's
+/// `loadCurrentLinks`, mirroring `rewrite_surface`); empty for objects with no edges yet.
 ///
 /// The glue persists the DELTA (upsert the `upserts`, delete the `deletes`); the returned
 /// `OpOutcome.content` is the whole applied result, for the editor to re-anchor against. Positions
@@ -409,6 +420,7 @@ pub fn set_unit_type(
 /// won't persist).
 pub fn save_content(
     prior: &MathContent,
+    current_links: &[Link],
     upserts: &[Unit],
     deletes: &[UnitId],
     ctx: &OpContext,
@@ -442,32 +454,58 @@ pub fn save_content(
         }
         match prior_by_id.get(&u.id) {
             Some(old) => {
-                // An existing unit may differ ONLY in prose `content` and `position` (reordering is a
-                // prose-authoring act). Swap those two into a clone of `old`; if the result still
-                // equals `u`, EVERY other field is unchanged (frozen exhaustively-by-construction —
-                // a future `Unit` field is protected automatically).
+                // An existing unit may differ ONLY in `content` and `position` (reordering is an
+                // authoring act). Swap those two into a clone of `old`; if the result still equals
+                // `u`, EVERY other field is unchanged (frozen exhaustively-by-construction — a future
+                // `Unit` field is protected automatically). The content KIND may never change here
+                // (prose↔math is `toggle_expression_placement`, never a coarse edit).
                 let mut frozen = (*old).clone();
                 frozen.content = u.content.clone();
                 frozen.position = u.position;
                 let kind_unchanged =
                     std::mem::discriminant(&u.content) == std::mem::discriminant(&old.content);
-                let prose_edit = matches!(u.content, UnitContent::Prose { .. });
-                if frozen != *u || !kind_unchanged || (!prose_edit && u.content != old.content) {
+                if frozen != *u || !kind_unchanged {
                     return Err(invalid(format!(
-                        "unit {} changes a semantic facet (type/kind/parent/slot/status/…) or non-prose \
-                         content; use the unit operations",
+                        "unit {} changes a semantic facet (type/kind/parent/slot/status/…); use the \
+                         unit operations",
                         u.id
                     )));
                 }
+                // A CONTENT edit is free for prose; for a display `Math` unit it is the editable-
+                // equation path (§6.3a), allowed ONLY while the OLD expression is keystone-safe (zero
+                // occurrences AND no inbound anchor) — else the editor must rename via `rewrite_surface`.
+                // No other kind is content-edited here (embed/… are op-managed).
+                if u.content != old.content {
+                    match &u.content {
+                        UnitContent::Prose { .. } => {}
+                        UnitContent::Math { .. } => {
+                            ensure_math_keystone_safe(old, current_links)?;
+                        }
+                        _ => {
+                            return Err(invalid(format!(
+                                "unit {} non-prose content change; use the unit operations",
+                                u.id
+                            )));
+                        }
+                    }
+                }
             }
             None => {
-                // A brand-new unit must be EXACTLY a rough, user-declared, untyped, TOP-LEVEL prose
-                // unit. Build the canonical expected shape field-by-field and compare, so nothing can
-                // be smuggled in — no parent/slot (structural, §6.0b) and no `extracted_structure`
-                // (an AI/candidate-decomposition record, §2.5). Only id/object_id/position/content/
-                // provenance vary.
-                if !matches!(u.content, UnitContent::Prose { .. }) {
-                    return Err(invalid(format!("new unit {} must be prose", u.id)));
+                // A brand-new unit must be EXACTLY a rough, user-declared, untyped, TOP-LEVEL unit
+                // holding PROSE or a display `Math` expression (a directly-typed equation — its
+                // expression has zero inbound anchors by construction, so authoring its surface is
+                // keystone-safe). Build the canonical expected shape field-by-field and compare, so
+                // nothing else can be smuggled in — no parent/slot (structural, §6.0b) and no
+                // `extracted_structure` (an AI/candidate-decomposition record, §2.5). Only
+                // id/object_id/position/content/provenance vary.
+                if !matches!(
+                    u.content,
+                    UnitContent::Prose { .. } | UnitContent::Math { .. }
+                ) {
+                    return Err(invalid(format!(
+                        "new unit {} must be prose or display math",
+                        u.id
+                    )));
                 }
                 let expected = Unit {
                     id: u.id,
@@ -485,8 +523,8 @@ pub fn save_content(
                 };
                 if *u != expected {
                     return Err(invalid(format!(
-                        "new unit {} must be a rough, user-declared, untyped, top-level prose unit \
-                         (no parent/slot/extracted_structure)",
+                        "new unit {} must be a rough, user-declared, untyped, top-level prose or \
+                         display-math unit (no parent/slot/extracted_structure)",
                         u.id
                     )));
                 }
@@ -494,15 +532,23 @@ pub fn save_content(
         }
     }
 
-    // Deletes may only remove existing prose, untyped units (dropping a typed/object unit is
-    // `dissolve_object`'s reviewable job).
+    // Deletes may remove an existing UNTYPED prose unit (always) or an UNTYPED display `Math` unit
+    // (only while keystone-safe — erasing an uncited equation is a normal edit; a cited one must go
+    // through a reviewable op, never a silent drop). A typed/object unit stays `dissolve_object`'s job.
     for d in deletes {
         match prior_by_id.get(d) {
-            Some(old)
-                if old.unit_type.is_none() && matches!(old.content, UnitContent::Prose { .. }) => {}
+            Some(old) if old.unit_type.is_some() => {
+                return Err(invalid(format!(
+                    "unit {d} is typed; clear/dissolve it via the unit operations"
+                )));
+            }
+            Some(old) if matches!(old.content, UnitContent::Prose { .. }) => {}
+            Some(old) if matches!(old.content, UnitContent::Math { .. }) => {
+                ensure_math_keystone_safe(old, current_links)?;
+            }
             Some(_) => {
                 return Err(invalid(format!(
-                    "unit {d} is typed or non-prose; clear/dissolve it via the unit operations"
+                    "unit {d} is non-prose/non-math; clear/dissolve it via the unit operations"
                 )));
             }
             None => return Err(invalid(format!("delete targets unknown unit {d}"))),
@@ -537,6 +583,54 @@ pub fn save_content(
     validate_content_well_formed(&result)?;
     result.revision = result.revision.saturating_add(1);
     Ok(OpOutcome::new(result, ctx, now))
+}
+
+/// The §6.3a keystone for a `save_content` mutation of a display `Math` unit — guards both an in-place
+/// surface EDIT and a DELETE. Re-authoring or removing an expression through the coarse delta (rather
+/// than via the unit ops) is allowed ONLY while nothing depends on its current char spans: zero
+/// occurrence selectors AND no edge that points into it. Two edge shapes count: a SOURCE-side
+/// `ContentLocator::ExpressionSpan` (this object's own content references the expr) and a TARGET-side
+/// `TargetSelector::ExpressionRef` (a CROSS-OBJECT citation INTO the expr). The glue must therefore pass
+/// BOTH this object's outbound links AND its inbound (target-side) links. A cited equation's anchors must
+/// stay valid — only `rewrite_surface` (GIVEN the anchors, remaps/stales them) for a rename and a
+/// reviewable op for removal preserve that; a free re-author or silent drop here would corrupt/orphan
+/// them. Checked on the existing expression (the editor preserves the id across an in-place edit).
+///
+/// NOTE: `rewrite_surface` re-anchors only source-side `ExpressionSpan` anchors today; remapping
+/// target-side `ExpressionRef` citations lands with the citation feature. Until then a cross-object-cited
+/// expression is simply BLOCKED from both paths here — safe (never orphaned), if not yet renamable.
+fn ensure_math_keystone_safe(old: &Unit, current_links: &[Link]) -> Result<(), ValidationError> {
+    let UnitContent::Math { expr } = &old.content else {
+        return Ok(()); // unreachable: the caller guarantees the kind is Math
+    };
+    if !expr.occurrences.is_empty() {
+        return Err(ValidationError::ContentSaveInvalid {
+            reason: format!(
+                "math unit {} is cited (its expression has occurrences); rename/remove it via the \
+                 unit operations, not save_content",
+                old.id
+            ),
+        });
+    }
+    let cited = current_links.iter().any(|l| {
+        matches!(
+            &l.content_locator,
+            Some(ContentLocator::ExpressionSpan { expression_id, .. }) if *expression_id == expr.id
+        ) || matches!(
+            &l.target_selector,
+            Some(TargetSelector::ExpressionRef { expression_id, .. }) if *expression_id == expr.id
+        )
+    });
+    if cited {
+        return Err(ValidationError::ContentSaveInvalid {
+            reason: format!(
+                "expression {} is cited by a link (inbound anchor or cross-object reference); \
+                 rename/remove it via the unit operations, not save_content",
+                expr.id
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Full intra-object well-formedness for a `save_content` result (§6.1a): every unit's content is
@@ -578,6 +672,17 @@ fn validate_content_well_formed(content: &MathContent) -> Result<(), ValidationE
             UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
             UnitContent::Math { expr } => validate_expression(expr)?,
             _ => {}
+        }
+    }
+    // §6.3a expression-id stability: a `MathExpression` id is unique — within one object no two units (a
+    // display `Math` OR an inline `Math` atom) may share an expr id. The editor copy-mints-fresh on paste;
+    // this is the integrity backstop (a duplicate would alias one expr's citations/anchors onto two units).
+    let mut seen_exprs: HashSet<ExpressionId> = HashSet::new();
+    for id in expr_ids_of(content) {
+        if !seen_exprs.insert(id) {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!("expression id {id} appears on more than one unit"),
+            });
         }
     }
     Ok(())
@@ -822,6 +927,26 @@ pub fn rewrite_surface(
             _ => None,
         })
         .collect();
+
+    // A CROSS-OBJECT citation INTO this expression (a TARGET-side `ExpressionRef`) can't be re-anchored yet —
+    // rewrite_surface only remaps SOURCE-side `ExpressionSpan` anchors. Refuse rather than silently corrupt the
+    // citation's span, so the save_content keystone's "use rewrite_surface" hatch is honest: BOTH paths block a
+    // cross-object-cited rename until real target-side re-anchoring lands (the glue passes inbound links too).
+    if current_links.iter().any(|l| {
+        matches!(
+            &l.target_selector,
+            Some(TargetSelector::ExpressionRef { expression_id, .. })
+                if *expression_id == input.expression_id
+        )
+    }) {
+        return Err(ValidationError::ContentSaveInvalid {
+            reason: format!(
+                "expression {} is cited cross-object; renaming a cross-object-cited expression is not \
+                 supported yet",
+                input.expression_id
+            ),
+        });
+    }
 
     let uidx = unit_index(&content, input.unit_id)?;
     validate_unit_inline(&content.units[uidx])?;

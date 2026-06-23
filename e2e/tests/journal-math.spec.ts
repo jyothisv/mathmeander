@@ -1,10 +1,9 @@
-// Slice 2d: inline math — EDITABLE-SYNTAX live preview. Inline math is literal `$…$` TEXT carrying an invisible
-// `mathExpr` mark (so it copy/pastes as text — the decisive win over the old atom). A live-preview decoration
-// RENDERS it with KaTeX (`.math-render`, parsed locally via the WASM `mathmeander` grammar) while the caret is
-// outside the span, and shows the RAW `$…$` source (`.math-src`) once the selection touches it. While a region
-// is still being typed (unclosed `$x`), its source is colored (`.math-src` open-region). A rendered equation
-// reveals its source on DOUBLE-click (single click only positions the caret beside it). Recognition is
-// NON-DESTRUCTIVE: an intact `$…$` is never silently un-marked by adjacent edits.
+// Slice 2d / structured-math increment 1: EDITABLE-SYNTAX math live preview. INLINE math is literal `$…$` TEXT
+// carrying an invisible `mathExpr` mark (so it copy/pastes as text — the decisive win over the old atom); a
+// live-preview decoration RENDERS it with KaTeX (`.math-render`) when the caret is outside and shows the RAW
+// `$…$` source (`.math-src`) once the selection touches it. DISPLAY math is a whole-line `$$…$$` (line-only):
+// it renders CENTERED (`.math-render-display`) and stays ALWAYS visible — clicking it reveals the `$$…$$`
+// source ABOVE the render for editing (`.math-src-display`), not a swap. Recognition is NON-DESTRUCTIVE.
 import { expect, test } from '@playwright/test';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -169,6 +168,83 @@ test('double-click reveals the source; a single click does not', async ({ page }
   await render.dblclick(); // double click → reveals the raw source
   await expect(page.locator('.day-editor .math-render')).toHaveCount(0);
   await expect(editor).toContainText('$x^2$');
+});
+
+// ── Display math ($$…$$, line-only) ──
+
+test('display $$…$$ on its own line renders centered (KaTeX displayMode) and persists across reload', async ({
+  page,
+}) => {
+  const today = await openToday(page, `journal-mathd-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$x^2$$'); // a whole-line display equation
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible(); // centered KaTeX (displayMode)
+  // real-WASM boundary: the mathmeander source `x^2` was transpiled to LaTeX `x^{2}`.
+  await expect(render.locator('.katex annotation').first()).toContainText('x^{2}');
+
+  await page.waitForResponse(put200, { timeout: 15000 }); // persisted as a standalone Math unit
+  await page.reload();
+  await expect(page.getByRole('heading', { name: today })).toBeVisible();
+  await expect(page.locator('.day-editor .math-render-display .katex')).toBeVisible(); // re-rendered from canonical
+});
+
+test('clicking a display equation reveals its $$…$$ source while the render stays visible', async ({
+  page,
+}) => {
+  await openToday(page, `journal-mathd-edit-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$a + b$$');
+  await page.waitForResponse(put200, { timeout: 15000 });
+  await page.reload();
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  await render.click(); // reveal the source ABOVE the render (NOT a swap — the render persists)
+  await expect(page.locator('.day-editor .math-src-display')).toBeVisible();
+  await expect(editor).toContainText('$$a + b$$');
+  await expect(render.locator('.katex')).toBeVisible(); // render still shown while editing the source
+});
+
+test('a single $…$ alone on a line stays INLINE, not display (recognition is line-only)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-mathd-lineonly-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$x$');
+  await page.keyboard.press('Enter'); // leave the span → it renders
+  await expect(page.locator('.day-editor .math-render')).toBeVisible(); // inline render
+  await expect(page.locator('.day-editor .math-render-display')).toHaveCount(0); // never a display block
+});
+
+test('display source spans MULTIPLE lines ($$ ⏎ … ⏎ $$) and renders centered', async ({ page }) => {
+  await openToday(page, `journal-mathd-multi-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$'); // open display mode
+  await page.keyboard.press('Enter'); // a newline INSIDE the equation (not a new block)
+  await page.keyboard.type('a + b');
+  await page.keyboard.press('Enter'); // another in-equation newline
+  await page.keyboard.type('$$'); // close → the whole multi-line block is one display equation
+  await expect(page.locator('.day-editor .math-render-display .katex')).toBeVisible();
+});
+
+test('Enter after the closing $$ goes to a new line BELOW the equation — the render stays (bug 2)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-mathd-exit-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$x^2$$');
+  await expect(page.locator('.day-editor .math-render-display .katex')).toBeVisible();
+  await page.keyboard.press('Enter'); // ONE Enter → exit to a new line; the equation must NOT un-render
+  await expect(page.locator('.day-editor .math-render-display .katex')).toBeVisible();
+  await page.keyboard.type('after'); // lands on the new line below the rendered equation
+  await expect(editor).toContainText('after');
+  await expect(page.locator('.day-editor .math-render-display .katex')).toBeVisible(); // still rendered
 });
 
 test('unparseable math is preserved, never dropped (§2.2)', async ({ page }) => {

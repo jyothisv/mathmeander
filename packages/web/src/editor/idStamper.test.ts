@@ -47,6 +47,30 @@ describe('idStamper', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  it('re-mints a duplicate unitId on a paste-cloned display equation (now a prose $$…$$ block)', () => {
+    const e = {
+      id: 'x-e',
+      surface_text: 'x',
+      surface_format: 'mathmeander' as const,
+      input_syntax: 'mathmeander' as const,
+      original_input: 'x',
+      parse_status: 'renderable' as const,
+      occurrences: [],
+    };
+    // A display equation is a prose block whose content is a `$$…$$` display span; a paste-clone aliases its id.
+    const eq = () =>
+      editorSchema.nodes.prose.create({ unitId: 'dup' }, [
+        editorSchema.text('$$x$$', [
+          editorSchema.marks.mathExpr.create({ expr: e, display: true }),
+        ]),
+      ]);
+    const doc = editorSchema.nodes.doc.create(null, [eq(), eq()]);
+    const out = stamp(doc);
+    expect(out.child(0).attrs.unitId).toBe('dup'); // first keeps it
+    expect(out.child(1).attrs.unitId).not.toBe('dup'); // clone re-minted → no duplicate-upsert 422
+    expect(out.child(1).attrs.unitId).toBeTruthy();
+  });
+
   it('a de-duplicated doc flushes to two DIFFERENT ids (no "appears twice in upserts")', () => {
     const doc = stamp(build(['dup', 'dup'])); // was the split-copies-attrs duplicate
     const prior: MathContent = {

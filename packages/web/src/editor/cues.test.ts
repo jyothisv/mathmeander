@@ -13,8 +13,11 @@ import {
   CUE_RE,
   applyCue,
   clearTypeAtStart,
+  displayEnter,
   enterParagraph,
   exitTypedUnit,
+  guardDisplayMerge,
+  guardDisplayMergeForward,
   insertHardBreak,
   mergeIntoPrevious,
 } from './cues';
@@ -334,5 +337,131 @@ describe('mergeIntoPrevious (Backspace soft-break join)', () => {
     expect(r2.ran).toBe(true);
     expect(r2.next!.doc.childCount).toBe(1);
     expect(r2.next!.doc.child(0).attrs.unitId).toBe('a');
+  });
+});
+
+describe('displayEnter — multi-line display source + clean exit', () => {
+  it('Enter at the END of a closed $$a$$ exits to a new plain unit (the equation stays intact)', () => {
+    const { ran, next } = capture(displayEnter, stateWith('$$a$$'));
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(2); // equation block + a new block below
+    expect(next!.doc.child(0).textContent).toBe('$$a$$'); // equation unchanged (still renders)
+    expect(next!.doc.child(1).content.size).toBe(0); // new empty plain unit, caret there
+  });
+
+  it('Enter inside an OPEN $$ inserts a newline (hard_break), staying in the equation', () => {
+    const { ran, next } = capture(displayEnter, stateWith('$$', { cursor: 2 }));
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(1); // no split — newline stays in the block
+    expect(breaksIn(next!.doc.child(0))).toBe(1);
+  });
+
+  it('Enter at the end of a MULTI-LINE closed $$⏎a$$ exits (one block → two)', () => {
+    const { ran, next } = capture(
+      displayEnter,
+      stateAtEnd([{ id: 'u1', lines: ['$$', 'a$$'] }], 0),
+    );
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(2);
+    expect(next!.doc.child(1).content.size).toBe(0);
+  });
+
+  it('Enter inside a closed $$a$$ (caret not at end) inserts a newline — multi-line edit, no exit', () => {
+    const { ran, next } = capture(displayEnter, stateWith('$$a$$', { cursor: 2 }));
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(1);
+    expect(breaksIn(next!.doc.child(0))).toBe(1);
+  });
+
+  it('returns false for a non-display block (the normal paragraph Enter applies)', () => {
+    expect(capture(displayEnter, stateWith('hello')).ran).toBe(false);
+    expect(capture(displayEnter, stateWith('an $x$ inline')).ran).toBe(false); // inline math, not display
+  });
+});
+
+describe('guardDisplayMerge — a display equation is atomic for block joins (Backspace/Delete)', () => {
+  it('Backspace at the start of a paragraph BELOW an equation is swallowed (equation preserved)', () => {
+    const s = stateAt(
+      [
+        { id: 'm', lines: ['$$x$$'] },
+        { id: 'p', lines: ['para'] },
+      ],
+      1,
+      0,
+    );
+    expect(guardDisplayMerge(s)).toBe(true); // → mergeIntoPrevious never runs, equation not dissolved
+  });
+  it('Backspace at the very start of the equation itself is swallowed', () => {
+    const s = stateAt(
+      [
+        { id: 'p', lines: ['para'] },
+        { id: 'm', lines: ['$$x$$'] },
+      ],
+      1,
+      0,
+    );
+    expect(guardDisplayMerge(s)).toBe(true);
+  });
+  it('does NOT swallow a normal merge of two plain paragraphs', () => {
+    const s = stateAt(
+      [
+        { id: 'a', lines: ['aaa'] },
+        { id: 'b', lines: ['bbb'] },
+      ],
+      1,
+      0,
+    );
+    expect(guardDisplayMerge(s)).toBe(false); // → mergeIntoPrevious handles it
+  });
+  it('does NOT swallow Backspace mid-source (offset > 0) — editing the equation source works', () => {
+    const s = stateAt([{ id: 'm', lines: ['$$x$$'] }], 0, 2);
+    expect(guardDisplayMerge(s)).toBe(false);
+  });
+  it('Delete at the end of a paragraph BEFORE an equation is swallowed (forward mirror)', () => {
+    const s = stateAtEnd(
+      [
+        { id: 'p', lines: ['para'] },
+        { id: 'm', lines: ['$$x$$'] },
+      ],
+      0,
+    );
+    expect(guardDisplayMergeForward(s)).toBe(true);
+  });
+  it('multi-line equation is also atomic (Backspace into a $$⏎a$$ block swallowed)', () => {
+    const s = stateAt(
+      [
+        { id: 'm', lines: ['$$', 'a$$'] },
+        { id: 'p', lines: ['x'] },
+      ],
+      1,
+      0,
+    );
+    expect(guardDisplayMerge(s)).toBe(true);
+  });
+  it('refuses NON-destructively: Backspace moves the caret up into the equation, no merge', () => {
+    const { ran, next } = capture(
+      guardDisplayMerge,
+      stateAt(
+        [
+          { id: 'm', lines: ['$$x$$'] },
+          { id: 'p', lines: ['para'] },
+        ],
+        1,
+        0,
+      ),
+    );
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(2); // both blocks intact — nothing dissolved
+    expect(next!.selection.$head.parent.textContent).toBe('$$x$$'); // caret moved into the equation
+  });
+  it('guardDisplayMergeForward does NOT fire between two plain paragraphs (negative)', () => {
+    const s = stateAtEnd(
+      [
+        { id: 'a', lines: ['aaa'] },
+        { id: 'b', lines: ['bbb'] },
+      ],
+      0,
+    );
+    expect(guardDisplayMergeForward(s)).toBe(false);
   });
 });

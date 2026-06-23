@@ -183,12 +183,15 @@ export function splitUnit(
 }
 
 /**
- * Apply a prose-authoring delta (§6.0a coarse path, slice 2c): the editor sends only changed/new
+ * Apply a content-authoring delta (§6.0a coarse path, slice 2c): the editor sends only changed/new
  * units + removed ids; the core re-validates and rejects semantic drift. `prior` is the loaded
- * content; new units' ids are glue-minted before this call. Returns the whole applied content.
+ * content; `currentLinks` is the loaded edge set (for the §6.3a display-math keystone check — a
+ * cited equation's surface may not be re-authored here, like `rewriteSurface`); new units' ids are
+ * glue-minted before this call. Returns the whole applied content.
  */
 export function saveContent(
   prior: MathContent,
+  currentLinks: Link[],
   upserts: Unit[],
   deletes: string[],
   ctx: OpContext,
@@ -198,6 +201,7 @@ export function saveContent(
     JSON.parse(
       addonSaveContent(
         JSON.stringify(prior),
+        JSON.stringify(currentLinks),
         JSON.stringify(upserts),
         JSON.stringify(deletes),
         JSON.stringify(ctx),

@@ -46,6 +46,37 @@ function proseUnit(objectId: string, position: number, text: string, id = uuidv7
   };
 }
 
+/** A rough display-math unit (the editable-equation shape the editor flushes, §6.3a). The expr is
+ *  fresh: zero occurrences, no inbound anchor — so the relaxed `save_content` accepts create + edit. */
+function mathUnit(
+  objectId: string,
+  position: number,
+  surface: string,
+  exprId = uuidv7(),
+  id = uuidv7(),
+): Unit {
+  return {
+    id,
+    object_id: objectId,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: {
+      kind: 'math',
+      expr: {
+        id: exprId,
+        surface_text: surface,
+        surface_format: 'mathmeander',
+        input_syntax: 'mathmeander',
+        original_input: surface,
+        parse_status: 'renderable',
+        occurrences: [],
+      },
+    },
+    provenance_id: uuidv7(), // placeholder; the route stamps the op's provenance on new units
+  };
+}
+
 function save(
   objectId: string,
   body: { expected_revision: number; upserts: Unit[]; deletes: string[] },
@@ -251,5 +282,146 @@ describe('save_content: prose authoring', () => {
     expect(res.statusCode).toBe(422);
     expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
     expect(await unitCount(dayId)).toBe(1);
+  });
+});
+
+// The §6.3a editable-equation path (the relaxed gate, this increment): a display `Math` unit is
+// created + edited through the SAME coarse delta as prose, keystone-guarded server-side (the route
+// loads current_links). Cited equations must fall back to rewrite_surface — proven here as a 422.
+describe('save_content: display math (the relaxed gate)', () => {
+  type OutcomeBody = { outcome: { content: { revision: number; units: Unit[] } } };
+  const exprOf = (u: Unit) => (u.content.kind === 'math' ? u.content.expr : null);
+
+  it('creates a display equation from nothing (new zero-anchor Math unit)', async () => {
+    const dayId = await newDay();
+    const m = mathUnit(dayId, 0, 'x^2');
+    const res = await save(dayId, { expected_revision: 1, upserts: [m], deletes: [] });
+    expect(res.statusCode).toBe(200);
+    const outcome = (res.json() as OutcomeBody).outcome;
+    expect(outcome.content.revision).toBe(2);
+    expect(outcome.content.units).toHaveLength(1);
+    expect(outcome.content.units[0]!.content.kind).toBe('math');
+    expect(exprOf(outcome.content.units[0]!)?.surface_text).toBe('x^2');
+    expect(await unitCount(dayId)).toBe(1);
+  });
+
+  it('edits an uncited display equation surface in place (keystone-safe)', async () => {
+    const dayId = await newDay();
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [mathUnit(dayId, 0, 'x')],
+      deletes: [],
+    });
+    const persisted = (r1.json() as OutcomeBody).outcome.content.units[0]!;
+    const priorExpr = exprOf(persisted)!;
+
+    // Re-author the surface in place — same expr id, no anchors → rides save_content like a prose edit.
+    const edited: Unit = {
+      ...persisted,
+      content: {
+        kind: 'math',
+        expr: { ...priorExpr, surface_text: 'y + 1', original_input: 'y + 1' },
+      },
+    };
+    const res = await save(dayId, { expected_revision: 2, upserts: [edited], deletes: [] });
+    expect(res.statusCode).toBe(200);
+    const after = (res.json() as OutcomeBody).outcome.content.units[0]!;
+    expect(after.content.kind).toBe('math');
+    expect(exprOf(after)?.surface_text).toBe('y + 1');
+    expect(exprOf(after)?.id).toBe(priorExpr.id); // identity preserved across the in-place edit
+  });
+
+  it('rejects re-authoring a CITED display equation (keystone → 422, use rewrite_surface)', async () => {
+    const dayId = await newDay();
+    const exprId = uuidv7();
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [mathUnit(dayId, 0, 'x', exprId)],
+      deletes: [],
+    });
+    const persisted = (r1.json() as OutcomeBody).outcome.content.units[0]!;
+
+    // An inbound content-derived edge anchored INTO the expression (an ExpressionSpan locator), the
+    // shape resolve_occurrence mints. Seeded directly; reuse the unit's provenance for the NOT-NULL FK.
+    await stack.db.query(
+      `INSERT INTO links (id, source_object_id, target_object_id, source_unit_id, content_locator,
+                          type, status, from_content, provenance_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,'related','active',true,$6,now())`,
+      [
+        uuidv7(),
+        dayId,
+        dayId,
+        persisted.id,
+        JSON.stringify({ kind: 'expression_span', expression_id: exprId, start: 0, end: 1 }),
+        persisted.provenance_id,
+      ],
+    );
+
+    // Now a free re-author of the surface must be refused — only rewrite_surface can remap the anchor.
+    const edited: Unit = {
+      ...persisted,
+      content: { kind: 'math', expr: { ...exprOf(persisted)!, surface_text: 'z' } },
+    };
+    const res = await save(dayId, { expected_revision: 2, upserts: [edited], deletes: [] });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
+    // unchanged on disk (the whole tx rolled back conceptually — nothing persisted)
+    const after = await stack.db.query<{ content: { expr: { surface_text: string } } }>(
+      `SELECT content FROM content_units WHERE id = $1`,
+      [persisted.id],
+    );
+    expect(after.rows[0]!.content.expr.surface_text).toBe('x');
+  });
+
+  it('repositions a display equation among prose (position-only, still accepted)', async () => {
+    const dayId = await newDay();
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [proseUnit(dayId, 0, 'before'), mathUnit(dayId, 1, 'x^2')],
+      deletes: [],
+    });
+    const units = (r1.json() as OutcomeBody).outcome.content.units;
+    const swapped = units.map((u) => ({ ...u, position: u.position === 0 ? 1 : 0 }));
+    const res = await save(dayId, { expected_revision: 2, upserts: swapped, deletes: [] });
+    expect(res.statusCode).toBe(200);
+    const after = (res.json() as OutcomeBody).outcome.content.units;
+    const math = after.find((u) => u.content.kind === 'math')!;
+    expect(math.position).toBe(0); // moved ahead of the prose
+  });
+
+  it('rejects re-authoring a CROSS-OBJECT-cited equation (inbound ExpressionRef → 422)', async () => {
+    const dayId = await newDay('2026-06-20');
+    const other = await newDay('2026-06-21'); // a second object that will cite this equation
+    const exprId = uuidv7();
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [mathUnit(dayId, 0, 'x', exprId)],
+      deletes: [],
+    });
+    const persisted = (r1.json() as OutcomeBody).outcome.content.units[0]!;
+
+    // A CROSS-OBJECT citation INTO this expr: a target-side `ExpressionRef` edge from `other` → this object.
+    // This is loaded by `loadInboundLinks` (WHERE target_object_id = this), which the keystone now inspects.
+    await stack.db.query(
+      `INSERT INTO links (id, source_object_id, target_object_id, target_unit_id, target_selector,
+                          type, status, from_content, provenance_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,'related','active',false,$6,now())`,
+      [
+        uuidv7(),
+        other,
+        dayId,
+        persisted.id,
+        JSON.stringify({ kind: 'expression_ref', expression_id: exprId }),
+        persisted.provenance_id,
+      ],
+    );
+
+    const edited: Unit = {
+      ...persisted,
+      content: { kind: 'math', expr: { ...exprOf(persisted)!, surface_text: 'z' } },
+    };
+    const res = await save(dayId, { expected_revision: 2, upserts: [edited], deletes: [] });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
   });
 });

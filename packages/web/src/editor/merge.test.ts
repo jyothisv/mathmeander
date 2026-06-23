@@ -134,11 +134,32 @@ describe('planMerge — same-unit clashes are conflicts (never a silent overwrit
     });
   });
 
-  it('non-flat content fails safe to conflict', () => {
+  it('NESTED (not-yet-editable) content fails safe to conflict', () => {
+    // A child unit (parent_unit_id set) is not admitted by `isEditable` — the merge construction only reasons
+    // about TOP-LEVEL units, so it bails to a manual conflict in lockstep with the editor's read-only gate.
+    const child: Unit = {
+      id: 'c',
+      object_id: OBJ,
+      parent_unit_id: 'p',
+      position: 0,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'prose', text: 'inside', inline: [] },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
+    };
+    const baseline = content([child], 1);
+    const server = content([child], 2);
+    expect(planMerge({ baseline, server, mine: delta([]) })).toEqual({
+      kind: 'conflict',
+      reason: 'non-flat',
+    });
+  });
+
+  it('a display-math day auto-merges a disjoint prose edit (top-level math is mergeable)', () => {
     const mathUnit: Unit = {
       id: 'm',
       object_id: OBJ,
-      position: 0,
+      position: 1,
       status: 'rough',
       declared_by: 'user',
       content: {
@@ -154,12 +175,19 @@ describe('planMerge — same-unit clashes are conflicts (never a silent overwrit
       },
       provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
     };
-    const baseline = content([mathUnit], 1);
-    const server = content([mathUnit], 2);
-    expect(planMerge({ baseline, server, mine: delta([]) })).toEqual({
-      kind: 'conflict',
-      reason: 'non-flat',
+    const p = (text: string): Unit => ({
+      id: 'p1',
+      object_id: OBJ,
+      position: 0,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'prose', text, inline: [] },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d2',
     });
+    const baseline = content([p('a'), mathUnit], 1);
+    const server = content([p('a'), mathUnit], 1); // server unchanged
+    const result = planMerge({ baseline, server, mine: delta([p('A')]) }); // I edited the prose only
+    expect(result.kind).toBe('merged'); // NOT a 'non-flat' conflict — the math day merges
   });
 });
 

@@ -3,10 +3,10 @@
 // content. The hard invariant: NEVER silently lose content. If my changes and the server's changes since
 // our last-synced baseline touch DIFFERENT units, we keep BOTH (additive). If they touch the SAME unit,
 // we refuse to guess and return a conflict (the caller keeps the user's work on screen + in the draft).
-// True live co-editing (CRDT/OT) is future; this is a conservative one-shot. Flat-prose only (the editor
-// surface); anything else fails safe to conflict.
+// True live co-editing (CRDT/OT) is future; this is a conservative one-shot. Gated in lockstep with the
+// editor (`isEditable`: top-level prose + display math); anything else (nesting, …) fails safe to conflict.
 import type { MathContent, Unit } from '@mathmeander/schema';
-import { contentKeyOf, isFlatProse } from './projection';
+import { contentKeyOf, isEditable } from './projection';
 
 /** The shape of `flushToContent`'s return — the editor's own delta. */
 export type Delta = { upserts: Unit[]; deletes: string[] };
@@ -76,9 +76,11 @@ function diffUnits(target: Unit[], base: MathContent): Delta {
 }
 
 export function planMerge({ baseline, server, mine, force }: MergeInput): MergeResult {
-  // Fail safe: the flat-prose construction below only reasons about top-level prose.
-  if (!isFlatProse(baseline) || !isFlatProse(server))
-    return { kind: 'conflict', reason: 'non-flat' };
+  // Gate in LOCKSTEP with the editor (`isEditable`): the additive construction below is purely unit-id-keyed
+  // (diff by id, apply my content edits to server units, drop my deletes, keep foreign units), so it handles
+  // TOP-LEVEL display-math units exactly like prose — disjoint edits on a display-math day still auto-merge.
+  // Anything the editor won't open (nested structure, etc.) also fails safe to a manual conflict here.
+  if (!isEditable(baseline) || !isEditable(server)) return { kind: 'conflict', reason: 'non-flat' };
 
   const baseIds = new Set(baseline.units.map((u) => u.id));
   const myEdited = mine.upserts.filter((u) => baseIds.has(u.id)); // edits/reorders to existing units
@@ -113,7 +115,11 @@ export function planMerge({ baseline, server, mine, force }: MergeInput): MergeR
     kept.push(edit ? { ...u, content: edit.content } : u); // apply my content edit; keep server fields
   }
   // Under `force`, an edit of mine to a unit the SERVER deleted is resurrected (keep-mine → my version
-  // survives); in detect mode that overlap already conflicted, so this is empty there.
+  // survives); in detect mode that overlap already conflicted, so this is empty there. A resurrected unit is
+  // re-emitted as a brand-new upsert (its id is no longer on the server) — `save_content` now accepts a new
+  // zero-anchor PROSE *or* `Math` unit (the structured-math relaxation), so a resurrected display equation no
+  // longer 422s. (A CITED Math unit can't be re-created this way — but the core keystone rejects that cleanly,
+  // it never silently corrupts; and citations don't exist yet.)
   const resurrected = myEdited.filter((u) => !srv.serverIds.has(u.id));
   // Append my new units (+ any resurrected) after the server's; renumber gap-free. (A pure REORDER of
   // server-untouched units is conservatively dropped — server order wins, no content lost.)

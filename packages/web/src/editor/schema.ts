@@ -9,6 +9,9 @@ import { Schema } from 'prosemirror-model';
 
 export const editorSchema = new Schema({
   nodes: {
+    // A day is a sequence of prose blocks. Display math (structured-math increment 1) is NOT a separate node:
+    // a whole-line `$$…$$` is a prose block whose sole content is a `display:true` `mathExpr` span (see
+    // mathRecognize / mathLivePreview), and the projection seam maps such a block ⇄ a canonical `Math` unit.
     doc: { content: 'prose+' },
 
     // One canonical prose unit. `unitId` is the identity carrier (null = a brand-new unit the
@@ -83,17 +86,22 @@ export const editorSchema = new Schema({
       },
     },
 
-    // Inline math as EDITABLE SYNTAX (slice 2d rework): the `$…$` source is LITERAL TEXT in the prose,
-    // carrying its MathExpression identity via this mark — so copy/paste yields `$…$` text and a cited
-    // expr keeps its id across in-place edits (§6.3a). A live-preview decoration (mathLivePreview) renders
-    // the marked span when the caret is outside it; the projection seam maps a marked `$…$` span ⇄ the
-    // canonical zero-width `Inline::Math` atom (so the model is unchanged). `surface_text` is authoritative
-    // from the inner text (between the `$`); the mark carries the rest of the expr. `inclusive: false` so
-    // typing past the closing `$` doesn't extend the mark; the recognizer (mathRecognize) re-fits it anyway.
+    // Math as EDITABLE SYNTAX (slice 2d / structured-math increment 1): the `$…$` (inline) or `$$…$$`
+    // (display) source is LITERAL TEXT in the prose, carrying its MathExpression identity via this mark —
+    // so copy/paste yields the source text and a cited expr keeps its id across in-place edits (§6.3a). A
+    // live-preview decoration (mathLivePreview) renders the marked span; `display:true` marks a whole-line
+    // `$$…$$` that renders as a CENTERED block (and projects to a standalone `Math` unit), vs the inline
+    // `$…$` zero-width atom. `surface_text` is authoritative from the inner text (between the delimiters);
+    // the mark carries the rest of the expr. `inclusive: false` so typing past the closing delimiter doesn't
+    // extend the mark; the recognizer (mathRecognize) re-fits it anyway.
     mathExpr: {
-      attrs: { expr: {} },
+      attrs: { expr: {}, display: { default: false } },
       inclusive: false,
-      toDOM: () => ['span', { class: 'math-src' }, 0],
+      toDOM: (mark) => [
+        'span',
+        { class: mark.attrs.display ? 'math-src math-src-display' : 'math-src' },
+        0,
+      ],
     },
   },
 });
