@@ -45,7 +45,8 @@ use crate::ids::{
 use crate::model::{
     CanonicalObject, CharSpan, ContentLocator, DeclaredBy, EmbedTarget, Inline, Link, LinkStatus,
     LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
-    OccurrenceTarget, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
+    OccurrenceTarget, RowRelation, Tagging, TargetSelector, Unit, UnitContent, UnitStatus,
+    UnitType,
 };
 use crate::patch::Patch;
 use crate::validate::{
@@ -232,6 +233,39 @@ pub struct ToggleExpressionPlacementInput {
     pub trailing_unit_id: UnitId,
 }
 
+/// `insert_equations` payload — mint an `Equations` container + its co-equal `Math`/`Prose` child
+/// rows in ONE op. This is the ONLY creation path for the container (the editor's `save_content`
+/// delta rejects new non-prose units, §6.0a). The container is inserted as a sibling immediately
+/// AFTER `anchor_unit_id`, inheriting its placement context (parent / status / declared_by /
+/// provenance), mirroring `displayize`. Each row carries PRE-BUILT content — the client built every
+/// `MathExpression` via the keystone `normalize_fresh` + a client-minted expr id; the core never
+/// parses surfaces here (the before-anchors invariant, §6.3a). Unit-level ids (container + rows) are
+/// glue-minted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct InsertEquationsInput {
+    pub expected_revision: u32,
+    /// The existing sibling to insert the container after; it supplies the placement context.
+    pub anchor_unit_id: UnitId,
+    /// Glue-minted id for the new container unit.
+    pub container_unit_id: UnitId,
+    /// The rows, in document order (each a co-equal line of the system).
+    pub rows: Vec<EquationRowInput>,
+}
+
+/// One co-equal row of an `Equations` system (a `Math` line or a `Prose` annotation), with its
+/// optional leading relation. `content` must be `Math`/`Prose` (else `EquationsRowNotPermitted`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct EquationRowInput {
+    /// Glue-minted id for this row unit.
+    pub unit_id: UnitId,
+    /// `Math { expr }` (client-built) or `Prose { .. }`.
+    pub content: UnitContent,
+    /// The relation this row asserts (alignment/connective); `None` if intrinsic to its content.
+    pub row_relation: Option<RowRelation>,
+}
+
 /// `rewrite_surface` payload — a variable rename over an expression's surface. `from`/`to`
 /// build a `SurfaceEdit::RenameIdent` internally (the surface edit type stays surface-internal,
 /// never on the wire). The op is also given the current edges (an arg, not a field) so it can
@@ -412,6 +446,14 @@ pub fn set_unit_type(
 /// unit is never DELETED here (op-managed). `current_links` is the glue-loaded edge set (the route's
 /// `loadCurrentLinks`, mirroring `rewrite_surface`); empty for objects with no edges yet.
 ///
+/// **Systems (§F2 co-equal equations).** The same relaxation extends one level down: a new top-level
+/// `Equations` CONTAINER and new Math/Prose ROWS under it (each row's `parent_unit_id` pointing at that
+/// container) are accepted here, so the editor authors a system through the coarse delta — not the
+/// `insert_equations` op (which remains the import/programmatic path). A row must be Math/Prose (never a
+/// nested container, §F2) and its parent must be an `Equations` unit in the result; rows edit/reorder/delete
+/// like any prose/math unit (math rows keystone-guarded), and deleting a container requires deleting its
+/// rows in the same delta. No surface-grammar change: alignment is derived at render.
+///
 /// The glue persists the DELTA (upsert the `upserts`, delete the `deletes`); the returned
 /// `OpOutcome.content` is the whole applied result, for the editor to re-anchor against. Positions
 /// ride in on the units; this validates per-parent uniqueness (the DB `(object_id, parent_unit_id,
@@ -430,6 +472,9 @@ pub fn save_content(
 
     let prior_by_id: HashMap<UnitId, &Unit> = prior.units.iter().map(|u| (u.id, u)).collect();
     let delete_set: HashSet<UnitId> = deletes.iter().copied().collect();
+    // Built up-front (also used in the apply phase) so a new ROW can resolve its parent container
+    // even when that container is ANOTHER new unit in the same delta (a system created in one PUT).
+    let upsert_by_id: HashMap<UnitId, &Unit> = upserts.iter().map(|u| (u.id, u)).collect();
 
     let invalid = |reason: String| ValidationError::ContentSaveInvalid { reason };
 
@@ -491,40 +536,104 @@ pub fn save_content(
                 }
             }
             None => {
-                // A brand-new unit must be EXACTLY a rough, user-declared, untyped, TOP-LEVEL unit
-                // holding PROSE or a display `Math` expression (a directly-typed equation — its
-                // expression has zero inbound anchors by construction, so authoring its surface is
-                // keystone-safe). Build the canonical expected shape field-by-field and compare, so
-                // nothing else can be smuggled in — no parent/slot (structural, §6.0b) and no
-                // `extracted_structure` (an AI/candidate-decomposition record, §2.5). Only
-                // id/object_id/position/content/provenance vary.
-                if !matches!(
-                    u.content,
-                    UnitContent::Prose { .. } | UnitContent::Math { .. }
-                ) {
-                    return Err(invalid(format!(
-                        "new unit {} must be prose or display math",
-                        u.id
-                    )));
-                }
-                let expected = Unit {
-                    id: u.id,
-                    object_id: u.object_id,
-                    parent_unit_id: None,
-                    position: u.position,
-                    slot: None,
-                    unit_type: None,
-                    example_kind: None,
-                    status: UnitStatus::Rough,
-                    declared_by: DeclaredBy::User,
-                    extracted_structure: None,
-                    content: u.content.clone(),
-                    provenance_id: u.provenance_id,
+                // A brand-new unit must be EXACTLY a rough, user-declared, untyped unit of one of:
+                //   • a TOP-LEVEL prose / display-`Math` unit (a directly-typed paragraph or equation —
+                //     its expression has zero inbound anchors by construction, so authoring its surface
+                //     is keystone-safe), OR
+                //   • a TOP-LEVEL `Equations` CONTAINER (a co-equal system, §F2), OR
+                //   • a Math/Prose ROW whose `parent_unit_id` is an `Equations` container present in this
+                //     result (prior ∪ upserts) — the systems-editor path, mirroring the display-`Math`
+                //     relaxation: the editor authors a system through the coarse delta, not the
+                //     `insert_equations` op.
+                // Build the canonical expected shape for the matching case and compare field-by-field, so
+                // nothing semantic (slot/extracted_structure/type/…) can be smuggled in. Only
+                // id/object_id/position/content/provenance (+ a row's `parent_unit_id`/`row_relation`) vary.
+                let expected = match u.parent_unit_id {
+                    None => {
+                        if !matches!(
+                            u.content,
+                            UnitContent::Prose { .. }
+                                | UnitContent::Math { .. }
+                                | UnitContent::Equations
+                        ) {
+                            return Err(invalid(format!(
+                                "new top-level unit {} must be prose, display math, or a system \
+                                 (Equations) container",
+                                u.id
+                            )));
+                        }
+                        Unit {
+                            id: u.id,
+                            object_id: u.object_id,
+                            parent_unit_id: None,
+                            position: u.position,
+                            slot: None,
+                            row_relation: None,
+                            unit_type: None,
+                            example_kind: None,
+                            status: UnitStatus::Rough,
+                            declared_by: DeclaredBy::User,
+                            extracted_structure: None,
+                            content: u.content.clone(),
+                            provenance_id: u.provenance_id,
+                        }
+                    }
+                    Some(parent_id) => {
+                        // The parent must be a TOP-LEVEL `Equations` container (one level only, §F2 — a
+                        // container is itself always top-level today; the `parent_unit_id.is_none()` guard
+                        // keeps that true defensively if a deeper nest is ever attempted).
+                        let parent = prior_by_id
+                            .get(&parent_id)
+                            .copied()
+                            .or_else(|| upsert_by_id.get(&parent_id).copied());
+                        match parent {
+                            Some(p)
+                                if matches!(p.content, UnitContent::Equations)
+                                    && p.parent_unit_id.is_none() => {}
+                            Some(_) => {
+                                return Err(invalid(format!(
+                                    "new row {} names parent {parent_id}, which is not an Equations \
+                                     container",
+                                    u.id
+                                )));
+                            }
+                            None => {
+                                return Err(invalid(format!(
+                                    "new row {} names parent {parent_id} not in this object",
+                                    u.id
+                                )));
+                            }
+                        }
+                        // An Equations row is a Math/Prose line — never a nested container.
+                        if !matches!(
+                            u.content,
+                            UnitContent::Prose { .. } | UnitContent::Math { .. }
+                        ) {
+                            return Err(ValidationError::EquationsRowNotPermitted {
+                                row_kind: content_kind_tag(&u.content).into(),
+                            });
+                        }
+                        Unit {
+                            id: u.id,
+                            object_id: u.object_id,
+                            parent_unit_id: Some(parent_id),
+                            position: u.position,
+                            slot: None,
+                            row_relation: u.row_relation,
+                            unit_type: None,
+                            example_kind: None,
+                            status: UnitStatus::Rough,
+                            declared_by: DeclaredBy::User,
+                            extracted_structure: None,
+                            content: u.content.clone(),
+                            provenance_id: u.provenance_id,
+                        }
+                    }
                 };
                 if *u != expected {
                     return Err(invalid(format!(
-                        "new unit {} must be a rough, user-declared, untyped, top-level prose or \
-                         display-math unit (no parent/slot/extracted_structure)",
+                        "new unit {} must be a rough, user-declared, untyped \
+                         {{prose | display-math | system | row}} unit (no slot/extracted_structure)",
                         u.id
                     )));
                 }
@@ -546,6 +655,10 @@ pub fn save_content(
             Some(old) if matches!(old.content, UnitContent::Math { .. }) => {
                 ensure_math_keystone_safe(old, current_links)?;
             }
+            // An untyped `Equations` container (a system) is deletable; the editor must delete its rows
+            // in the same delta — a surviving row whose parent vanished is caught downstream by
+            // `validate_content_well_formed`'s parent-resolution check (a clean 422, never an orphan).
+            Some(old) if matches!(old.content, UnitContent::Equations) => {}
             Some(_) => {
                 return Err(invalid(format!(
                     "unit {d} is non-prose/non-math; clear/dissolve it via the unit operations"
@@ -557,7 +670,6 @@ pub fn save_content(
 
     // Apply the delta: keep prior order (minus deletes, with upserts substituted), then append
     // brand-new units in the order the editor sent them.
-    let upsert_by_id: HashMap<UnitId, &Unit> = upserts.iter().map(|u| (u.id, u)).collect();
     let mut units: Vec<Unit> = Vec::with_capacity(prior.units.len() + upserts.len());
     for u in &prior.units {
         if delete_set.contains(&u.id) {
@@ -733,6 +845,8 @@ pub fn split_unit(
         // Same position as the source half; `renumber_siblings` orders the two by vector order.
         position,
         slot: base.slot.clone(),
+        // The new continuation half asserts no new connective; the original half keeps its relation.
+        row_relation: None,
         unit_type: base.unit_type,
         example_kind: base.example_kind,
         status: base.status,
@@ -891,6 +1005,92 @@ pub fn toggle_expression_placement(
         }
         renumber_siblings(&mut content, parent);
     }
+    content.revision = content.revision.saturating_add(1);
+    Ok(OpOutcome::new(content, ctx, now))
+}
+
+/// Mint an `Equations` container plus its co-equal child rows in one op — the structured-insert
+/// sibling of `displayize`. The container is placed immediately after `anchor_unit_id`, inheriting
+/// its placement context; each row becomes a `Math`/`Prose` child (`parent_unit_id` → the container,
+/// `position` 0..n). Rows arrive PRE-BUILT (the client built each `MathExpression`; the core never
+/// parses surfaces — the §6.3a before-anchors keystone). No links/taggings/remap: expr ids are fresh.
+pub fn insert_equations(
+    mut content: MathContent,
+    input: &InsertEquationsInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    let idx = unit_index(&content, input.anchor_unit_id)?;
+
+    // Every row must be a Math/Prose line — the math-row model is ONE level (no nested containers).
+    for row in &input.rows {
+        if !matches!(
+            row.content,
+            UnitContent::Prose { .. } | UnitContent::Math { .. }
+        ) {
+            return Err(ValidationError::EquationsRowNotPermitted {
+                row_kind: content_kind_tag(&row.content).into(),
+            });
+        }
+    }
+
+    // Inherit the anchor sibling's placement context (mirrors `displayize`).
+    let anchor = &content.units[idx];
+    let object_id = anchor.object_id;
+    let parent = anchor.parent_unit_id;
+    let base_position = anchor.position;
+    let status = anchor.status;
+    let declared_by = anchor.declared_by;
+    let provenance_id = anchor.provenance_id;
+
+    let container = Unit {
+        id: input.container_unit_id,
+        object_id,
+        parent_unit_id: parent,
+        position: base_position, // `renumber_siblings` assigns the gap-free sibling order
+        slot: None,
+        row_relation: None,
+        unit_type: None,
+        example_kind: None,
+        status,
+        declared_by,
+        extracted_structure: None,
+        content: UnitContent::Equations,
+        provenance_id,
+    };
+    let rows: Vec<Unit> = input
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| Unit {
+            id: row.unit_id,
+            object_id,
+            parent_unit_id: Some(input.container_unit_id),
+            position: i as u32,
+            slot: None,
+            row_relation: row.row_relation,
+            unit_type: None,
+            example_kind: None,
+            status,
+            declared_by,
+            extracted_structure: None,
+            content: row.content.clone(),
+            provenance_id,
+        })
+        .collect();
+
+    // Container right after the anchor; its rows after it.
+    content.units.insert(idx + 1, container);
+    for (off, row) in rows.into_iter().enumerate() {
+        content.units.insert(idx + 2 + off, row);
+    }
+    renumber_siblings(&mut content, parent);
+    renumber_siblings(&mut content, Some(input.container_unit_id));
+
+    // Integrity backstop over the whole object: in-bounds spans + no duplicate expr id across units
+    // (a client-supplied row must not alias an existing expression's identity, §6.3a).
+    validate_content_well_formed(&content)?;
+
     content.revision = content.revision.saturating_add(1);
     Ok(OpOutcome::new(content, ctx, now))
 }
@@ -1166,6 +1366,7 @@ pub fn materialize_object(
             parent_unit_id: new_parent,
             position: u.position,
             slot: u.slot.clone(),
+            row_relation: u.row_relation,
             unit_type: u.unit_type,
             example_kind: u.example_kind,
             status: u.status,
@@ -1289,13 +1490,18 @@ pub fn rehome_subtree(
 
     // The root's slot in the host: the embed takes its exact place (same parent, position, AND slot —
     // a subtree declared inside a `case_split`/proof body keeps its container-internal role).
-    let (root_parent, root_position, root_slot) = {
+    let (root_parent, root_position, root_slot, root_relation) = {
         let root = host
             .units
             .iter()
             .find(|u| u.id == input.subtree_root)
             .expect("subtree_closure verified the root exists");
-        (root.parent_unit_id, root.position, root.slot.clone())
+        (
+            root.parent_unit_id,
+            root.position,
+            root.slot.clone(),
+            root.row_relation,
+        )
     };
 
     // Partition: the moved units leave the host and re-home onto the new object (ids preserved).
@@ -1322,6 +1528,8 @@ pub fn rehome_subtree(
         parent_unit_id: root_parent,
         position: root_position,
         slot: root_slot,
+        // The embed stands exactly where the rehomed root row stood, keeping its connective.
+        row_relation: root_relation,
         unit_type: None,
         example_kind: None,
         status: UnitStatus::Parsed,
@@ -1590,6 +1798,7 @@ fn displayize(
         parent_unit_id: parent,
         position: base_position, // renumber_siblings (caller) assigns the gap-free order
         slot: slot.clone(),
+        row_relation: None,
         unit_type,
         example_kind,
         status,
@@ -1607,6 +1816,7 @@ fn displayize(
         parent_unit_id: parent,
         position: base_position,
         slot: None,
+        row_relation: None,
         unit_type: None,
         example_kind: None,
         status,
@@ -1830,12 +2040,13 @@ fn subtree_closure(
     Ok(set)
 }
 
-fn content_kind_tag(c: &UnitContent) -> &'static str {
+pub(crate) fn content_kind_tag(c: &UnitContent) -> &'static str {
     match c {
         UnitContent::Prose { .. } => "prose",
         UnitContent::Math { .. } => "math",
         UnitContent::List { .. } => "list",
         UnitContent::Derivation => "derivation",
+        UnitContent::Equations => "equations",
         UnitContent::CaseSplit => "case_split",
         UnitContent::Group => "group",
         UnitContent::Embed { .. } => "embed",

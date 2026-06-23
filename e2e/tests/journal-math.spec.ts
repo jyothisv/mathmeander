@@ -5,8 +5,10 @@
 // it renders CENTERED (`.math-render-display`) and stays ALWAYS visible — clicking it reveals the `$$…$$`
 // source ABOVE the render for editing (`.math-src-display`), not a swap. Recognition is NON-DESTRUCTIVE.
 import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
+const API = 'http://localhost:8787';
 
 function todayLocalISO(): string {
   const d = new Date();
@@ -256,4 +258,93 @@ test('unparseable math is preserved, never dropped (§2.2)', async ({ page }) =>
   await expect(page.locator('.day-editor .math-render')).toHaveCount(1);
   await page.locator('.day-editor .math-render').dblclick(); // reveal the source
   await expect(editor).toContainText('x ^^'); // exactly what was typed, preserved
+});
+
+// Slice 2-A (the math-row model): a day carrying an `Equations` system is NOT editable (a non-prose
+// container), so it falls back to the read-only `MathContentView` — which now renders the system's
+// rows with KaTeX instead of swallowing them (they used to fall through to `null`). Seed via the API
+// (the editor authoring path is 2-B): author a prose anchor, then `insert-equations` onto it.
+test('a day with an Equations system renders its rows read-only (KaTeX), persisting across reload', async ({
+  page,
+}) => {
+  const today = await openToday(page, `journal-eqns-${Date.now()}@mathmeander.local`);
+  await page.locator('.ProseMirror').click();
+  await page.keyboard.type('A linear system:');
+  await page.waitForResponse(put200); // the prose anchor unit is saved
+
+  const token = await page.evaluate(() => localStorage.getItem('mathmeander.session.token'));
+  const auth = { authorization: `Bearer ${token}` };
+  const day = await (
+    await page.request.get(`${API}/api/journal/days/${today}`, { headers: auth })
+  ).json();
+  const objectId = day.object.id as string;
+  const revision = day.object.revision as number;
+  const anchorId = day.graph.content
+    .flatMap((c: { units: { id: string; content: { kind: string } }[] }) => c.units)
+    .find((u: { content: { kind: string } }) => u.content.kind === 'prose').id as string;
+
+  const expr = (s: string) => ({
+    id: randomUUID(),
+    surface_text: s,
+    surface_format: 'mathmeander',
+    original_input: s,
+    parse_status: 'renderable',
+    occurrences: [],
+  });
+  const res = await page.request.post(`${API}/api/objects/${objectId}/ops/insert-equations`, {
+    headers: auth,
+    data: {
+      expected_revision: revision,
+      anchor_unit_id: anchorId,
+      container_unit_id: randomUUID(), // overwritten server-side
+      rows: [
+        {
+          unit_id: randomUUID(),
+          content: { kind: 'math', expr: expr('2x+y=1') },
+          row_relation: 'eq',
+        },
+        { unit_id: randomUUID(), content: { kind: 'math', expr: expr('x-y=4') } },
+      ],
+    },
+  });
+  expect(res.status()).toBe(200);
+
+  await page.reload();
+  const eqns = page.locator('.equations');
+  await expect(eqns).toBeVisible();
+  await expect(eqns.locator('.row')).toHaveCount(2);
+  await expect(eqns.locator('.katex').first()).toBeVisible(); // rows rendered by KaTeX
+});
+
+test('a $$…$$ with ≥2 non-empty lines is a SYSTEM: renders aligned rows + persists across reload', async ({
+  page,
+}) => {
+  const today = await openToday(page, `journal-system-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  // Type a two-equation system: $$, then one equation per line, then close $$.
+  await page.keyboard.type('$$');
+  await page.keyboard.press('Enter'); // a newline INSIDE the equation
+  await page.keyboard.type('2x + y = 1');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('x - y = 4');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$'); // close → ≥2 non-empty lines = a co-equal system
+
+  // Renders as an aligned stack of rows (the 2-A `.equations` layout), each row KaTeX-rendered.
+  await expect(page.locator('.day-editor .equations .row')).toHaveCount(2);
+  await expect(page.locator('.day-editor .equations .row .katex').first()).toBeVisible();
+
+  // Persisted as an Equations container + 2 Math rows (a coarse save_content delta — no op).
+  await page.waitForResponse(put200, { timeout: 15000 });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: today })).toBeVisible();
+  await expect(page.locator('.day-editor .equations .row')).toHaveCount(2); // re-rendered from canonical
+
+  // EDIT a now-PERSISTED row: click the render to reveal the source, type into it, and confirm it SAVES.
+  // An existing row must keep its (route-stamped) provenance — re-minting it makes save_content 422 on every
+  // flush ("Couldn't save"). So a successful PUT here proves the edited-row frozen-facet bug is fixed.
+  await page.locator('.day-editor .equations').first().click();
+  await page.keyboard.type('z');
+  await page.waitForResponse(put200, { timeout: 15000 });
 });

@@ -1,29 +1,71 @@
 // The unit-identity stamper (extracted from DayEditor so it is node-testable: deps are only
-// prosemirror-state + uuid). Every prose block carries a client-minted `unitId` (§6.3) so the flush
-// distinguishes new-vs-existing by id and never double-creates. The plugin runs as an appendTransaction
-// after every change and enforces TWO things in one pass, walking the doc in DOCUMENT ORDER:
+// prosemirror-state + uuid + the pure mathSyntax recognizer). Every prose block carries a client-minted
+// `unitId` (§6.3) so the flush distinguishes new-vs-existing by id and never double-creates; a multi-line
+// `$$…$$` SYSTEM block (structured-math 2-B) ALSO carries a stable `rowIds` array (one id per co-equal row).
+// The plugin runs as an appendTransaction after every change and enforces, walking the doc in DOCUMENT ORDER:
 //   1. a block with a `null` id gets a fresh one (a brand-new block);
-//   2. a block whose id was ALREADY SEEN earlier in the doc gets re-minted — so the FIRST occurrence keeps
-//      the id and any duplicate is replaced. This kills the duplicate-id-on-split class of bug at the
-//      source: ProseMirror's `splitBlock` copies a block's attrs (incl. `unitId`) onto the new half, which
-//      would otherwise send the same id twice in one save and trip the core's one-home gate (§6.0b) — a
-//      deterministic 422 that strands the editor on "Couldn't save". Firing on the split transaction means
-//      live edits never hit it; firing via `stampNullIds` on restore auto-heals an already-stuck draft.
+//   2. a block whose id was ALREADY SEEN earlier gets re-minted — FIRST occurrence keeps the id, any
+//      duplicate is replaced. This kills the duplicate-id-on-split bug at the source: ProseMirror's
+//      `splitBlock` copies a block's attrs (incl. `unitId`/`rowIds`) onto the new half, which would otherwise
+//      send the same id twice in one save and trip the core's one-home gate (§6.0b) — a deterministic 422.
+//   3. `rowIds` is SYNCED to the system's row count (a multi-line `$$…$$`): one id per non-empty line,
+//      existing ids preserved POSITIONALLY (so an in-place row edit keeps its id → no save-churn), missing
+//      minted fresh, duplicates re-minted (paste safety). A non-system block has `rowIds = []`. Row ids and
+//      unit ids share one id space (a row IS a unit), so they dedup against the same `seen` set.
 import { Plugin } from 'prosemirror-state';
+import type { Node as PMNode } from 'prosemirror-model';
 import { v7 as uuidv7 } from 'uuid';
+import { splitSystemRows, wholeDisplaySource } from './mathSyntax';
+
+/** A block's source with `\n` per hard_break (a system's `$$…$$` is multi-line); null if it has a
+ *  non-text/non-hard_break inline (then it's not a clean display block). */
+function blockSource(block: PMNode): string | null {
+  let text = '';
+  let ok = true;
+  block.forEach((child) => {
+    if (child.isText) text += child.text ?? '';
+    else if (child.type.name === 'hard_break') text += '\n';
+    else ok = false;
+  });
+  return ok ? text : null;
+}
+
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
 
 export const idStamper = new Plugin({
   appendTransaction(_trs, _oldState, newState) {
     const seen = new Set<string>();
     let tr: ReturnType<typeof newState.tr.setNodeAttribute> | null = null;
     newState.doc.descendants((node, pos) => {
-      // Identity-bearing blocks are prose blocks (display equations are prose blocks too — a `$$…$$` span).
+      // Identity-bearing blocks are prose blocks (display equations + systems are prose blocks too).
       if (node.type.name !== 'prose') return false;
-      const id = node.attrs.unitId as string | null;
+
+      // (1)+(2) unitId — fresh if null, re-minted if a duplicate of an earlier block.
+      let id = node.attrs.unitId as string | null;
       if (id == null || seen.has(id)) {
-        tr = (tr ?? newState.tr).setNodeAttribute(pos, 'unitId', uuidv7());
-      } else {
-        seen.add(id);
+        id = uuidv7();
+        tr = (tr ?? newState.tr).setNodeAttribute(pos, 'unitId', id);
+      }
+      seen.add(id);
+
+      // (3) rowIds — synced to the row count of a multi-line `$$…$$` system; [] otherwise.
+      const src = blockSource(node);
+      const inner = src != null ? wholeDisplaySource(src) : null;
+      const rowCount = inner != null ? splitSystemRows(inner).length : 0;
+      const cur = (node.attrs.rowIds as string[] | undefined) ?? [];
+      const next: string[] = [];
+      if (rowCount >= 2) {
+        for (let i = 0; i < rowCount; i++) {
+          let rid = i < cur.length ? cur[i]! : undefined;
+          if (rid == null || seen.has(rid)) rid = uuidv7();
+          seen.add(rid);
+          next.push(rid);
+        }
+      }
+      if (!sameIds(cur, next)) {
+        tr = (tr ?? newState.tr).setNodeAttribute(pos, 'rowIds', next);
       }
       return false;
     });

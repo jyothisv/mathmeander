@@ -31,6 +31,7 @@ fn unit(id_tag: u128, position: u32, unit_type: Option<UnitType>) -> Unit {
         parent_unit_id: None,
         position,
         slot: None,
+        row_relation: None,
         unit_type,
         example_kind: None,
         status: UnitStatus::Rough,

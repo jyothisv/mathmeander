@@ -27,15 +27,16 @@ use crate::model::{
     DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle, HandleScope,
     HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
     MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence, OccurrenceTarget, Origin,
-    ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget, SurfaceFormat, Tag, Tagging,
-    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
+    ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget, RowRelation, SurfaceFormat,
+    Tag, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
-    DissolveObjectInput, ExpressionIdRemap, InsertReferenceInput, LinkDraft,
-    MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput,
-    ResolveOccurrenceInput, ResolveTarget, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
-    ToggleExpressionPlacementInput, UnitIdRemap,
+    DissolveObjectInput, EquationRowInput, ExpressionIdRemap, InsertEquationsInput,
+    InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent, MergeUnitsInput,
+    OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput, ResolveTarget,
+    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
+    UnitIdRemap,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
@@ -77,6 +78,7 @@ pub fn artifact_json() -> String {
     defs.insert("SurfaceFormat", inline_schema_for::<SurfaceFormat>());
     defs.insert("InputSyntax", inline_schema_for::<InputSyntax>());
     defs.insert("ParseStatus", inline_schema_for::<ParseStatus>());
+    defs.insert("RowRelation", inline_schema_for::<RowRelation>());
     // Slice 1 content model + tagged unions (§6.0/§6.1d/§6.3a)
     defs.insert("CharSpan", inline_schema_for::<CharSpan>());
     defs.insert("MathExpression", inline_schema_for::<MathExpression>());
@@ -129,6 +131,11 @@ pub fn artifact_json() -> String {
         "RewriteSurfaceInput",
         inline_schema_for::<RewriteSurfaceInput>(),
     );
+    defs.insert(
+        "InsertEquationsInput",
+        inline_schema_for::<InsertEquationsInput>(),
+    );
+    defs.insert("EquationRowInput", inline_schema_for::<EquationRowInput>());
     defs.insert("LinkDraft", inline_schema_for::<LinkDraft>());
     defs.insert(
         "InsertReferenceInput",
@@ -653,6 +660,7 @@ pub fn conformance_json() -> String {
         { "type": "UnitContent", "value": { "kind": "math", "expr": sample_expr() }, "valid": true },
         { "type": "UnitContent", "value": { "kind": "list", "ordered": true }, "valid": true },
         { "type": "UnitContent", "value": { "kind": "derivation" }, "valid": true },
+        { "type": "UnitContent", "value": { "kind": "equations" }, "valid": true },
         { "type": "UnitContent", "value": { "kind": "case_split" }, "valid": true },
         { "type": "UnitContent", "value": { "kind": "group" }, "valid": true },
         { "type": "UnitContent",
@@ -662,6 +670,15 @@ pub fn conformance_json() -> String {
           "note": "inline required (always present, [] when none)" },
         { "type": "UnitContent", "value": { "kind": "list" }, "valid": false, "note": "ordered missing" },
         { "type": "UnitContent", "value": { "kind": "matrix" }, "valid": false, "note": "unknown kind" },
+
+        // ── RowRelation (a sample of variants + negatives) ──
+        { "type": "RowRelation", "value": "eq", "valid": true },
+        { "type": "RowRelation", "value": "le", "valid": true },
+        { "type": "RowRelation", "value": "implies", "valid": true },
+        { "type": "RowRelation", "value": "in", "valid": true },
+        { "type": "RowRelation", "value": "subseteq", "valid": true },
+        { "type": "RowRelation", "value": "=", "valid": false, "note": "wire vocab is the variant name, not the symbol" },
+        { "type": "RowRelation", "value": "equals", "valid": false, "note": "unknown variant" },
 
         // ── ExtractedStructureEnvelope ──
         { "type": "ExtractedStructureEnvelope",
@@ -700,6 +717,21 @@ pub fn conformance_json() -> String {
                      "status": "rough", "declared_by": "user",
                      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1" },
           "valid": false, "note": "content missing" },
+        { "type": "Unit",
+          "value": { "id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+                     "parent_unit_id": "0197675f-71f4-7000-8000-0000000000b0", "position": 1,
+                     "row_relation": "eq", "status": "rough", "declared_by": "user",
+                     "content": { "kind": "math", "expr": sample_expr() },
+                     "provenance_id": "0197675f-71f4-7000-8000-0000000000d1" },
+          "valid": true, "note": "a co-equal Equations row carrying its leading relation" },
+        { "type": "Unit",
+          "value": { "id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "object_id": "0197675f-71f4-7000-8000-0000000000a1", "position": 0,
+                     "row_relation": "nope", "status": "rough", "declared_by": "user",
+                     "content": { "kind": "prose", "text": "x", "inline": [] },
+                     "provenance_id": "0197675f-71f4-7000-8000-0000000000d1" },
+          "valid": false, "note": "row_relation not in the vocabulary" },
 
         // ── Link (both slice-1 target arms, shape only) ──
         { "type": "Link",
@@ -944,6 +976,26 @@ pub fn conformance_json() -> String {
           "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
                      "expression_id": "0197675f-71f4-7000-8000-0000000000c1", "from": "x" },
           "valid": false, "note": "to missing" },
+
+        // ── InsertEquationsInput / EquationRowInput ──
+        { "type": "InsertEquationsInput",
+          "value": { "expected_revision": 2, "anchor_unit_id": "0197675f-71f4-7000-8000-0000000000b0",
+                     "container_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "rows": [ { "unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                                 "content": { "kind": "math", "expr": sample_expr() }, "row_relation": "eq" },
+                               { "unit_id": "0197675f-71f4-7000-8000-0000000000b3",
+                                 "content": { "kind": "math", "expr": sample_expr() } } ] },
+          "valid": true, "note": "per-row row_relation optional" },
+        { "type": "InsertEquationsInput",
+          "value": { "expected_revision": 2, "container_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "rows": [] }, "valid": false, "note": "anchor_unit_id missing" },
+        { "type": "EquationRowInput",
+          "value": { "unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "content": { "kind": "prose", "text": "where x>0", "inline": [] } },
+          "valid": true, "note": "row_relation absent (None)" },
+        { "type": "EquationRowInput",
+          "value": { "content": { "kind": "math", "expr": sample_expr() } }, "valid": false,
+          "note": "unit_id missing" },
 
         // ── LinkDraft / InsertReferenceInput ──
         { "type": "LinkDraft", "value": sample_link_draft(), "valid": true,
@@ -1254,6 +1306,7 @@ mod tests {
                 "SurfaceFormat" => serde_json::from_value::<SurfaceFormat>(value.clone()).is_ok(),
                 "InputSyntax" => serde_json::from_value::<InputSyntax>(value.clone()).is_ok(),
                 "ParseStatus" => serde_json::from_value::<ParseStatus>(value.clone()).is_ok(),
+                "RowRelation" => serde_json::from_value::<RowRelation>(value.clone()).is_ok(),
                 // ── Slice 1 content model + unions ──
                 "CharSpan" => serde_json::from_value::<CharSpan>(value.clone()).is_ok(),
                 "MathExpression" => serde_json::from_value::<MathExpression>(value.clone()).is_ok(),
@@ -1309,6 +1362,12 @@ mod tests {
                 }
                 "RewriteSurfaceInput" => {
                     serde_json::from_value::<RewriteSurfaceInput>(value.clone()).is_ok()
+                }
+                "InsertEquationsInput" => {
+                    serde_json::from_value::<InsertEquationsInput>(value.clone()).is_ok()
+                }
+                "EquationRowInput" => {
+                    serde_json::from_value::<EquationRowInput>(value.clone()).is_ok()
                 }
                 "LinkDraft" => serde_json::from_value::<LinkDraft>(value.clone()).is_ok(),
                 "InsertReferenceInput" => {

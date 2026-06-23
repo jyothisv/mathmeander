@@ -88,6 +88,7 @@ export const CORE_CODE_STATUS: Record<string, number> = {
   type_not_materializable: 422, // client asked rehome to materialize a §6.5 surface (journal_day/trail) — surfaces are created via their own op
   detail_object_type_mismatch: 422, // imported pack: a *_detail.object_id references the wrong object type (arch §827) — untrusted, client-attributable
   content_save_invalid: 422, // editor's save_content delta would change a semantic facet (use the unit ops) or has a bad position/non-prose change (slice 2c)
+  equations_row_not_permitted: 422, // insert_equations / import: an Equations container's row is not Math/Prose (one level only, §F2)
 
   // ── Glue id-bookkeeping the client cannot cause via a well-formed request → 500 ──
   id_count_mismatch: 500,

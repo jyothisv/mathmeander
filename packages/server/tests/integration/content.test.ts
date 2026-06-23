@@ -425,3 +425,103 @@ describe('save_content: display math (the relaxed gate)', () => {
     expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
   });
 });
+
+describe('save_content: systems (2-B — Equations container + Math rows)', () => {
+  /** A rough `Equations` container (the system); rows nest under it via `parent_unit_id`. */
+  function equationsContainer(objectId: string, position: number, id = uuidv7()): Unit {
+    return {
+      id,
+      object_id: objectId,
+      position,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'equations' },
+      provenance_id: uuidv7(),
+    };
+  }
+  /** A Math ROW under an Equations container. */
+  function mathRow(
+    objectId: string,
+    parent: string,
+    position: number,
+    surface: string,
+    id = uuidv7(),
+  ): Unit {
+    return { ...mathUnit(objectId, position, surface, uuidv7(), id), parent_unit_id: parent };
+  }
+  async function parentRows(objectId: string, parent: string): Promise<number> {
+    const r = await stack.db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM content_units WHERE object_id = $1 AND parent_unit_id = $2`,
+      [objectId, parent],
+    );
+    return Number(r.rows[0]!.n);
+  }
+
+  it('creates a system in one delta: container + 2 rows persist with parent_unit_id + positions', async () => {
+    const dayId = await newDay();
+    const container = equationsContainer(dayId, 0);
+    const rows = [
+      mathRow(dayId, container.id, 0, '2x + y = 1'),
+      mathRow(dayId, container.id, 1, 'x - y = 4'),
+    ];
+    const res = await save(dayId, {
+      expected_revision: 1,
+      upserts: [container, ...rows],
+      deletes: [],
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await unitCount(dayId)).toBe(3);
+    expect(await parentRows(dayId, container.id)).toBe(2);
+  });
+
+  it('edits a system row in place (a content-only upsert)', async () => {
+    const dayId = await newDay();
+    const container = equationsContainer(dayId, 0);
+    const row0 = mathRow(dayId, container.id, 0, 'a = 1');
+    const row1 = mathRow(dayId, container.id, 1, 'b = 2');
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [container, row0, row1],
+      deletes: [],
+    });
+    // Edit the PERSISTED row (route-stamped provenance) — an existing-unit content edit must match every
+    // frozen facet except content/position, so we re-flush from the server's returned unit.
+    const units = (r1.json() as { outcome: { content: { units: Unit[] } } }).outcome.content.units;
+    const persisted = units.find((u) => u.parent_unit_id === container.id && u.position === 1)!;
+    const e0 = persisted.content.kind === 'math' ? persisted.content.expr : null;
+    const edited: Unit = {
+      ...persisted,
+      content: { kind: 'math', expr: { ...e0!, surface_text: 'b = 3' } },
+    };
+    const res = await save(dayId, { expected_revision: 2, upserts: [edited], deletes: [] });
+    expect(res.statusCode).toBe(200);
+    expect(await unitCount(dayId)).toBe(3); // still container + 2 rows
+  });
+
+  it('deletes a whole system (container + rows) in one delta', async () => {
+    const dayId = await newDay();
+    const container = equationsContainer(dayId, 0);
+    const row0 = mathRow(dayId, container.id, 0, 'a = 1');
+    const row1 = mathRow(dayId, container.id, 1, 'b = 2');
+    await save(dayId, { expected_revision: 1, upserts: [container, row0, row1], deletes: [] });
+
+    const res = await save(dayId, {
+      expected_revision: 2,
+      upserts: [],
+      deletes: [container.id, row0.id, row1.id],
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await unitCount(dayId)).toBe(0);
+  });
+
+  it('rejects a row under a NON-Equations parent → 422', async () => {
+    const dayId = await newDay();
+    const p = proseUnit(dayId, 0, 'a paragraph');
+    await save(dayId, { expected_revision: 1, upserts: [p], deletes: [] });
+    // A math row pointing at the prose unit as its parent — not an Equations container.
+    const row = mathRow(dayId, p.id, 1, 'x');
+    const res = await save(dayId, { expected_revision: 2, upserts: [row], deletes: [] });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
+  });
+});

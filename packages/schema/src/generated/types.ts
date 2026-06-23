@@ -22,6 +22,7 @@ import {
   DisplayLabelsSchema,
   DissolveObjectInputSchema,
   EmbedTargetSchema,
+  EquationRowInputSchema,
   ExampleKindSchema,
   ExpressionIdRemapSchema,
   ExtractedStructureEnvelopeSchema,
@@ -30,6 +31,7 @@ import {
   HandleStatusSchema,
   InlineSchema,
   InputSyntaxSchema,
+  InsertEquationsInputSchema,
   InsertReferenceInputSchema,
   JournalDayDetailSchema,
   LinkSchema,
@@ -69,6 +71,7 @@ import {
   ResolveOccurrenceInputSchema,
   ResolveTargetSchema,
   RewriteSurfaceInputSchema,
+  RowRelationSchema,
   SetUnitTypeInputSchema,
   SplitUnitInputSchema,
   SurfaceFormatSchema,
@@ -104,6 +107,7 @@ export type DefinitionDetail = z.infer<typeof DefinitionDetailSchema>;
 export type DisplayLabels = z.infer<typeof DisplayLabelsSchema>;
 export type DissolveObjectInput = z.infer<typeof DissolveObjectInputSchema>;
 export type EmbedTarget = z.infer<typeof EmbedTargetSchema>;
+export type EquationRowInput = z.infer<typeof EquationRowInputSchema>;
 export type ExampleKind = z.infer<typeof ExampleKindSchema>;
 export type ExpressionIdRemap = z.infer<typeof ExpressionIdRemapSchema>;
 export type ExtractedStructureEnvelope = z.infer<typeof ExtractedStructureEnvelopeSchema>;
@@ -112,6 +116,7 @@ export type HandleScope = z.infer<typeof HandleScopeSchema>;
 export type HandleStatus = z.infer<typeof HandleStatusSchema>;
 export type Inline = z.infer<typeof InlineSchema>;
 export type InputSyntax = z.infer<typeof InputSyntaxSchema>;
+export type InsertEquationsInput = z.infer<typeof InsertEquationsInputSchema>;
 export type InsertReferenceInput = z.infer<typeof InsertReferenceInputSchema>;
 export type JournalDayDetail = z.infer<typeof JournalDayDetailSchema>;
 export type Link = z.infer<typeof LinkSchema>;
@@ -151,6 +156,7 @@ export type RehomeSubtreeInput = z.infer<typeof RehomeSubtreeInputSchema>;
 export type ResolveOccurrenceInput = z.infer<typeof ResolveOccurrenceInputSchema>;
 export type ResolveTarget = z.infer<typeof ResolveTargetSchema>;
 export type RewriteSurfaceInput = z.infer<typeof RewriteSurfaceInputSchema>;
+export type RowRelation = z.infer<typeof RowRelationSchema>;
 export type SetUnitTypeInput = z.infer<typeof SetUnitTypeInputSchema>;
 export type SplitUnitInput = z.infer<typeof SplitUnitInputSchema>;
 export type SurfaceFormat = z.infer<typeof SurfaceFormatSchema>;

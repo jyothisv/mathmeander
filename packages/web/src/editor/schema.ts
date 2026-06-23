@@ -22,7 +22,11 @@ export const editorSchema = new Schema({
     prose: {
       group: 'block',
       content: 'inline*',
-      attrs: { unitId: { default: null }, unitType: { default: null } },
+      // `rowIds` (structured-math 2-B): for a multi-line `$$…$$` SYSTEM block, the stable id of each
+      // co-equal row unit, positionally aligned to the non-empty lines — so editing a row is a content-only
+      // upsert, never a re-mint (the save-churn fix). `[]` for any non-system block. idStamper keeps it
+      // synced to the row count + deduped (paste safety), exactly as it does for `unitId`.
+      attrs: { unitId: { default: null }, unitType: { default: null }, rowIds: { default: [] } },
       toDOM: (node) => [
         'p',
         {

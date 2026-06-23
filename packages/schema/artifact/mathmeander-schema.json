@@ -1273,6 +1273,23 @@
               ]
             },
             {
+              "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+              "type": "object",
+              "properties": {
+                "row_kind": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "equations_row_not_permitted"
+                }
+              },
+              "required": [
+                "code",
+                "row_kind"
+              ]
+            },
+            {
               "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
               "type": "object",
               "properties": {
@@ -2576,6 +2593,23 @@
                       ]
                     },
                     {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
+                      ]
+                    },
+                    {
                       "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
                       "type": "object",
                       "properties": {
@@ -3867,6 +3901,23 @@
                       ]
                     },
                     {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
+                      ]
+                    },
+                    {
                       "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
                       "type": "object",
                       "properties": {
@@ -4480,6 +4531,29 @@
                       "null"
                     ]
                   },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
+                    ]
+                  },
                   "type": {
                     "description": "THE one user-facing math-flow label; `None` = plain content.",
                     "type": [
@@ -5048,6 +5122,19 @@
                           "kind": {
                             "type": "string",
                             "const": "derivation"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
                           }
                         },
                         "required": [
@@ -5204,6 +5291,29 @@
                       "null"
                     ]
                   },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
+                    ]
+                  },
                   "type": {
                     "description": "THE one user-facing math-flow label; `None` = plain content.",
                     "type": [
@@ -5779,6 +5889,19 @@
                         ]
                       },
                       {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
                         "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
                         "type": "object",
                         "properties": {
@@ -5899,6 +6022,592 @@
       ],
       "title": "EmbedTarget",
       "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3)."
+    },
+    "EquationRowInput": {
+      "required": [
+        "unit_id",
+        "content"
+      ],
+      "title": "EquationRowInput",
+      "description": "One co-equal row of an `Equations` system (a `Math` line or a `Prose` annotation), with its\noptional leading relation. `content` must be `Math`/`Prose` (else `EquationsRowNotPermitted`).",
+      "type": "object",
+      "properties": {
+        "unit_id": {
+          "description": "Glue-minted id for this row unit.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "content": {
+          "description": "`Math { expr }` (client-built) or `Prose { .. }`.",
+          "oneOf": [
+            {
+              "description": "Prose + inline formatting + inline math + mentions.",
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "inline": {
+                  "type": "array",
+                  "items": {
+                    "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                    "oneOf": [
+                      {
+                        "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "style": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "mark"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "style"
+                        ]
+                      },
+                      {
+                        "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "expr": {
+                            "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "surface_text": {
+                                "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                "type": "string"
+                              },
+                              "surface_format": {
+                                "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                "type": "string",
+                                "enum": [
+                                  "mathmeander",
+                                  "latex",
+                                  "typst",
+                                  "asciimath"
+                                ]
+                              },
+                              "input_syntax": {
+                                "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "enum": [
+                                  "mathmeander",
+                                  "latex",
+                                  "typst",
+                                  "asciimath",
+                                  "unicode",
+                                  "mixed",
+                                  "unknown",
+                                  null
+                                ]
+                              },
+                              "original_input": {
+                                "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                "type": "string"
+                              },
+                              "parse_status": {
+                                "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                "type": "string",
+                                "enum": [
+                                  "unresolved",
+                                  "renderable",
+                                  "partially_resolved",
+                                  "invalid"
+                                ]
+                              },
+                              "occurrences": {
+                                "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                "type": "array",
+                                "items": {
+                                  "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                  "type": "object",
+                                  "properties": {
+                                    "selector": {
+                                      "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                      "type": "object",
+                                      "properties": {
+                                        "start": {
+                                          "type": "integer",
+                                          "format": "uint32",
+                                          "minimum": 0
+                                        },
+                                        "end": {
+                                          "type": "integer",
+                                          "format": "uint32",
+                                          "minimum": 0
+                                        }
+                                      },
+                                      "required": [
+                                        "start",
+                                        "end"
+                                      ]
+                                    },
+                                    "target": {
+                                      "anyOf": [
+                                        {
+                                          "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                          "oneOf": [
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "object_id": {
+                                                  "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                  "type": "string",
+                                                  "format": "uuid"
+                                                },
+                                                "kind": {
+                                                  "type": "string",
+                                                  "const": "object"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind",
+                                                "object_id"
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "selector"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "surface_text",
+                              "surface_format",
+                              "original_input",
+                              "parse_status",
+                              "occurrences"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "math"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "expr"
+                        ]
+                      },
+                      {
+                        "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                        "type": "object",
+                        "properties": {
+                          "span": {
+                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "text": {
+                            "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                            "type": "string"
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "object_id": {
+                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "object_id"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "reference"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "span",
+                          "text"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "prose"
+                }
+              },
+              "required": [
+                "kind",
+                "text",
+                "inline"
+              ]
+            },
+            {
+              "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+              "type": "object",
+              "properties": {
+                "expr": {
+                  "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "surface_text": {
+                      "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                      "type": "string"
+                    },
+                    "surface_format": {
+                      "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                      "type": "string",
+                      "enum": [
+                        "mathmeander",
+                        "latex",
+                        "typst",
+                        "asciimath"
+                      ]
+                    },
+                    "input_syntax": {
+                      "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "mathmeander",
+                        "latex",
+                        "typst",
+                        "asciimath",
+                        "unicode",
+                        "mixed",
+                        "unknown",
+                        null
+                      ]
+                    },
+                    "original_input": {
+                      "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                      "type": "string"
+                    },
+                    "parse_status": {
+                      "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                      "type": "string",
+                      "enum": [
+                        "unresolved",
+                        "renderable",
+                        "partially_resolved",
+                        "invalid"
+                      ]
+                    },
+                    "occurrences": {
+                      "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                      "type": "array",
+                      "items": {
+                        "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                        "type": "object",
+                        "properties": {
+                          "selector": {
+                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              },
+                              "end": {
+                                "type": "integer",
+                                "format": "uint32",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start",
+                              "end"
+                            ]
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "object_id": {
+                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "object_id"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "selector"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface_text",
+                    "surface_format",
+                    "original_input",
+                    "parse_status",
+                    "occurrences"
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "math"
+                }
+              },
+              "required": [
+                "kind",
+                "expr"
+              ]
+            },
+            {
+              "description": "Items are child rows.",
+              "type": "object",
+              "properties": {
+                "ordered": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "list"
+                }
+              },
+              "required": [
+                "kind",
+                "ordered"
+              ]
+            },
+            {
+              "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "derivation"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "equations"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "case_split"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "group"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "description": "Quotes & object embeds.",
+              "type": "object",
+              "properties": {
+                "target": {
+                  "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "object_id": {
+                          "description": "Identity of a canonical object (client-minted UUIDv7).",
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "object_id"
+                      ]
+                    }
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "embed"
+                }
+              },
+              "required": [
+                "kind",
+                "target"
+              ]
+            }
+          ]
+        },
+        "row_relation": {
+          "description": "The relation this row asserts (alignment/connective); `None` if intrinsic to its content.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "eq",
+            "lt",
+            "gt",
+            "le",
+            "ge",
+            "ne",
+            "defines",
+            "maps_to",
+            "implies",
+            "in",
+            "not_in",
+            "subset",
+            "subseteq",
+            null
+          ]
+        }
+      }
     },
     "ExampleKind": {
       "enum": [
@@ -6346,6 +7055,623 @@
       "title": "InputSyntax",
       "description": "How an expression was entered/imported (arch doc §6.3a). Tri-state at the wire level:\n*absent* (`Option::None`, never recorded) ≠ `unknown` (recorded, dialect undetermined);\nmigrations never backfill it.",
       "type": "string"
+    },
+    "InsertEquationsInput": {
+      "required": [
+        "expected_revision",
+        "anchor_unit_id",
+        "container_unit_id",
+        "rows"
+      ],
+      "title": "InsertEquationsInput",
+      "description": "`insert_equations` payload — mint an `Equations` container + its co-equal `Math`/`Prose` child\nrows in ONE op. This is the ONLY creation path for the container (the editor's `save_content`\ndelta rejects new non-prose units, §6.0a). The container is inserted as a sibling immediately\nAFTER `anchor_unit_id`, inheriting its placement context (parent / status / declared_by /\nprovenance), mirroring `displayize`. Each row carries PRE-BUILT content — the client built every\n`MathExpression` via the keystone `normalize_fresh` + a client-minted expr id; the core never\nparses surfaces here (the before-anchors invariant, §6.3a). Unit-level ids (container + rows) are\nglue-minted.",
+      "type": "object",
+      "properties": {
+        "expected_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "anchor_unit_id": {
+          "description": "The existing sibling to insert the container after; it supplies the placement context.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "container_unit_id": {
+          "description": "Glue-minted id for the new container unit.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "rows": {
+          "description": "The rows, in document order (each a co-equal line of the system).",
+          "type": "array",
+          "items": {
+            "description": "One co-equal row of an `Equations` system (a `Math` line or a `Prose` annotation), with its\noptional leading relation. `content` must be `Math`/`Prose` (else `EquationsRowNotPermitted`).",
+            "type": "object",
+            "properties": {
+              "unit_id": {
+                "description": "Glue-minted id for this row unit.",
+                "type": "string",
+                "format": "uuid"
+              },
+              "content": {
+                "description": "`Math { expr }` (client-built) or `Prose { .. }`.",
+                "oneOf": [
+                  {
+                    "description": "Prose + inline formatting + inline math + mentions.",
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "inline": {
+                        "type": "array",
+                        "items": {
+                          "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                          "oneOf": [
+                            {
+                              "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "style": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "mark"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "style"
+                              ]
+                            },
+                            {
+                              "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "expr": {
+                                  "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "surface_text": {
+                                      "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                      "type": "string"
+                                    },
+                                    "surface_format": {
+                                      "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                      "type": "string",
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath"
+                                      ]
+                                    },
+                                    "input_syntax": {
+                                      "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ],
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath",
+                                        "unicode",
+                                        "mixed",
+                                        "unknown",
+                                        null
+                                      ]
+                                    },
+                                    "original_input": {
+                                      "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                      "type": "string"
+                                    },
+                                    "parse_status": {
+                                      "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                      "type": "string",
+                                      "enum": [
+                                        "unresolved",
+                                        "renderable",
+                                        "partially_resolved",
+                                        "invalid"
+                                      ]
+                                    },
+                                    "occurrences": {
+                                      "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                      "type": "array",
+                                      "items": {
+                                        "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                        "type": "object",
+                                        "properties": {
+                                          "selector": {
+                                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                            "type": "object",
+                                            "properties": {
+                                              "start": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              },
+                                              "end": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              }
+                                            },
+                                            "required": [
+                                              "start",
+                                              "end"
+                                            ]
+                                          },
+                                          "target": {
+                                            "anyOf": [
+                                              {
+                                                "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                                "oneOf": [
+                                                  {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "object_id": {
+                                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                        "type": "string",
+                                                        "format": "uuid"
+                                                      },
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "const": "object"
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "object_id"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "selector"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "surface_text",
+                                    "surface_format",
+                                    "original_input",
+                                    "parse_status",
+                                    "occurrences"
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "math"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "expr"
+                              ]
+                            },
+                            {
+                              "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "text": {
+                                  "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "reference"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "text"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "prose"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "text",
+                      "inline"
+                    ]
+                  },
+                  {
+                    "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+                    "type": "object",
+                    "properties": {
+                      "expr": {
+                        "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "surface_text": {
+                            "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                            "type": "string"
+                          },
+                          "surface_format": {
+                            "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                            "type": "string",
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath"
+                            ]
+                          },
+                          "input_syntax": {
+                            "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath",
+                              "unicode",
+                              "mixed",
+                              "unknown",
+                              null
+                            ]
+                          },
+                          "original_input": {
+                            "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                            "type": "string"
+                          },
+                          "parse_status": {
+                            "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                            "type": "string",
+                            "enum": [
+                              "unresolved",
+                              "renderable",
+                              "partially_resolved",
+                              "invalid"
+                            ]
+                          },
+                          "occurrences": {
+                            "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                            "type": "array",
+                            "items": {
+                              "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "selector"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface_text",
+                          "surface_format",
+                          "original_input",
+                          "parse_status",
+                          "occurrences"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "math"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "expr"
+                    ]
+                  },
+                  {
+                    "description": "Items are child rows.",
+                    "type": "object",
+                    "properties": {
+                      "ordered": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "list"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordered"
+                    ]
+                  },
+                  {
+                    "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "derivation"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "equations"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "case_split"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "group"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Quotes & object embeds.",
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "object_id": {
+                                "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "object"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "object_id"
+                            ]
+                          }
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "embed"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "target"
+                    ]
+                  }
+                ]
+              },
+              "row_relation": {
+                "description": "The relation this row asserts (alignment/connective); `None` if intrinsic to its content.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "eq",
+                  "lt",
+                  "gt",
+                  "le",
+                  "ge",
+                  "ne",
+                  "defines",
+                  "maps_to",
+                  "implies",
+                  "in",
+                  "not_in",
+                  "subset",
+                  "subseteq",
+                  null
+                ]
+              }
+            },
+            "required": [
+              "unit_id",
+              "content"
+            ]
+          }
+        }
+      }
     },
     "InsertReferenceInput": {
       "required": [
@@ -7281,6 +8607,29 @@
                       "null"
                     ]
                   },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
+                    ]
+                  },
                   "type": {
                     "description": "THE one user-facing math-flow label; `None` = plain content.",
                     "type": [
@@ -7856,6 +9205,19 @@
                         ]
                       },
                       {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
                         "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
                         "type": "object",
                         "properties": {
@@ -8062,6 +9424,29 @@
                 "type": [
                   "string",
                   "null"
+                ]
+              },
+              "row_relation": {
+                "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "eq",
+                  "lt",
+                  "gt",
+                  "le",
+                  "ge",
+                  "ne",
+                  "defines",
+                  "maps_to",
+                  "implies",
+                  "in",
+                  "not_in",
+                  "subset",
+                  "subseteq",
+                  null
                 ]
               },
               "type": {
@@ -8632,6 +10017,19 @@
                       "kind": {
                         "type": "string",
                         "const": "derivation"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "equations"
                       }
                     },
                     "required": [
@@ -9222,6 +10620,29 @@
                             "null"
                           ]
                         },
+                        "row_relation": {
+                          "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "enum": [
+                            "eq",
+                            "lt",
+                            "gt",
+                            "le",
+                            "ge",
+                            "ne",
+                            "defines",
+                            "maps_to",
+                            "implies",
+                            "in",
+                            "not_in",
+                            "subset",
+                            "subseteq",
+                            null
+                          ]
+                        },
                         "type": {
                           "description": "THE one user-facing math-flow label; `None` = plain content.",
                           "type": [
@@ -9790,6 +11211,19 @@
                                 "kind": {
                                   "type": "string",
                                   "const": "derivation"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ]
+                            },
+                            {
+                              "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "equations"
                                 }
                               },
                               "required": [
@@ -10761,6 +12195,29 @@
                         "null"
                       ]
                     },
+                    "row_relation": {
+                      "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "eq",
+                        "lt",
+                        "gt",
+                        "le",
+                        "ge",
+                        "ne",
+                        "defines",
+                        "maps_to",
+                        "implies",
+                        "in",
+                        "not_in",
+                        "subset",
+                        "subseteq",
+                        null
+                      ]
+                    },
                     "type": {
                       "description": "THE one user-facing math-flow label; `None` = plain content.",
                       "type": [
@@ -11329,6 +12786,19 @@
                             "kind": {
                               "type": "string",
                               "const": "derivation"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        {
+                          "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "equations"
                             }
                           },
                           "required": [
@@ -12333,6 +13803,29 @@
                             "null"
                           ]
                         },
+                        "row_relation": {
+                          "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "enum": [
+                            "eq",
+                            "lt",
+                            "gt",
+                            "le",
+                            "ge",
+                            "ne",
+                            "defines",
+                            "maps_to",
+                            "implies",
+                            "in",
+                            "not_in",
+                            "subset",
+                            "subseteq",
+                            null
+                          ]
+                        },
                         "type": {
                           "description": "THE one user-facing math-flow label; `None` = plain content.",
                           "type": [
@@ -12901,6 +14394,19 @@
                                 "kind": {
                                   "type": "string",
                                   "const": "derivation"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ]
+                            },
+                            {
+                              "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "equations"
                                 }
                               },
                               "required": [
@@ -13925,6 +15431,29 @@
                                     "null"
                                   ]
                                 },
+                                "row_relation": {
+                                  "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ],
+                                  "enum": [
+                                    "eq",
+                                    "lt",
+                                    "gt",
+                                    "le",
+                                    "ge",
+                                    "ne",
+                                    "defines",
+                                    "maps_to",
+                                    "implies",
+                                    "in",
+                                    "not_in",
+                                    "subset",
+                                    "subseteq",
+                                    null
+                                  ]
+                                },
                                 "type": {
                                   "description": "THE one user-facing math-flow label; `None` = plain content.",
                                   "type": [
@@ -14493,6 +16022,19 @@
                                         "kind": {
                                           "type": "string",
                                           "const": "derivation"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ]
+                                    },
+                                    {
+                                      "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "equations"
                                         }
                                       },
                                       "required": [
@@ -16132,6 +17674,23 @@
                       "required": [
                         "code",
                         "unit_id"
+                      ]
+                    },
+                    {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
                       ]
                     },
                     {
@@ -16799,6 +18358,29 @@
                                     "null"
                                   ]
                                 },
+                                "row_relation": {
+                                  "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ],
+                                  "enum": [
+                                    "eq",
+                                    "lt",
+                                    "gt",
+                                    "le",
+                                    "ge",
+                                    "ne",
+                                    "defines",
+                                    "maps_to",
+                                    "implies",
+                                    "in",
+                                    "not_in",
+                                    "subset",
+                                    "subseteq",
+                                    null
+                                  ]
+                                },
                                 "type": {
                                   "description": "THE one user-facing math-flow label; `None` = plain content.",
                                   "type": [
@@ -17367,6 +18949,19 @@
                                         "kind": {
                                           "type": "string",
                                           "const": "derivation"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ]
+                                    },
+                                    {
+                                      "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "equations"
                                         }
                                       },
                                       "required": [
@@ -19006,6 +20601,23 @@
                       "required": [
                         "code",
                         "unit_id"
+                      ]
+                    },
+                    {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
                       ]
                     },
                     {
@@ -20272,6 +21884,23 @@
                       ]
                     },
                     {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
+                      ]
+                    },
+                    {
                       "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
                       "type": "object",
                       "properties": {
@@ -21507,6 +23136,23 @@
                       ]
                     },
                     {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
+                      ]
+                    },
+                    {
                       "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
                       "type": "object",
                       "properties": {
@@ -21866,6 +23512,29 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
                     ]
                   },
                   "type": {
@@ -22436,6 +24105,19 @@
                           "kind": {
                             "type": "string",
                             "const": "derivation"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
                           }
                         },
                         "required": [
@@ -23055,6 +24737,29 @@
                       "null"
                     ]
                   },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
+                    ]
+                  },
                   "type": {
                     "description": "THE one user-facing math-flow label; `None` = plain content.",
                     "type": [
@@ -23630,6 +25335,19 @@
                         ]
                       },
                       {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
                         "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
                         "type": "object",
                         "properties": {
@@ -23833,6 +25551,29 @@
                             "type": [
                               "string",
                               "null"
+                            ]
+                          },
+                          "row_relation": {
+                            "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "eq",
+                              "lt",
+                              "gt",
+                              "le",
+                              "ge",
+                              "ne",
+                              "defines",
+                              "maps_to",
+                              "implies",
+                              "in",
+                              "not_in",
+                              "subset",
+                              "subseteq",
+                              null
                             ]
                           },
                           "type": {
@@ -24403,6 +26144,19 @@
                                   "kind": {
                                     "type": "string",
                                     "const": "derivation"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "equations"
                                   }
                                 },
                                 "required": [
@@ -25022,6 +26776,29 @@
                               "null"
                             ]
                           },
+                          "row_relation": {
+                            "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "eq",
+                              "lt",
+                              "gt",
+                              "le",
+                              "ge",
+                              "ne",
+                              "defines",
+                              "maps_to",
+                              "implies",
+                              "in",
+                              "not_in",
+                              "subset",
+                              "subseteq",
+                              null
+                            ]
+                          },
                           "type": {
                             "description": "THE one user-facing math-flow label; `None` = plain content.",
                             "type": [
@@ -25590,6 +27367,19 @@
                                   "kind": {
                                     "type": "string",
                                     "const": "derivation"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "equations"
                                   }
                                 },
                                 "required": [
@@ -26738,6 +28528,23 @@
                       ]
                     },
                     {
+                      "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+                      "type": "object",
+                      "properties": {
+                        "row_kind": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string",
+                          "const": "equations_row_not_permitted"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "row_kind"
+                      ]
+                    },
+                    {
                       "description": "A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type\nwithin the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`\n→ `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its\nTYPE, so the core owns it on the untrusted import path; at persist (2e) a malformed pack would\notherwise silently store a type violation. `actual` is `None` when the object is absent from the\npack entirely (the detail is orphaned). Distinct from the create-time `DetailTypeMismatch`\n(a glue-bug 500): this is a client-attributable bad import (422).",
                       "type": "object",
                       "properties": {
@@ -27127,6 +28934,29 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "row_relation": {
+                    "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "eq",
+                      "lt",
+                      "gt",
+                      "le",
+                      "ge",
+                      "ne",
+                      "defines",
+                      "maps_to",
+                      "implies",
+                      "in",
+                      "not_in",
+                      "subset",
+                      "subseteq",
+                      null
                     ]
                   },
                   "type": {
@@ -27704,6 +29534,19 @@
                         ]
                       },
                       {
+                        "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "equations"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ]
+                      },
+                      {
                         "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
                         "type": "object",
                         "properties": {
@@ -27988,6 +29831,26 @@
           "type": "string"
         }
       }
+    },
+    "RowRelation": {
+      "enum": [
+        "eq",
+        "lt",
+        "gt",
+        "le",
+        "ge",
+        "ne",
+        "defines",
+        "maps_to",
+        "implies",
+        "in",
+        "not_in",
+        "subset",
+        "subseteq"
+      ],
+      "title": "RowRelation",
+      "description": "The typed relation a row asserts relative to its prior sibling row (a `Derivation` step's\nconnective, or an `Equations` row's leading relation). `None` = the row's relation is intrinsic\nto its own content (the common `Equations` case) or none. The domain is `⊆` the surface grammar's\nrelation set (`SYMBOLIC_RELATIONS ∪ WORD_RELATIONS`), kept in sync by a mechanical test. It is\nPRESENTATION-FREE: render may show its glyph in a gutter / alignment column, but layout is never\nstored. Wire vocabulary is the variant name (`\"eq\"`), not the symbol; `token()` bridges to the\ngrammar token.",
+      "type": "string"
     },
     "SetUnitTypeInput": {
       "required": [
@@ -28337,6 +30200,29 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "row_relation": {
+          "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "eq",
+            "lt",
+            "gt",
+            "le",
+            "ge",
+            "ne",
+            "defines",
+            "maps_to",
+            "implies",
+            "in",
+            "not_in",
+            "subset",
+            "subseteq",
+            null
           ]
         },
         "type": {
@@ -28914,6 +30800,19 @@
               ]
             },
             {
+              "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "equations"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
               "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
               "type": "object",
               "properties": {
@@ -29447,6 +31346,19 @@
             "kind": {
               "type": "string",
               "const": "derivation"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "equations"
             }
           },
           "required": [
@@ -30589,6 +32501,23 @@
           "required": [
             "code",
             "unit_id"
+          ]
+        },
+        {
+          "description": "An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits\nONE level only — a system's rows are co-equal Math/Prose lines, never nested containers\n(§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.\n(Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened\n`kind: \"validation\"` discriminator → a duplicate JSON key.)",
+          "type": "object",
+          "properties": {
+            "row_kind": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "equations_row_not_permitted"
+            }
+          },
+          "required": [
+            "code",
+            "row_kind"
           ]
         },
         {

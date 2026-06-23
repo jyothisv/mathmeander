@@ -50,7 +50,8 @@ CREATE TABLE public.content_units (
     extracted_structure jsonb,
     content jsonb NOT NULL,
     content_kind text GENERATED ALWAYS AS ((content ->> 'kind'::text)) STORED,
-    provenance_id uuid NOT NULL
+    provenance_id uuid NOT NULL,
+    row_relation text
 );
 
 
@@ -727,4 +728,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0001'),
     ('0002'),
     ('0003'),
-    ('0004');
+    ('0004'),
+    ('0005');

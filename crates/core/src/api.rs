@@ -14,8 +14,8 @@ use crate::model::{
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
-    DissolveObjectInput, InsertReferenceInput, MaterializeObjectInput, MathContent,
-    MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput,
+    DissolveObjectInput, InsertEquationsInput, InsertReferenceInput, MaterializeObjectInput,
+    MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput,
     RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
@@ -349,6 +349,23 @@ pub fn toggle_expression_placement(
         Ok(crate::ops::toggle_expression_placement(
             content, &input, &ctx, now,
         )?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Insert an `Equations` container + its co-equal child rows in one op → `OpOutcomeResult` JSON.
+pub fn insert_equations(
+    content_json: &str,
+    input_json: &str,
+    ctx_json: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let content: MathContent = parse_input("content", content_json)?;
+        let input: InsertEquationsInput = parse_input("insert_equations input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::insert_equations(content, &input, &ctx, now)?)
     })();
     OpOutcomeResult::from_result(result).to_json()
 }

@@ -9,6 +9,7 @@ import {
   SplitUnitInputSchema,
   MergeUnitsInputSchema,
   ToggleExpressionPlacementInputSchema,
+  InsertEquationsInputSchema,
   RewriteSurfaceInputSchema,
   InsertReferenceInputSchema,
   ResolveOccurrenceInputSchema,
@@ -29,6 +30,7 @@ import {
   type SetUnitTypeInput,
   type SplitUnitInput,
   type ToggleExpressionPlacementInput,
+  type InsertEquationsInput,
   type Unit,
   type UnitIdRemap,
 } from '@mathmeander/schema';
@@ -48,6 +50,7 @@ import {
   setUnitType,
   splitUnit,
   toggleExpressionPlacement,
+  insertEquations,
   exportMathpack,
   importMathpack,
 } from '../../core/index.js';
@@ -239,6 +242,30 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
       };
       const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
       const result = toggleExpressionPlacement(content, input, opCtx, now);
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
+    },
+  );
+
+  // ── insert_equations (glue mints the container + per-row unit ids) ──
+  app.post(
+    '/api/objects/:id/ops/insert-equations',
+    { schema: { body: InsertEquationsInputSchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const body = req.body as InsertEquationsInput;
+      const content = await loadContent(deps.db, ctx.spaceId, id);
+      if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
+
+      // The client supplies each row's `content` (with its client-minted EXPRESSION ids) and the
+      // anchor; the glue mints every UNIT-level id (container + rows).
+      const input: InsertEquationsInput = {
+        ...body,
+        container_unit_id: uuidv7(),
+        rows: body.rows.map((r) => ({ ...r, unit_id: uuidv7() })),
+      };
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const result = insertEquations(content, input, opCtx, now);
       return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
     },
   );

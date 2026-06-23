@@ -23,7 +23,7 @@ use crate::model::{
     Alias, CanonicalObject, DefinitionDetail, EmbedTarget, Handle, JournalDayDetail, Link,
     ObjectType, ObjectVersion, Provenance, ProvenanceDerivation, Tag, Tagging, UnitContent,
 };
-use crate::ops::MathContent;
+use crate::ops::{MathContent, content_kind_tag};
 use crate::validate::{
     validate_expression, validate_link, validate_prose_inline, validate_tagging,
 };
@@ -302,12 +302,35 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
         .map(|o| (o.id, o.object_type))
         .collect();
     let mut seen_units: std::collections::HashSet<_> = std::collections::HashSet::new();
+    // `Equations` admits ONE level only: its child rows must be Math/Prose (§F2). Collect the
+    // container ids first — a child may precede its parent in the unit vector.
+    let equations_containers: std::collections::HashSet<_> = graph
+        .content
+        .iter()
+        .flat_map(|c| c.units.iter())
+        .filter(|u| matches!(u.content, UnitContent::Equations))
+        .map(|u| u.id)
+        .collect();
     for content in &graph.content {
         for unit in &content.units {
             // One home (§6.0b): a unit lives in exactly one object's content.
             if !seen_units.insert(unit.id) {
                 return Err(ValidationError::UnitInMultipleObjects {
                     unit_id: unit.id.to_string(),
+                }
+                .into());
+            }
+            // A row under an `Equations` container must be a Math/Prose line (no nested containers).
+            if unit
+                .parent_unit_id
+                .is_some_and(|p| equations_containers.contains(&p))
+                && !matches!(
+                    unit.content,
+                    UnitContent::Prose { .. } | UnitContent::Math { .. }
+                )
+            {
+                return Err(ValidationError::EquationsRowNotPermitted {
+                    row_kind: content_kind_tag(&unit.content).into(),
                 }
                 .into());
             }
