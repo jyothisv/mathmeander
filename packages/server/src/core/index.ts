@@ -15,6 +15,7 @@ import {
   saveContent as addonSaveContent,
   mergeUnits as addonMergeUnits,
   toggleExpressionPlacement as addonToggleExpressionPlacement,
+  insertEquations as addonInsertEquations,
   rewriteSurface as addonRewriteSurface,
   insertReference as addonInsertReference,
   resolveOccurrence as addonResolveOccurrence,
@@ -48,6 +49,7 @@ import {
   type SplitUnitInput,
   type MergeUnitsInput,
   type ToggleExpressionPlacementInput,
+  type InsertEquationsInput,
   type RewriteSurfaceInput,
   type InsertReferenceInput,
   type ResolveOccurrenceInput,
@@ -240,6 +242,24 @@ export function toggleExpressionPlacement(
   return OpOutcomeResultSchema.parse(
     JSON.parse(
       addonToggleExpressionPlacement(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+export function insertEquations(
+  content: MathContent,
+  input: InsertEquationsInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonInsertEquations(
         JSON.stringify(content),
         JSON.stringify(input),
         JSON.stringify(ctx),

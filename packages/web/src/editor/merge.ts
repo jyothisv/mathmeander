@@ -121,9 +121,18 @@ export function planMerge({ baseline, server, mine, force }: MergeInput): MergeR
   // longer 422s. (A CITED Math unit can't be re-created this way — but the core keystone rejects that cleanly,
   // it never silently corrupts; and citations don't exist yet.)
   const resurrected = myEdited.filter((u) => !srv.serverIds.has(u.id));
-  // Append my new units (+ any resurrected) after the server's; renumber gap-free. (A pure REORDER of
-  // server-untouched units is conservatively dropped — server order wins, no content lost.)
-  const merged = [...kept, ...myNew, ...resurrected].map((u, i) => ({ ...u, position: i }));
+  // Append my new units (+ any resurrected) after the server's; renumber gap-free PER PARENT (a system's
+  // rows live under their `Equations` container — a single flat 0..n sequence across container + rows + other
+  // top-level units would corrupt their per-parent `(parent, position)` ordering, the core's uniqueness key).
+  // Within each parent group, array order is preserved (kept = server order; mine appended). A pure REORDER of
+  // server-untouched units is conservatively dropped — server order wins, no content lost.
+  const posByParent = new Map<string | null, number>();
+  const merged = [...kept, ...myNew, ...resurrected].map((u) => {
+    const parent = u.parent_unit_id ?? null;
+    const position = posByParent.get(parent) ?? 0;
+    posByParent.set(parent, position + 1);
+    return { ...u, position };
+  });
   const content: MathContent = {
     object_id: baseline.object_id,
     revision: server.revision,

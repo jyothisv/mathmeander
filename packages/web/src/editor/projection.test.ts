@@ -512,8 +512,17 @@ describe('display math (structured-math increment 1) — line-only $$…$$ ⇄ M
     expect(exprOf(m).surface_text).toBe('x'); // frozen — not clobbered to 'xy'
   });
 
-  it('MULTI-LINE: a display equation with a newline in its surface round-trips clean', () => {
-    expect(roundTripIsClean(content([mathUnit('m1', 0, 'a +\nb = c')]))).toBe(true);
+  it('MULTI-LINE: a $$…$$ with ≥2 non-empty lines now flushes to an Equations SYSTEM (2-B reinterpretation)', () => {
+    // The prior display increment treated a multi-line `$$…$$` as ONE long equation; 2-B reinterprets it as a
+    // co-equal system — each non-empty line is a row of an Equations container.
+    const { upserts } = flushToContent(docOf(displayBlock('sys1', 'a + b\nc = d')), content([]));
+    const container = upserts.find((u) => u.content.kind === 'equations')!;
+    expect(container).toBeTruthy();
+    const rows = upserts.filter((u) => u.parent_unit_id === container.id);
+    expect(rows.map((r) => (r.content as { expr: MathExpression }).expr.surface_text)).toEqual([
+      'a + b',
+      'c = d',
+    ]);
   });
 
   it('MULTI-LINE: projectToDoc splits the surface on \\n into text + hard_break (all display-marked)', () => {
@@ -531,7 +540,7 @@ describe('display math (structured-math increment 1) — line-only $$…$$ ⇄ M
     });
   });
 
-  it('MULTI-LINE: flush reads a hard_break block back to a `\\n` surface', () => {
+  it('MULTI-LINE: a hard_break $$…$$ block flushes to a system (rows split on the breaks)', () => {
     const hb = () => editorSchema.nodes.hard_break.create();
     const e: MathExpression = {
       id: 'm1-e',
@@ -550,9 +559,14 @@ describe('display math (structured-math increment 1) — line-only $$…$$ ⇄ M
         editorSchema.text('b$$', [mk()]),
       ]),
     ]);
-    const { upserts } = flushToContent(doc, content([mathUnit('m1', 0, 'OLD')]));
-    const m = upserts.find((u) => u.id === 'm1')!;
-    expect(exprOf(m).surface_text).toBe('a\nb'); // the hard_break became a `\n` in the surface
+    const { upserts } = flushToContent(doc, content([]));
+    const container = upserts.find((u) => u.content.kind === 'equations')!;
+    expect(container).toBeTruthy();
+    const rows = upserts.filter((u) => u.parent_unit_id === container.id);
+    expect(rows.map((r) => (r.content as { expr: MathExpression }).expr.surface_text)).toEqual([
+      'a',
+      'b',
+    ]);
   });
 });
 
@@ -566,4 +580,225 @@ describe('display math — caret home', () => {
     const { upserts } = flushToContent(doc, content([mathUnit('m1', 0, 'x^2')]));
     expect(upserts).toEqual([]);
   });
+});
+
+describe('systems (structured-math 2-B) — multi-line $$…$$ ⇄ Equations container + rows', () => {
+  /** Canonical content: an `Equations` container + one Math row per surface. */
+  function equationsContent(containerId: string, surfaces: string[]): MathContent {
+    const container: Unit = {
+      id: containerId,
+      object_id: OBJ,
+      position: 0,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'equations' },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d3',
+    };
+    const rows: Unit[] = surfaces.map((s, i) => ({
+      id: `${containerId}-r${i}`,
+      object_id: OBJ,
+      parent_unit_id: containerId,
+      position: i,
+      status: 'rough',
+      declared_by: 'user',
+      content: {
+        kind: 'math',
+        expr: {
+          id: `${containerId}-e${i}`,
+          surface_text: s,
+          surface_format: 'mathmeander',
+          input_syntax: 'mathmeander',
+          original_input: s,
+          parse_status: 'renderable',
+          occurrences: [],
+        },
+      },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d3',
+    }));
+    return { object_id: OBJ, revision: 3, units: [container, ...rows] };
+  }
+
+  /** A doc with one system block (unitId = container, rowIds set, multi-line `$$…$$` text marked display). */
+  function systemDoc(containerId: string, rowIds: string[], surfaces: string[]) {
+    const inner = surfaces.join('\n');
+    const mark = editorSchema.marks.mathExpr.create({
+      expr: {
+        id: containerId,
+        surface_text: inner,
+        surface_format: 'mathmeander',
+        input_syntax: 'mathmeander',
+        original_input: inner,
+        parse_status: 'renderable',
+        occurrences: [],
+      },
+      display: true,
+    });
+    const nodes = `$$${inner}$$`.split('\n').flatMap((part, i) => {
+      const out = [];
+      if (i > 0) out.push(editorSchema.nodes.hard_break.create(null, null, [mark]));
+      if (part.length > 0) out.push(editorSchema.text(part, [mark]));
+      return out;
+    });
+    return editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: containerId, rowIds }, nodes),
+    ]);
+  }
+
+  const surfaceOf = (u: Unit) => (u.content as { expr: MathExpression }).expr.surface_text;
+
+  /** Apply a flush delta to content (as the server persist does) → the next flush's baseline. */
+  function applyDelta(c: MathContent, d: { upserts: Unit[]; deletes: string[] }): MathContent {
+    const byId = new Map(c.units.map((u) => [u.id, u]));
+    for (const id of d.deletes) byId.delete(id);
+    for (const u of d.upserts) byId.set(u.id, u);
+    return { ...c, revision: c.revision + 1, units: [...byId.values()] };
+  }
+
+  it('isEditable admits a top-level Equations container + Math rows; rejects a deeper nest', () => {
+    expect(isEditable(equationsContent('c1', ['a = 1', 'b = 2']))).toBe(true);
+    expect(isFlatProse(equationsContent('c1', ['a = 1', 'b = 2']))).toBe(false);
+  });
+
+  it('isEditable FAILS CLOSED for a system with a Prose row (editor round-trips only Math rows, §6.0a)', () => {
+    const c = equationsContent('c1', ['a = 1']);
+    c.units.push({
+      id: 'c1-prose',
+      object_id: OBJ,
+      parent_unit_id: 'c1',
+      position: 1,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'prose', text: 'note', inline: [] },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d3',
+    });
+    expect(isEditable(c)).toBe(false); // → read-only MathContentView (no editor wedge)
+  });
+
+  it('isEditable FAILS CLOSED for a system row carrying a row_relation', () => {
+    const c = equationsContent('c1', ['a = 1', 'b = 2']);
+    c.units[1] = { ...c.units[1]!, row_relation: 'eq' }; // a relation the editor flush can't round-trip
+    expect(isEditable(c)).toBe(false);
+  });
+
+  it('CHURN: an edited row keeps its provenance_id (a FROZEN save_content facet — never re-minted)', () => {
+    // Re-minting an existing row's provenance (via newMathUnit) made save_content 422 on every flush — the
+    // editor proposed a changed frozen facet. An edited row must spread the prior row, like the prose path.
+    const prior = equationsContent('c1', ['a = 1', 'b = 2']);
+    const priorRow1 = prior.units.find((u) => u.parent_unit_id === 'c1' && u.position === 1)!;
+    const doc = systemDoc('c1', ['c1-r0', 'c1-r1'], ['a = 1', 'b = 99']);
+    const edited = flushToContent(doc, prior).upserts.find((u) => u.id === 'c1-r1')!;
+    expect(edited.provenance_id).toBe(priorRow1.provenance_id); // unchanged — not a fresh uuid
+    expect(edited.status).toBe(priorRow1.status); // every other frozen facet preserved too
+  });
+
+  it('KIND-FLIP single→system is IDEMPOTENT on the second flush (no autosave wedge — finding #1)', () => {
+    // The flip mints a fresh container id + deletes the old Math unit; the doc keeps its stale unitId and a
+    // normal flush never reprojects. The second flush must still find the real container (via the rows'
+    // parent) and emit NOTHING — else it would re-parent the rows, which save_content 422s forever.
+    const prior = content([mathUnit('m1', 0, 'a = 1')]);
+    const doc = systemDoc('m1', ['r0', 'r1'], ['a = 1', 'b = 2']);
+    const flush1 = flushToContent(doc, prior);
+    expect(flush1.deletes).toContain('m1');
+    const baseline2 = applyDelta(prior, flush1);
+    const flush2 = flushToContent(doc, baseline2); // same doc, advanced baseline
+    expect(flush2.upserts).toEqual([]);
+    expect(flush2.deletes).toEqual([]);
+  });
+
+  it('SYSTEM round-trips clean (container + rows ⇄ multi-line $$…$$)', () => {
+    expect(roundTripIsClean(equationsContent('c1', ['2x + y = 1', 'x - y = 4']))).toBe(true);
+  });
+
+  it('CREATE: a fresh multi-line block mints a container + one row per line (ids from rowIds)', () => {
+    const doc = systemDoc('c1', ['r0', 'r1'], ['a = 1', 'b = 2']);
+    const { upserts, deletes } = flushToContent(doc, content([]));
+    expect(deletes).toEqual([]);
+    const container = upserts.find((u) => u.content.kind === 'equations')!;
+    expect(container.id).toBe('c1');
+    const rows = upserts.filter((u) => u.parent_unit_id === 'c1');
+    expect(rows.map((r) => r.id)).toEqual(['r0', 'r1']);
+    expect(rows.map(surfaceOf)).toEqual(['a = 1', 'b = 2']);
+    expect(rows.map((r) => r.position)).toEqual([0, 1]);
+  });
+
+  it('CHURN: editing one row emits exactly ONE upsert (rows keep their ids, no re-mint)', () => {
+    const prior = equationsContent('c1', ['a = 1', 'b = 2']);
+    const doc = systemDoc('c1', ['c1-r0', 'c1-r1'], ['a = 1', 'b = 99']); // row 1 edited
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toEqual([]);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.id).toBe('c1-r1');
+    expect(surfaceOf(upserts[0]!)).toBe('b = 99');
+  });
+
+  it('ADD a row: appends a new row, others untouched', () => {
+    const prior = equationsContent('c1', ['a = 1', 'b = 2']);
+    const doc = systemDoc('c1', ['c1-r0', 'c1-r1'], ['a = 1', 'b = 2', 'c = 3']); // rowIds short → row 2 fresh
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toEqual([]);
+    expect(upserts).toHaveLength(1); // only the new row
+    expect(upserts[0]!.parent_unit_id).toBe('c1');
+    expect(surfaceOf(upserts[0]!)).toBe('c = 3');
+    expect(upserts[0]!.position).toBe(2);
+  });
+
+  it('DELETE a row: the dropped row is in deletes, ≥2 remain (still a system)', () => {
+    const prior = equationsContent('c1', ['a = 1', 'b = 2', 'c = 3']);
+    const doc = systemDoc('c1', ['c1-r0', 'c1-r1', 'c1-r2'], ['a = 1', 'c = 3']); // middle line removed
+    const { deletes } = flushToContent(doc, prior);
+    // positional rowIds: r0=a (kept), r1 now holds 'c = 3' (content shifts), r2 unused → deleted.
+    expect(deletes).toContain('c1-r2');
+  });
+
+  it('DELETE the whole system: clearing the block drops the container + every row', () => {
+    const prior = equationsContent('c1', ['a = 1', 'b = 2']);
+    // The block is gone (an empty doc with just a placeholder prose block).
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: null }),
+    ]);
+    const { deletes } = flushToContent(doc, prior);
+    expect(new Set(deletes)).toEqual(new Set(['c1', 'c1-r0', 'c1-r1']));
+  });
+
+  it('KIND-FLIP single→system: adding a 2nd line deletes the Math unit + creates a container + rows', () => {
+    const prior = content([mathUnit('m1', 0, 'a = 1')]);
+    const doc = systemDoc('m1', [], ['a = 1', 'b = 2']); // same block id, now 2 lines
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toContain('m1'); // the old single Math unit is removed
+    const container = upserts.find((u) => u.content.kind === 'equations')!;
+    expect(container).toBeTruthy();
+    expect(upserts.filter((u) => u.parent_unit_id === container.id)).toHaveLength(2);
+  });
+
+  it('KIND-FLIP system→single: deleting down to ONE line drops the container + rows, creates a Math unit', () => {
+    const prior = equationsContent('c1', ['a = 1', 'b = 2']);
+    const doc = docOfDisplay('c1', 'a = 1'); // one line → a single display equation
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(new Set(deletes)).toEqual(new Set(['c1', 'c1-r0', 'c1-r1']));
+    const math = upserts.find((u) => u.content.kind === 'math' && u.parent_unit_id == null)!;
+    expect(math).toBeTruthy();
+    expect(surfaceOf(math)).toBe('a = 1');
+  });
+
+  /** A doc with one single-line `$$surface$$` display block (a single equation). */
+  function docOfDisplay(unitId: string, surface: string) {
+    return editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId }, [
+        editorSchema.text(`$$${surface}$$`, [
+          editorSchema.marks.mathExpr.create({
+            expr: {
+              id: `${unitId}-e`,
+              surface_text: surface,
+              surface_format: 'mathmeander',
+              input_syntax: 'mathmeander',
+              original_input: surface,
+              parse_status: 'renderable',
+              occurrences: [],
+            },
+            display: true,
+          }),
+        ]),
+      ]),
+    ]);
+  }
 });

@@ -19,15 +19,16 @@ use mathmeander_core::error::ValidationError;
 use mathmeander_core::ids::{ExpressionId, LinkId, ObjectVersionId, TagId, TaggingId, UnitId};
 use mathmeander_core::model::{
     CharSpan, ContentLocator, DeclaredBy, ExtractedStructureEnvelope, Inline, Link, LinkStatus,
-    LinkType, MathExpression, Occurrence, OccurrenceTarget, ParseStatus, SurfaceFormat, Tagging,
-    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
+    LinkType, MathExpression, Occurrence, OccurrenceTarget, ParseStatus, RowRelation,
+    SurfaceFormat, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use mathmeander_core::ops::{
-    ExpressionIdRemap, InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent,
-    MergeUnitsInput, OpContext, ResolveOccurrenceInput, ResolveTarget, RewriteSurfaceInput,
-    SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput, UnitIdRemap,
-    insert_reference, materialize_object, merge_units, resolve_occurrence, rewrite_surface,
-    save_content, set_unit_type, split_unit, toggle_expression_placement,
+    EquationRowInput, ExpressionIdRemap, InsertEquationsInput, InsertReferenceInput, LinkDraft,
+    MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext, ResolveOccurrenceInput,
+    ResolveTarget, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ToggleExpressionPlacementInput, UnitIdRemap, insert_equations, insert_reference,
+    materialize_object, merge_units, resolve_occurrence, rewrite_surface, save_content,
+    set_unit_type, split_unit, toggle_expression_placement,
 };
 
 fn arb_uuid() -> impl Strategy<Value = Uuid> {
@@ -498,6 +499,7 @@ fn a_prose_unit(
         parent_unit_id: None,
         position,
         slot: None,
+        row_relation: None,
         unit_type: None,
         example_kind: None,
         status: UnitStatus::Rough,
@@ -518,6 +520,7 @@ fn a_math_unit(id: UnitId, object_id: ObjectId, position: u32, expr: MathExpress
         parent_unit_id: None,
         position,
         slot: None,
+        row_relation: None,
         unit_type: None,
         example_kind: None,
         status: UnitStatus::Rough,
@@ -1593,6 +1596,271 @@ fn save_content_allows_editing_a_zero_anchor_math_unit() {
     assert_eq!(out.content.revision, 2);
 }
 
+// ── save_content: co-equal systems (slice 2-B — the editor authors a system via the coarse delta,
+//    mirroring the display-math relaxation; no `insert_equations` op needed) ──
+
+fn an_equations_container(id: UnitId, object_id: ObjectId, position: u32) -> Unit {
+    Unit {
+        id,
+        object_id,
+        parent_unit_id: None,
+        position,
+        slot: None,
+        row_relation: None,
+        unit_type: None,
+        example_kind: None,
+        status: UnitStatus::Rough,
+        declared_by: DeclaredBy::User,
+        extracted_structure: None,
+        content: UnitContent::Equations,
+        provenance_id: ProvenanceId(v7(9)),
+    }
+}
+
+fn a_math_row(
+    id: UnitId,
+    object_id: ObjectId,
+    parent: UnitId,
+    position: u32,
+    expr: MathExpression,
+) -> Unit {
+    let mut u = a_math_unit(id, object_id, position, expr);
+    u.parent_unit_id = Some(parent);
+    u
+}
+
+#[test]
+fn save_content_allows_creating_a_system() {
+    // Typing `$$2x+y=1 ⏎ x-y=4$$` is one delta: an Equations container + two Math rows under it.
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let prior = prose_content(vec![]);
+    let upserts = vec![
+        an_equations_container(container, obj, 0),
+        a_math_row(
+            UnitId(v7(0xb1)),
+            obj,
+            container,
+            0,
+            an_expr(ExpressionId(v7(0xe1)), "2x+y=1", vec![]),
+        ),
+        a_math_row(
+            UnitId(v7(0xb2)),
+            obj,
+            container,
+            1,
+            an_expr(ExpressionId(v7(0xe2)), "x-y=4", vec![]),
+        ),
+    ];
+    let out = save_content(&prior, &[], &upserts, &[], &op_ctx(), op_now())
+        .expect("system create applies");
+    assert_eq!(out.content.units.len(), 3);
+    let rows: Vec<&Unit> = out
+        .content
+        .units
+        .iter()
+        .filter(|u| u.parent_unit_id == Some(container))
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(out.content.revision, 2);
+}
+
+#[test]
+fn save_content_allows_editing_a_system_row() {
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let row0 = a_math_row(
+        UnitId(v7(0xb1)),
+        obj,
+        container,
+        0,
+        an_expr(ExpressionId(v7(0xe1)), "x", vec![]),
+    );
+    let row1 = a_math_row(
+        UnitId(v7(0xb2)),
+        obj,
+        container,
+        1,
+        an_expr(ExpressionId(v7(0xe2)), "y", vec![]),
+    );
+    let prior = prose_content(vec![
+        an_equations_container(container, obj, 0),
+        row0.clone(),
+        row1,
+    ]);
+
+    let mut edited = row0;
+    edited.content = UnitContent::Math {
+        expr: an_expr(ExpressionId(v7(0xe1)), "x + 1", vec![]),
+    };
+    let out = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&edited),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("row edit applies");
+    assert_eq!(out.content.revision, 2);
+    assert!(out.content.units.contains(&edited));
+}
+
+#[test]
+fn save_content_allows_adding_and_deleting_a_row() {
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let row0 = a_math_row(
+        UnitId(v7(0xb1)),
+        obj,
+        container,
+        0,
+        an_expr(ExpressionId(v7(0xe1)), "x", vec![]),
+    );
+    let prior = prose_content(vec![an_equations_container(container, obj, 0), row0]);
+
+    // Add a 2nd row.
+    let row1 = a_math_row(
+        UnitId(v7(0xb2)),
+        obj,
+        container,
+        1,
+        an_expr(ExpressionId(v7(0xe2)), "y", vec![]),
+    );
+    let out = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&row1),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("row add applies");
+    assert_eq!(
+        out.content
+            .units
+            .iter()
+            .filter(|u| u.parent_unit_id == Some(container))
+            .count(),
+        2
+    );
+
+    // Delete a row (≥1 remains → still a system).
+    let after_add = out.content;
+    let out2 = save_content(
+        &after_add,
+        &[],
+        &[],
+        &[UnitId(v7(0xb2))],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("row delete applies");
+    assert_eq!(
+        out2.content
+            .units
+            .iter()
+            .filter(|u| u.parent_unit_id == Some(container))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn save_content_allows_deleting_a_whole_system() {
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let row0 = a_math_row(
+        UnitId(v7(0xb1)),
+        obj,
+        container,
+        0,
+        an_expr(ExpressionId(v7(0xe1)), "x", vec![]),
+    );
+    let row1 = a_math_row(
+        UnitId(v7(0xb2)),
+        obj,
+        container,
+        1,
+        an_expr(ExpressionId(v7(0xe2)), "y", vec![]),
+    );
+    let prior = prose_content(vec![an_equations_container(container, obj, 0), row0, row1]);
+
+    // Deleting the container together with its rows is allowed (a whole-system delete).
+    let out = save_content(
+        &prior,
+        &[],
+        &[],
+        &[container, UnitId(v7(0xb1)), UnitId(v7(0xb2))],
+        &op_ctx(),
+        op_now(),
+    )
+    .expect("whole-system delete applies");
+    assert!(out.content.units.is_empty());
+}
+
+#[test]
+fn save_content_rejects_a_row_under_a_non_equations_parent() {
+    // A new row whose parent is a prose unit (not an Equations container) → refused.
+    let obj = ObjectId(v7(1));
+    let parent = UnitId(v7(2));
+    let prior = prose_content(vec![a_prose_unit(parent, obj, 0, "a", vec![])]);
+    let row = a_math_row(
+        UnitId(v7(3)),
+        obj,
+        parent,
+        0,
+        an_expr(ExpressionId(v7(0xe1)), "x", vec![]),
+    );
+    let err = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&row),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
+#[test]
+fn save_content_rejects_a_nested_container_row() {
+    // A row may be Math/Prose only — never a nested container (one level, §F2).
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let prior = prose_content(vec![an_equations_container(container, obj, 0)]);
+    let mut nested = an_equations_container(UnitId(v7(0xc1)), obj, 0);
+    nested.parent_unit_id = Some(container);
+    let err = save_content(
+        &prior,
+        &[],
+        std::slice::from_ref(&nested),
+        &[],
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap_err();
+    assert_eq!(err_code(&err), "equations_row_not_permitted");
+}
+
+#[test]
+fn save_content_rejects_an_orphaned_row() {
+    // Deleting a container WITHOUT its rows leaves a dangling parent → refused (no orphans).
+    let obj = ObjectId(v7(1));
+    let container = UnitId(v7(0xc0));
+    let row0 = a_math_row(
+        UnitId(v7(0xb1)),
+        obj,
+        container,
+        0,
+        an_expr(ExpressionId(v7(0xe1)), "x", vec![]),
+    );
+    let prior = prose_content(vec![an_equations_container(container, obj, 0), row0]);
+    let err = save_content(&prior, &[], &[], &[container], &op_ctx(), op_now()).unwrap_err();
+    assert_eq!(err_code(&err), "content_save_invalid");
+}
+
 #[test]
 fn save_content_rejects_editing_math_with_occurrences() {
     // Once an expression carries occurrence selectors (resolvable ident-sites), a free re-author
@@ -2213,4 +2481,139 @@ fn split_renumbers_per_parent() {
         .collect();
     child_pos.sort_unstable();
     assert_eq!(child_pos, vec![0, 1, 2], "three children renumbered 0..3");
+}
+
+// ── insert_equations (slice 2-A math-row model) ──────────────────────────────────
+
+#[test]
+fn insert_equations_mints_container_and_rows() {
+    let obj = ObjectId(v7(1));
+    let anchor = a_prose_unit(UnitId(v7(0xa0)), obj, 0, "A system:", vec![]);
+    let content = MathContent {
+        object_id: obj,
+        revision: 1,
+        units: vec![anchor],
+    };
+
+    let container_id = UnitId(v7(0xc0));
+    let row1 = UnitId(v7(0xb1));
+    let row2 = UnitId(v7(0xb2));
+    let input = InsertEquationsInput {
+        expected_revision: 1,
+        anchor_unit_id: UnitId(v7(0xa0)),
+        container_unit_id: container_id,
+        rows: vec![
+            EquationRowInput {
+                unit_id: row1,
+                content: UnitContent::Math {
+                    expr: an_expr(ExpressionId(v7(0xe1)), "2x+y=1", vec![]),
+                },
+                row_relation: Some(RowRelation::Eq),
+            },
+            EquationRowInput {
+                unit_id: row2,
+                content: UnitContent::Math {
+                    expr: an_expr(ExpressionId(v7(0xe2)), "x-y=4", vec![]),
+                },
+                row_relation: None,
+            },
+        ],
+    };
+    let out = insert_equations(content, &input, &op_ctx(), op_now()).expect("insert");
+
+    // Container: an Equations unit, top-level (the anchor's parent), placed after the anchor.
+    let container = out
+        .content
+        .units
+        .iter()
+        .find(|u| u.id == container_id)
+        .expect("container present");
+    assert!(matches!(container.content, UnitContent::Equations));
+    assert_eq!(container.parent_unit_id, None);
+    assert_eq!(
+        container.position, 1,
+        "container sits after the anchor (pos 0)"
+    );
+
+    // Rows: Math children of the container, gap-free 0..n, row_relation preserved (incl. None).
+    let rows: Vec<&Unit> = out
+        .content
+        .units
+        .iter()
+        .filter(|u| u.parent_unit_id == Some(container_id))
+        .collect();
+    assert_eq!(rows.len(), 2);
+    let r1 = rows.iter().find(|u| u.id == row1).expect("row1");
+    let r2 = rows.iter().find(|u| u.id == row2).expect("row2");
+    assert_eq!(r1.row_relation, Some(RowRelation::Eq));
+    assert_eq!(r2.row_relation, None);
+    let mut positions: Vec<u32> = rows.iter().map(|u| u.position).collect();
+    positions.sort_unstable();
+    assert_eq!(positions, vec![0, 1]);
+
+    // Expr ids are preserved by value (the client built them); single revision bump, no edges/remap.
+    assert!(matches!(&r1.content, UnitContent::Math { expr } if expr.id == ExpressionId(v7(0xe1))));
+    assert_eq!(out.content.revision, 2);
+    assert!(out.links_upserted.is_empty());
+    assert!(out.expression_id_remap.is_empty());
+}
+
+#[test]
+fn insert_equations_rejects_a_non_math_or_prose_row() {
+    let obj = ObjectId(v7(1));
+    let content = MathContent {
+        object_id: obj,
+        revision: 1,
+        units: vec![a_prose_unit(UnitId(v7(0xa0)), obj, 0, "x", vec![])],
+    };
+    let input = InsertEquationsInput {
+        expected_revision: 1,
+        anchor_unit_id: UnitId(v7(0xa0)),
+        container_unit_id: UnitId(v7(0xc0)),
+        rows: vec![EquationRowInput {
+            unit_id: UnitId(v7(0xb1)),
+            content: UnitContent::Group, // a nested container is not a row (one level only, §F2)
+            row_relation: None,
+        }],
+    };
+    let err = insert_equations(content, &input, &op_ctx(), op_now()).unwrap_err();
+    assert!(matches!(
+        err,
+        ValidationError::EquationsRowNotPermitted { .. }
+    ));
+}
+
+#[test]
+fn insert_equations_rejects_two_rows_sharing_an_expression_id() {
+    let obj = ObjectId(v7(1));
+    let content = MathContent {
+        object_id: obj,
+        revision: 1,
+        units: vec![a_prose_unit(UnitId(v7(0xa0)), obj, 0, "x", vec![])],
+    };
+    let dup = ExpressionId(v7(0xe1));
+    let input = InsertEquationsInput {
+        expected_revision: 1,
+        anchor_unit_id: UnitId(v7(0xa0)),
+        container_unit_id: UnitId(v7(0xc0)),
+        rows: vec![
+            EquationRowInput {
+                unit_id: UnitId(v7(0xb1)),
+                content: UnitContent::Math {
+                    expr: an_expr(dup, "a=b", vec![]),
+                },
+                row_relation: None,
+            },
+            EquationRowInput {
+                unit_id: UnitId(v7(0xb2)),
+                content: UnitContent::Math {
+                    expr: an_expr(dup, "c=d", vec![]),
+                },
+                row_relation: None,
+            },
+        ],
+    };
+    // The integrity backstop (§6.3a): two units may not alias one expression id.
+    let err = insert_equations(content, &input, &op_ctx(), op_now()).unwrap_err();
+    assert!(matches!(err, ValidationError::ContentSaveInvalid { .. }));
 }

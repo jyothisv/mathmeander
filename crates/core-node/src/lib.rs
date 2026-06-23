@@ -148,6 +148,17 @@ pub fn toggle_expression_placement(
     )
 }
 
+/// Insert an `Equations` container + its co-equal child rows in one op → `OpOutcomeResult` JSON.
+#[napi]
+pub fn insert_equations(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::insert_equations(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
 /// Rewrite a surface, re-anchoring inbound edges (current links passed in) → `OpOutcomeResult` JSON.
 #[napi]
 pub fn rewrite_surface(

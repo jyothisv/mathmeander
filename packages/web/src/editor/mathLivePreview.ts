@@ -18,7 +18,8 @@ import type { Node as PMNode } from 'prosemirror-model';
 import type { MathExpression } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { renderMathInto } from './renderMath';
-import { openRegionStart } from './mathSyntax';
+import { openRegionStart, splitSystemRows, wholeDisplaySource } from './mathSyntax';
+import { isMathRuntimeReady, normalizeFresh } from './mathRuntime';
 
 const MARK = editorSchema.marks.mathExpr;
 
@@ -28,6 +29,22 @@ interface Span {
   expr: MathExpression;
   /** A whole-line `$$…$$` display equation (rendered centered, source revealed only on focus) vs inline `$…$`. */
   display: boolean;
+  /** A co-equal SYSTEM (2-B): the per-row surfaces of a multi-line `$$…$$` (≥2 non-empty lines). When set,
+   *  the widget renders an aligned stack of rows instead of one centered equation. */
+  rows?: string[];
+}
+
+/** A block's source with `\n` per hard_break (a system's `$$…$$` is multi-line); null if it has a
+ *  non-text/non-hard_break inline. */
+function blockSource(block: PMNode): string | null {
+  let text = '';
+  let ok = true;
+  block.forEach((child) => {
+    if (child.isText) text += child.text ?? '';
+    else if (child.type.name === 'hard_break') text += '\n';
+    else ok = false;
+  });
+  return ok ? text : null;
 }
 interface PluginState {
   spans: Span[];
@@ -55,11 +72,17 @@ function computeSpans(doc: PMNode): Span[] {
       if (m && (m.attrs.display as boolean)) displayExpr = m.attrs.expr as MathExpression;
     });
     if (displayExpr) {
+      // A multi-line `$$…$$` with ≥2 non-empty lines is a co-equal SYSTEM (2-B): carry the per-row surfaces
+      // so the widget renders an aligned stack. One line → a single centered equation (carry no rows).
+      const src = blockSource(block);
+      const inner = src != null ? wholeDisplaySource(src) : null;
+      const rows = inner != null ? splitSystemRows(inner) : [];
       spans.push({
         from: contentStart,
         to: contentStart + block.content.size,
         expr: displayExpr,
         display: true,
+        ...(rows.length >= 2 ? { rows } : {}),
       });
       return;
     }
@@ -111,6 +134,51 @@ function renderWidget(expr: MathExpression, display: boolean) {
         const sel = Selection.near(view.state.doc.resolve(pos), -1); // beside → stays rendered (suppressed)
         view.dispatch(view.state.tr.setSelection(sel).setMeta(KEY, pos));
       }
+      view.focus();
+    });
+    return el;
+  };
+}
+
+/** A transient `MathExpression` for rendering ONE system row (id is irrelevant — this is render-only; the
+ *  canonical row identity lives in the flush via `rowIds`). `parse_status` from the WASM when ready, so an
+ *  invalid row shows its source rather than a KaTeX error. */
+function transientRowExpr(surface: string): MathExpression {
+  return {
+    id: '',
+    surface_text: surface,
+    surface_format: 'mathmeander',
+    input_syntax: 'mathmeander',
+    original_input: surface,
+    parse_status: isMathRuntimeReady() ? normalizeFresh(surface).parseStatus : 'renderable',
+    occurrences: [],
+  };
+}
+
+/** Build the widget DOM for a co-equal SYSTEM (2-B): each row rendered (KaTeX) in a `[relation | body]` grid,
+ *  reusing the 2-A read-only `.equations` layout for visual consistency (`row_relation` gutter empty for now —
+ *  the `&`-alignment override is deferred). The render stays ALWAYS visible; a click reveals the `$$…$$` source. */
+function renderSystemWidget(rows: string[]) {
+  return (view: EditorView): HTMLElement => {
+    const el = document.createElement('span');
+    el.className = 'math-render math-render-display equations';
+    el.contentEditable = 'false';
+    for (const surface of rows) {
+      const row = document.createElement('span');
+      row.className = 'row';
+      const rel = document.createElement('span');
+      rel.className = 'row-relation';
+      const body = document.createElement('span');
+      body.className = 'row-body';
+      renderMathInto(transientRowExpr(surface), body, { display: true });
+      row.append(rel, body);
+      el.append(row);
+    }
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const pos = view.posAtDOM(el, 0);
+      const sel = Selection.near(view.state.doc.resolve(pos), -1); // into the source → reveal it for editing
+      view.dispatch(view.state.tr.setSelection(sel));
       view.focus();
     });
     return el;
@@ -169,15 +237,23 @@ export const mathLivePreview = new Plugin<PluginState>({
       for (const span of ps.spans) {
         const touches = selFrom <= span.to && selTo >= span.from;
         if (span.display) {
-          // DISPLAY: the centered render is ALWAYS shown (a widget after the source); the `$$…$$` source is
-          // hidden UNLESS the selection is in the block, where it appears ABOVE the render for editing.
+          // DISPLAY: the render is ALWAYS shown (a widget after the source); the `$$…$$` source is hidden
+          // UNLESS the selection is in the block, where it appears ABOVE the render for editing. A SYSTEM
+          // (≥2 rows) renders as an aligned stack; a single equation renders centered.
+          const isSystem = !!span.rows && span.rows.length >= 2;
           decos.push(
-            Decoration.widget(span.to, renderWidget(span.expr, true), {
-              side: 1,
-              marks: [],
-              key: `mathd:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}`,
-              ignoreSelection: true,
-            }),
+            Decoration.widget(
+              span.to,
+              isSystem ? renderSystemWidget(span.rows!) : renderWidget(span.expr, true),
+              {
+                side: 1,
+                marks: [],
+                key: isSystem
+                  ? `maths:${isMathRuntimeReady() ? 1 : 0}:${span.rows!.join('\n')}`
+                  : `mathd:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}`,
+                ignoreSelection: true,
+              },
+            ),
           );
           if (!touches) decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
           continue;

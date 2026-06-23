@@ -36,6 +36,7 @@ interface UnitRow {
   parent_unit_id: string | null;
   position: number;
   slot: string | null;
+  row_relation: string | null;
   type: string | null;
   example_kind: string | null;
   status: string;
@@ -56,14 +57,15 @@ function rowToUnit(row: UnitRow): Unit {
     provenance_id: row.provenance_id,
     ...omitNull('parent_unit_id', row.parent_unit_id),
     ...omitNull('slot', row.slot),
+    ...omitNull('row_relation', row.row_relation),
     ...omitNull('type', row.type),
     ...omitNull('example_kind', row.example_kind),
     ...omitNull('extracted_structure', row.extracted_structure),
   } as Unit;
 }
 
-const UNIT_COLUMNS = `id, object_id, parent_unit_id, position, slot, type, example_kind, status,
-                      declared_by, extracted_structure, content, provenance_id`;
+const UNIT_COLUMNS = `id, object_id, parent_unit_id, position, slot, row_relation, type, example_kind,
+                      status, declared_by, extracted_structure, content, provenance_id`;
 
 interface LinkRow {
   id: string;
@@ -646,15 +648,16 @@ async function insertObjectRow(client: pg.PoolClient, o: CanonicalObject): Promi
 async function insertContentUnit(client: pg.PoolClient, u: Unit): Promise<void> {
   await client.query(
     `INSERT INTO content_units
-       (id, object_id, parent_unit_id, position, slot, type, example_kind, status,
+       (id, object_id, parent_unit_id, position, slot, row_relation, type, example_kind, status,
         declared_by, extracted_structure, content, provenance_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       u.id,
       u.object_id,
       u.parent_unit_id ?? null,
       u.position,
       u.slot ?? null,
+      u.row_relation ?? null,
       u.type ?? null,
       u.example_kind ?? null,
       u.status,

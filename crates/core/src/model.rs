@@ -496,12 +496,84 @@ pub enum UnitContent {
     List { ordered: bool },
     /// Steps are child rows; each step child carries its relation (slice 1b+).
     Derivation,
+    /// Co-equal, jointly-asserted relation rows — the "system of equations" `{2x+y=1; x−y=4}`.
+    /// Children are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a
+    /// `row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render
+    /// (never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).
+    Equations,
     /// Each case is a child group; `slot` marks the assumption child vs body children.
     CaseSplit,
     /// THE generic container — a typed unit's multi-part body, or a neutral grouping.
     Group,
     /// Quotes & object embeds.
     Embed { target: EmbedTarget },
+}
+
+/// The typed relation a row asserts relative to its prior sibling row (a `Derivation` step's
+/// connective, or an `Equations` row's leading relation). `None` = the row's relation is intrinsic
+/// to its own content (the common `Equations` case) or none. The domain is `⊆` the surface grammar's
+/// relation set (`SYMBOLIC_RELATIONS ∪ WORD_RELATIONS`), kept in sync by a mechanical test. It is
+/// PRESENTATION-FREE: render may show its glyph in a gutter / alignment column, but layout is never
+/// stored. Wire vocabulary is the variant name (`"eq"`), not the symbol; `token()` bridges to the
+/// grammar token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum RowRelation {
+    Eq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Ne,
+    Defines,
+    MapsTo,
+    Implies,
+    In,
+    NotIn,
+    Subset,
+    Subseteq,
+}
+
+impl RowRelation {
+    /// The grammar relation TOKEN this variant denotes. The sync test asserts the image of this map
+    /// over every variant equals `grammar::SYMBOLIC_RELATIONS ∪ grammar::WORD_RELATIONS`. The
+    /// non-wildcard match forces a token decision when a variant is added.
+    pub fn token(self) -> &'static str {
+        match self {
+            RowRelation::Eq => "=",
+            RowRelation::Lt => "<",
+            RowRelation::Gt => ">",
+            RowRelation::Le => "<=",
+            RowRelation::Ge => ">=",
+            RowRelation::Ne => "!=",
+            RowRelation::Defines => ":=",
+            RowRelation::MapsTo => "->",
+            RowRelation::Implies => "=>",
+            RowRelation::In => "in",
+            RowRelation::NotIn => "notin",
+            RowRelation::Subset => "subset",
+            RowRelation::Subseteq => "subseteq",
+        }
+    }
+
+    /// Every variant, in declaration order — used by the grammar sync test (Rust has no built-in
+    /// enum iteration and adding `strum` would violate the pure-core dependency minimalism).
+    pub const ALL: [RowRelation; 13] = [
+        RowRelation::Eq,
+        RowRelation::Lt,
+        RowRelation::Gt,
+        RowRelation::Le,
+        RowRelation::Ge,
+        RowRelation::Ne,
+        RowRelation::Defines,
+        RowRelation::MapsTo,
+        RowRelation::Implies,
+        RowRelation::In,
+        RowRelation::NotIn,
+        RowRelation::Subset,
+        RowRelation::Subseteq,
+    ];
 }
 
 /// The mandatory envelope every `extracted_structure` candidate carries (§6.0). This is a
@@ -546,6 +618,9 @@ pub struct Unit {
     /// Container-internal part where needed, e.g. `assumption` (case child) /
     /// `justification` (proof_step child); `None` otherwise.
     pub slot: Option<String>,
+    /// The relation this row asserts toward its prior sibling — a `Derivation` step's connective or
+    /// an `Equations` row's leading relation; `None` otherwise (the common `Equations` case).
+    pub row_relation: Option<RowRelation>,
     /// THE one user-facing math-flow label; `None` = plain content.
     #[serde(rename = "type")]
     pub unit_type: Option<UnitType>,

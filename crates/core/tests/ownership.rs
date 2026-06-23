@@ -77,6 +77,7 @@ fn prose(id: u128, parent: Option<u128>, position: u32, text: &str) -> Unit {
         parent_unit_id: parent.map(|p| UnitId(v7(p))),
         position,
         slot: None,
+        row_relation: None,
         unit_type: None,
         example_kind: None,
         status: UnitStatus::Rough,

@@ -204,3 +204,109 @@ describe('canonical operation endpoints', () => {
     );
   });
 });
+
+describe('insert-equations (slice 2-A math-row model)', () => {
+  const mathExpr = (surface: string) => ({
+    id: uuidv7(),
+    surface_text: surface,
+    surface_format: 'mathmeander',
+    original_input: surface,
+    parse_status: 'renderable',
+    occurrences: [],
+  });
+
+  type UnitShape = {
+    id: string;
+    parent_unit_id?: string;
+    row_relation?: string;
+    content: { kind: string };
+  };
+
+  test('mints an Equations container + co-equal rows; parent_unit_id + row_relation persist', async () => {
+    const { objectId, unitId } = await seedObjectWithProse(stack, token, { text: 'A system:' });
+
+    const res = await stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${objectId}/ops/insert-equations`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: 1,
+        anchor_unit_id: unitId,
+        container_unit_id: uuidv7(), // overwritten server-side
+        rows: [
+          {
+            unit_id: uuidv7(),
+            content: { kind: 'math', expr: mathExpr('2x+y=1') },
+            row_relation: 'eq',
+          },
+          { unit_id: uuidv7(), content: { kind: 'math', expr: mathExpr('x-y=4') } },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const outcome = (
+      res.json() as { outcome: { content: { revision: number; units: UnitShape[] } } }
+    ).outcome;
+    expect(outcome.content.revision).toBe(2);
+    const container = outcome.content.units.find((u) => u.content.kind === 'equations');
+    expect(container).toBeDefined();
+    const rows = outcome.content.units.filter((u) => u.parent_unit_id === container!.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.row_relation === 'eq')).toBe(true);
+
+    // Persisted: reload via mathpack export — container + 2 rows + the seeded prose = 4 units,
+    // and row_relation round-trips through the new column.
+    const pack = await stack.app.inject({
+      method: 'GET',
+      url: `/api/objects/${objectId}/mathpack`,
+      headers: bearer(token),
+    });
+    expect(pack.statusCode).toBe(200);
+    const graph = pack.json() as {
+      manifest: { counts: { units: number } };
+      graph: { content: { units: UnitShape[] }[] };
+    };
+    expect(graph.manifest.counts.units).toBe(4);
+    const persisted = graph.graph.content.flatMap((c) => c.units);
+    const persistedContainer = persisted.find((u) => u.content.kind === 'equations');
+    expect(persistedContainer).toBeDefined();
+    const persistedRows = persisted.filter((u) => u.parent_unit_id === persistedContainer!.id);
+    expect(persistedRows).toHaveLength(2);
+    expect(persistedRows.some((r) => r.row_relation === 'eq')).toBe(true);
+  });
+
+  test('a non-math/prose row is refused → 422 (one level only, §F2)', async () => {
+    const { objectId, unitId } = await seedObjectWithProse(stack, token, { text: 'x' });
+    const res = await stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${objectId}/ops/insert-equations`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: 1,
+        anchor_unit_id: unitId,
+        container_unit_id: uuidv7(),
+        rows: [{ unit_id: uuidv7(), content: { kind: 'group' } }],
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      'equations_row_not_permitted',
+    );
+  });
+
+  test('a stale expected_revision loses the conditional write → 409', async () => {
+    const { objectId, unitId } = await seedObjectWithProse(stack, token, { text: 'x' });
+    const res = await stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${objectId}/ops/insert-equations`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: 99,
+        anchor_unit_id: unitId,
+        container_unit_id: uuidv7(),
+        rows: [{ unit_id: uuidv7(), content: { kind: 'math', expr: mathExpr('a=b') } }],
+      },
+    });
+    expect(res.statusCode).toBe(409);
+  });
+});

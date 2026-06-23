@@ -3,13 +3,40 @@
 // observable. The leaf rendering is deliberately minimal (prose text, math surface_text in <code>);
 // 2c's ProseMirror replaces it. `MathContentView` stays a pure fn of (content, subgraph) so the
 // embed resolution survives that swap.
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import type { MathContent, Unit } from '@mathmeander/schema';
+import type { MathContent, MathExpression, RowRelation, Unit } from '@mathmeander/schema';
 import { getJournalDay } from '../api/client';
 import { DayEditor } from '../editor/DayEditor';
 import { isEditable } from '../editor/projection';
+import { renderMathInto } from '../editor/renderMath';
+
+/** Glyph for a per-row connective (a derivation step's relation / an equation row's leading relation). */
+const ROW_RELATION_SYMBOL: Record<RowRelation, string> = {
+  eq: '=',
+  lt: '<',
+  gt: '>',
+  le: '≤',
+  ge: '≥',
+  ne: '≠',
+  defines: '≔',
+  maps_to: '↦',
+  implies: '⟹',
+  in: '∈',
+  not_in: '∉',
+  subset: '⊂',
+  subseteq: '⊆',
+};
+
+/** A KaTeX-rendered math expression (display block or inline), via the shared `renderMathInto`. */
+function MathView({ expr, display }: { expr: MathExpression; display: boolean }): ReactNode {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (ref.current) renderMathInto(expr, ref.current, { display });
+  }, [expr, display]);
+  return <span ref={ref} className={display ? 'math-render-display' : 'math-render'} />;
+}
 
 type ContentById = Map<string, MathContent>;
 
@@ -68,10 +95,39 @@ function UnitView({
         </p>
       );
     case 'math':
+      return <MathView expr={c.expr} display />;
+    case 'equations':
+    case 'derivation':
+      // Co-equal system / sequential chain: each child row is a Math/Prose line with an optional
+      // leading relation in a gutter (2-A renders a stacked system; true column alignment at the
+      // relation is the 2-B KaTeX-`aligned` upgrade, docs/structured-math.md §F3 follow-on).
       return (
-        <pre className="math-display">
-          <code>{c.expr.surface_text}</code>
-        </pre>
+        <div className={c.kind} data-container={unit.id}>
+          {(parentMap.get(unit.id) ?? []).map((row) => (
+            <div key={row.id} className="row">
+              <span className="row-relation">
+                {row.row_relation ? ROW_RELATION_SYMBOL[row.row_relation] : ''}
+              </span>
+              <div className="row-body">
+                <UnitView unit={row} parentMap={parentMap} contentById={contentById} seen={seen} />
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    case 'case_split':
+      return (
+        <section className="case-split">
+          {(parentMap.get(unit.id) ?? []).map((child) => (
+            <div
+              key={child.id}
+              className={child.slot === 'assumption' ? 'case-assumption' : 'case-body'}
+            >
+              {child.slot === 'assumption' ? <span className="case-label">assume </span> : null}
+              <UnitView unit={child} parentMap={parentMap} contentById={contentById} seen={seen} />
+            </div>
+          ))}
+        </section>
       );
     case 'group':
       return (

@@ -8,7 +8,8 @@ import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
-import { wholeDisplaySource } from './mathSyntax';
+import { splitSystemRows, wholeDisplaySource } from './mathSyntax';
+import { isMathRuntimeReady, normalizeFresh } from './mathRuntime';
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
 const cps = (s: string): string[] => Array.from(s);
@@ -30,18 +31,36 @@ export function isFlatProse(content: MathContent): boolean {
   });
 }
 
-/** The graded editability predicate (structured-math increment 1): a day is editable if every unit is
- *  TOP-LEVEL and is either representable prose (as `isFlatProse`) or a `math` display unit. Later increments
- *  widen this to one level of container→row nesting (System/Derivation/CaseSplit); anything not yet admitted
- *  still fails CLOSED to the read-only `MathContentView`. */
+/** Prose representable as editor inline (mark / math / reference). */
+function isRepresentableProse(content: Unit['content']): boolean {
+  return (
+    content.kind === 'prose' &&
+    content.inline.every((i) => i.kind === 'mark' || i.kind === 'math' || i.kind === 'reference')
+  );
+}
+
+/** The graded editability predicate (structured-math): a day is editable if every unit is either
+ *  TOP-LEVEL prose / `math` display / an `equations` system CONTAINER, OR a Math/Prose ROW whose parent is a
+ *  top-level `equations` container (ONE level of nesting — 2-B). Anything deeper or any other shape (other
+ *  container kinds, a row under a non-equations parent, a nested container) fails CLOSED to the read-only
+ *  `MathContentView`, so the editor never silently drops content it can't round-trip. */
 export function isEditable(content: MathContent): boolean {
+  const byId = new Map(content.units.map((u) => [u.id, u]));
   return content.units.every((u) => {
-    if (u.parent_unit_id !== undefined && u.parent_unit_id !== null) return false;
-    if (u.content.kind === 'math') return true;
-    if (u.content.kind !== 'prose') return false;
-    return u.content.inline.every(
-      (i) => i.kind === 'mark' || i.kind === 'math' || i.kind === 'reference',
-    );
+    const parent = u.parent_unit_id;
+    if (parent === undefined || parent === null) {
+      // Top level: prose, display math, or a system container.
+      if (u.content.kind === 'equations' || u.content.kind === 'math') return true;
+      return isRepresentableProse(u.content);
+    }
+    // Nested: a Math row WITHOUT a row_relation, directly under a TOP-LEVEL `equations` container (one level
+    // only). Fail CLOSED for shapes the editor's flush can't round-trip — a Prose row or a `row_relation`
+    // (both produced only by `insert_equations`/import, never the editor) would be re-emitted as a plain Math
+    // row and 422 on flush — so such a system renders read-only (§6.0a never-admit-an-unround-trippable-shape).
+    const p = byId.get(parent);
+    if (!p || p.content.kind !== 'equations') return false;
+    if (p.parent_unit_id !== undefined && p.parent_unit_id !== null) return false;
+    return u.content.kind === 'math' && u.row_relation == null;
   });
 }
 
@@ -73,6 +92,25 @@ function mathDisplayNodes(expr: MathExpression): Node[] {
     if (part.length > 0) out.push(editorSchema.text(part, [mark]));
   });
   return out;
+}
+
+/** The PM nodes for a co-equal SYSTEM (2-B): an `Equations` container's rows render as ONE multi-line
+ *  `$$…$$` block, one equation per line (joined by `\n` → hard_breaks). The block-level `mathExpr` mark is a
+ *  transient DISPLAY marker (so the recognizer/preview treat the block as display + hide the source when
+ *  blurred); it is NOT a canonical expression — the rows carry identity (via `rowIds` + the canonical row
+ *  units). Its id reuses the container's id (deterministic; the recognizer reconciles it on first edit). */
+function systemDisplayNodes(container: Unit, rows: Unit[]): Node[] {
+  const inner = rows.map(rowSurface).join('\n');
+  const blockExpr: MathExpression = {
+    id: container.id,
+    surface_text: inner,
+    surface_format: 'mathmeander',
+    input_syntax: 'mathmeander',
+    original_input: inner,
+    parse_status: 'renderable',
+    occurrences: [],
+  };
+  return mathDisplayNodes(blockExpr);
 }
 
 /** The block's display source with `\n` per hard_break (display math may be multi-line); null if the block has a
@@ -175,16 +213,28 @@ export function projectToDoc(content: MathContent): Node {
     .filter(
       (u) =>
         (u.parent_unit_id === undefined || u.parent_unit_id === null) &&
-        (u.content.kind === 'prose' || u.content.kind === 'math'),
+        (u.content.kind === 'prose' || u.content.kind === 'math' || u.content.kind === 'equations'),
     )
     .slice()
     .sort((a, b) => a.position - b.position);
   const blocks = units.map((u) => {
+    if (u.content.kind === 'equations') {
+      // A co-equal SYSTEM (2-B): the container's child rows render as ONE multi-line `$$…$$` block (one
+      // equation per line). `rowIds` carries each row's stable id so an edit is a content-only upsert.
+      const rows = content.units
+        .filter((r) => r.parent_unit_id === u.id)
+        .slice()
+        .sort((a, b) => a.position - b.position);
+      return editorSchema.nodes.prose.create(
+        { unitId: u.id, unitType: null, rowIds: rows.map((r) => r.id) },
+        systemDisplayNodes(u, rows),
+      );
+    }
     if (u.content.kind === 'math') {
       // Display math is a prose block whose content is the `$$…$$` display source (NOT a separate atom node):
       // editable text (multi-line → text + hard_breaks), live-preview renders it centered, the seam maps it back.
       return editorSchema.nodes.prose.create(
-        { unitId: u.id, unitType: null },
+        { unitId: u.id, unitType: null, rowIds: [] },
         mathDisplayNodes((u.content as { kind: 'math'; expr: MathExpression }).expr),
       );
     }
@@ -192,7 +242,7 @@ export function projectToDoc(content: MathContent): Node {
     // `unitType` mirrors the unit's §6.0 type for display + as the source for the set_unit_type delta
     // (typeNeeds); it never rides the prose `save_content` delta (flushToContent ignores it).
     return editorSchema.nodes.prose.create(
-      { unitId: u.id, unitType: u.type ?? null },
+      { unitId: u.id, unitType: u.type ?? null, rowIds: [] },
       inlineToNodes(c.text, c.inline),
     );
   });
@@ -288,7 +338,13 @@ function newProseUnit(
   };
 }
 
-function newMathUnit(id: string, objectId: string, position: number, expr: MathExpression): Unit {
+function newMathUnit(
+  id: string,
+  objectId: string,
+  position: number,
+  expr: MathExpression,
+  parentUnitId?: string,
+): Unit {
   return {
     id, // the block's idStamper-minted id (a brand-new equation) — keeps the block anchored after save
     object_id: objectId,
@@ -297,7 +353,33 @@ function newMathUnit(id: string, objectId: string, position: number, expr: MathE
     declared_by: 'user',
     content: { kind: 'math', expr },
     provenance_id: uuidv7(), // placeholder; overwritten server-side for new units
+    // A system row carries its parent `equations` container; a top-level equation omits it (None).
+    ...(parentUnitId ? { parent_unit_id: parentUnitId } : {}),
   };
+}
+
+/** A FRESH `MathExpression` for a system row's `surface` (mirrors mathRecognize's `freshExpr`): `parse_status`
+ *  from the WASM when ready (else reuse/`renderable`), keeping `reuse`'s id so an in-place row edit follows. */
+function freshRowExpr(surface: string, reuse: MathExpression | undefined): MathExpression {
+  const parseStatus = isMathRuntimeReady()
+    ? normalizeFresh(surface).parseStatus
+    : (reuse?.parse_status ?? 'renderable');
+  return {
+    id: reuse?.id ?? uuidv7(),
+    surface_text: surface,
+    surface_format: 'mathmeander',
+    input_syntax: 'mathmeander',
+    original_input: surface,
+    parse_status: parseStatus,
+    occurrences: [],
+  };
+}
+
+/** A row unit's surface source: a `Math` row's expression surface, or a `Prose` row's text. */
+function rowSurface(u: Unit): string {
+  if (u.content.kind === 'math') return u.content.expr.surface_text ?? '';
+  if (u.content.kind === 'prose') return u.content.text;
+  return '';
 }
 
 /** Key-order-independent JSON (recursively sorts object keys). Change-detection compares the
@@ -376,6 +458,89 @@ export function flushToContent(
     position += 1;
   };
 
+  // Emit a multi-line `$$…$$` SYSTEM block as an `Equations` container + one Math ROW per line (2-B). Each
+  // row's id is `rowIds[i]` (idStamper-synced → stable, no save-churn); a row's expr is reused by id
+  // (surface-updated if zero-anchor, frozen if anchored) or minted fresh. The whole system occupies ONE doc
+  // block → one top-level `position`; rows are positioned 0..n UNDER the container.
+  //
+  // CONTAINER RESOLUTION (the no-wedge rule): prefer the block's `unitId` when it already names an Equations
+  // container; ELSE resolve the container from the EXISTING rows' parent (`rowIds[0]`'s parent) — so after a
+  // Math/prose→system kind-flip (which mints a fresh container id while the block keeps its stale `unitId`,
+  // and a normal flush never reprojects) the next flush still finds the real container instead of re-minting
+  // it and re-parenting the rows. Re-parenting would be a frozen-facet 422 on every flush — a hard autosave
+  // WEDGE (rows' `parent_unit_id` can't change via `save_content`), not the benign one-shot churn a leaf flip
+  // has. Only a genuinely new system (no prior rows) mints a fresh container id.
+  const emitSystem = (block: Node, rowSurfaces: string[]) => {
+    const blockUnitId = block.attrs.unitId as string | null;
+    const rowIds = (block.attrs.rowIds as string[] | undefined) ?? [];
+    const priorAtBlockId = blockUnitId ? priorById.get(blockUnitId) : undefined;
+
+    const asContainer = (u: Unit | undefined): u is Unit => !!u && u.content.kind === 'equations';
+    const rowsContainer = rowIds.length > 0 ? priorById.get(rowIds[0]!)?.parent_unit_id : undefined;
+    const existing = asContainer(priorAtBlockId)
+      ? priorAtBlockId
+      : rowsContainer
+        ? priorById.get(rowsContainer)
+        : undefined;
+    const containerExists = asContainer(existing);
+    const containerId = containerExists
+      ? existing.id
+      : blockUnitId && !priorAtBlockId
+        ? blockUnitId
+        : uuidv7();
+    const containerPos = position;
+
+    if (containerExists) {
+      seen.add(containerId);
+      if (existing.position !== containerPos) upserts.push({ ...existing, position: containerPos });
+    } else {
+      // Brand-new container, or a kind-flip from a Math/prose unit (the old unit is left out of `seen` → it
+      // falls into `deletes`, the delete-and-create the core requires for a kind change).
+      upserts.push({
+        id: containerId,
+        object_id: prior.object_id,
+        position: containerPos,
+        status: 'rough',
+        declared_by: 'user',
+        content: { kind: 'equations' },
+        provenance_id: uuidv7(),
+      });
+    }
+
+    rowSurfaces.forEach((surface, i) => {
+      const id = i < rowIds.length ? rowIds[i]! : uuidv7();
+      const priorRow = priorById.get(id);
+      seen.add(id); // stable row id → never falls into deletes
+      if (priorRow && priorRow.content.kind === 'math') {
+        // EXISTING row: keep EVERY frozen facet (provenance/status/declared_by) by spreading `priorRow` —
+        // `save_content` rejects an existing unit whose provenance changed, so it must NOT be re-minted (the
+        // single-equation/prose `emit` path keeps it the same way). Only position/parent/content may move.
+        const pe = priorRow.content.expr;
+        const anchored = (pe.occurrences?.length ?? 0) > 0;
+        // Zero-anchor → re-fit surface from the line; anchored (cited) → frozen (edit via rewrite_surface).
+        const expr = anchored || pe.surface_text === surface ? pe : freshRowExpr(surface, pe);
+        const rowUnit: Unit = {
+          ...priorRow,
+          position: i,
+          parent_unit_id: containerId,
+          content: { kind: 'math', expr },
+        };
+        if (
+          priorRow.position !== i ||
+          priorRow.parent_unit_id !== containerId ||
+          contentKeyOf(priorRow.content) !== contentKeyOf(rowUnit.content)
+        )
+          upserts.push(rowUnit);
+      } else {
+        // NEW row (or a prose→math row flip): a fresh unit under the container (fresh provenance, route-stamped).
+        upserts.push(
+          newMathUnit(id, prior.object_id, i, freshRowExpr(surface, undefined), containerId),
+        );
+      }
+    });
+    position += 1;
+  };
+
   doc.forEach((block) => {
     if (block.type.name !== 'prose') return;
     const unitId = block.attrs.unitId as string | null;
@@ -386,12 +551,20 @@ export function flushToContent(
     // with its newlines) — for a FRESH expr; an ANCHORED expr's surface is frozen (keystone §6.3a).
     const dispExpr = pureDisplayExpr(block);
     if (dispExpr) {
-      // Inner surface via the single source-of-truth recognizer (tolerates trailing whitespace + multi-line),
-      // for a FRESH expr; an ANCHORED expr's surface is frozen (keystone §6.3a).
+      // Inner source via the single source-of-truth recognizer (tolerates trailing whitespace + multi-line).
+      const inner = wholeDisplaySource(displaySource(block) ?? '');
+      const rows = inner != null ? splitSystemRows(inner) : [];
+      if (rows.length >= 2) {
+        // ≥2 non-empty lines → a co-equal SYSTEM (an Equations container + Math rows). Blank lines are skipped.
+        emitSystem(block, rows);
+        return;
+      }
+      // A single (one-line) display equation — one Math unit. Surface = the raw inner for a FRESH expr; an
+      // ANCHORED expr's surface is frozen (keystone §6.3a).
       const surface =
         (dispExpr.occurrences?.length ?? 0) > 0
           ? dispExpr.surface_text
-          : (wholeDisplaySource(displaySource(block) ?? '') ?? dispExpr.surface_text);
+          : (inner ?? dispExpr.surface_text);
       emit(block, prev, { kind: 'math', expr: { ...dispExpr, surface_text: surface } });
       return;
     }
@@ -411,11 +584,16 @@ export function flushToContent(
     emit(block, prev, { kind: 'prose', text, inline });
   });
 
-  // `save_content` now deletes a zero-anchor PROSE *or* MATH unit (the symmetric relaxation), so a removed
-  // equation is dropped here like a removed paragraph. A CITED Math unit can't be silently dropped (the core
-  // 422s — moot today, no citations); it would need a reviewable op.
+  // `save_content` deletes a zero-anchor PROSE / MATH unit, plus (2-B) an `Equations` container + its Math
+  // ROWS — so a removed equation/system is dropped here like a removed paragraph. A whole-system delete (or a
+  // system→single-equation kind-flip) drops the container + every row not re-emitted into `seen`. A CITED Math
+  // unit can't be silently dropped (the core 422s — moot today, no citations); it would need a reviewable op.
   const deletes = prior.units
-    .filter((u) => !seen.has(u.id) && (u.content.kind === 'prose' || u.content.kind === 'math'))
+    .filter(
+      (u) =>
+        !seen.has(u.id) &&
+        (u.content.kind === 'prose' || u.content.kind === 'math' || u.content.kind === 'equations'),
+    )
     .map((u) => u.id);
   return { upserts, deletes };
 }

@@ -49,6 +49,18 @@ export function wholeDisplaySource(text: string): string | null {
   return m ? m[1]! : null;
 }
 
+/** The equation ROWS of a system's `$$…$$` inner source (structured-math 2-B): each non-empty line is one
+ *  co-equal row; blank/whitespace-only lines are SKIPPED (owner decision — they let the source breathe).
+ *  Surfaces are trimmed (leading/trailing source whitespace is insignificant; alignment is render-derived).
+ *  The SINGLE source of "which lines are rows", used by both the editor flush and the live preview, so the
+ *  round-trip can't drift. `length >= 2` distinguishes a SYSTEM from a single (possibly long) display equation. */
+export function splitSystemRows(inner: string): string[] {
+  return inner
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 /** Find the inline-math regions in `text`. Each region is `[start, end)` over the string, covering the whole
  *  `$…$` (both `$`); the inner source is `text.slice(start + 1, end - 1)`. */
 export function findMathRegions(text: string): { start: number; end: number }[] {

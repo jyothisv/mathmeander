@@ -62,6 +62,7 @@ fn a_prose_unit(id_tag: u128, object_id: ObjectId, position: u32, text: &str) ->
         parent_unit_id: None,
         position,
         slot: None,
+        row_relation: None,
         unit_type: None,
         example_kind: None,
         status: UnitStatus::Rough,
@@ -374,6 +375,27 @@ fn import_rejects_embed_target_missing() {
     let value = pack_value(graph_with(vec![object], vec![content]));
     let err = import_mathpack(value).expect_err("rejected");
     assert_eq!(err_code(&err), "embed_target_missing");
+}
+
+/// Slice 2-A: an `Equations` container admits ONE level — its rows must be Math/Prose, never a
+/// nested container. SQL can't express "a child of an equations unit must be math/prose", so the
+/// core owns it on the untrusted import path (§F2).
+#[test]
+fn import_rejects_a_non_math_or_prose_equations_row() {
+    let object = an_object(0xa1);
+    let mut container = a_prose_unit(0xb1, object.id, 0, "");
+    container.content = UnitContent::Equations;
+    let mut bad_row = a_prose_unit(0xb2, object.id, 0, "");
+    bad_row.parent_unit_id = Some(UnitId(v7(0xb1)));
+    bad_row.content = UnitContent::Group; // a nested container is not a valid row
+    let content = MathContent {
+        object_id: object.id,
+        revision: object.revision,
+        units: vec![container, bad_row],
+    };
+    let value = pack_value(graph_with(vec![object], vec![content]));
+    let err = import_mathpack(value).expect_err("rejected");
+    assert_eq!(err_code(&err), "equations_row_not_permitted");
 }
 
 /// Arch §827 / §6.1a: a `journal_day_detail.object_id` must reference a `journal_day`. SQL's FK checks

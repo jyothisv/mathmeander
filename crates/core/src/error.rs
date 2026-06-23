@@ -241,6 +241,14 @@ pub enum ValidationError {
     #[error("unit {unit_id} appears in more than one object (one home, §6.0b)")]
     UnitInMultipleObjects { unit_id: String },
 
+    /// An `Equations` container's child row is not a `Math`/`Prose` unit. The math-row model admits
+    /// ONE level only — a system's rows are co-equal Math/Prose lines, never nested containers
+    /// (§F2). Raised by `insert_equations` (client-attributable) and by the `.mathpack` import gate.
+    /// (Field is `row_kind`, NOT `kind`: a `kind` field would collide with `CoreError`'s flattened
+    /// `kind: "validation"` discriminator → a duplicate JSON key.)
+    #[error("equations row must be math or prose (got {row_kind})")]
+    EquationsRowNotPermitted { row_kind: String },
+
     /// A `*_detail.object_id` in an imported pack does not resolve to an object of the matching type
     /// within the pack — the §6.1a / arch-§827 type-qualified-reference invariant (`journal_day_detail`
     /// → `journal_day`, `definition_detail` → `definition`). SQL's FK checks the id EXISTS, never its

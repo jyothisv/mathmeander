@@ -153,6 +153,36 @@
       .day-editor .math-partial {
         border-bottom: 1px dotted #b8860b;
       }
+      /* Read-only math-row containers (slice 2-A): `equations` (co-equal system) and `derivation`
+         (sequential chain). Each row is [relation gutter | body]; styling is deliberately minimal
+         (slice-2 defers polish) — true column alignment at the relation is the 2-B `aligned` upgrade. */
+      .equations,
+      .derivation {
+        margin: 0.5rem 0;
+      }
+      .equations .row,
+      .derivation .row {
+        display: grid;
+        grid-template-columns: 1.5rem 1fr;
+        align-items: baseline;
+        column-gap: 0.25rem;
+      }
+      /* Each row renders in KaTeX displayMode (correct large-operator sizing), whose default
+         `.katex-display { margin: 1em 0 }` stacks into big gaps between rows — replace it with a tight,
+         uniform rhythm so a system reads as one block. */
+      .equations .katex-display,
+      .derivation .katex-display {
+        margin: 0.15rem 0;
+      }
+      .equations .row-relation,
+      .derivation .row-relation {
+        text-align: right;
+        color: rgba(110, 110, 150, 0.85);
+      }
+      .case-split .case-label {
+        font-style: italic;
+        color: rgba(110, 110, 150, 0.85);
+      }
     </style>
   </head>
   <body>

@@ -1067,6 +1067,13 @@
   {
     "type": "UnitContent",
     "value": {
+      "kind": "equations"
+    },
+    "valid": true
+  },
+  {
+    "type": "UnitContent",
+    "value": {
       "kind": "case_split"
     },
     "valid": true
@@ -1113,6 +1120,43 @@
     },
     "valid": false,
     "note": "unknown kind"
+  },
+  {
+    "type": "RowRelation",
+    "value": "eq",
+    "valid": true
+  },
+  {
+    "type": "RowRelation",
+    "value": "le",
+    "valid": true
+  },
+  {
+    "type": "RowRelation",
+    "value": "implies",
+    "valid": true
+  },
+  {
+    "type": "RowRelation",
+    "value": "in",
+    "valid": true
+  },
+  {
+    "type": "RowRelation",
+    "value": "subseteq",
+    "valid": true
+  },
+  {
+    "type": "RowRelation",
+    "value": "=",
+    "valid": false,
+    "note": "wire vocab is the variant name, not the symbol"
+  },
+  {
+    "type": "RowRelation",
+    "value": "equals",
+    "valid": false,
+    "note": "unknown variant"
   },
   {
     "type": "ExtractedStructureEnvelope",
@@ -1201,6 +1245,52 @@
     },
     "valid": false,
     "note": "content missing"
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "parent_unit_id": "0197675f-71f4-7000-8000-0000000000b0",
+      "position": 1,
+      "row_relation": "eq",
+      "status": "rough",
+      "declared_by": "user",
+      "content": {
+        "kind": "math",
+        "expr": {
+          "id": "0197675f-71f4-7000-8000-0000000000c1",
+          "surface_text": "a/b",
+          "surface_format": "mathmeander",
+          "input_syntax": "latex",
+          "original_input": "\\frac{a}{b}",
+          "parse_status": "renderable",
+          "occurrences": []
+        }
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": true,
+    "note": "a co-equal Equations row carrying its leading relation"
+  },
+  {
+    "type": "Unit",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000b1",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "position": 0,
+      "row_relation": "nope",
+      "status": "rough",
+      "declared_by": "user",
+      "content": {
+        "kind": "prose",
+        "text": "x",
+        "inline": []
+      },
+      "provenance_id": "0197675f-71f4-7000-8000-0000000000d1"
+    },
+    "valid": false,
+    "note": "row_relation not in the vocabulary"
   },
   {
     "type": "Link",
@@ -1984,6 +2074,91 @@
     },
     "valid": false,
     "note": "to missing"
+  },
+  {
+    "type": "InsertEquationsInput",
+    "value": {
+      "expected_revision": 2,
+      "anchor_unit_id": "0197675f-71f4-7000-8000-0000000000b0",
+      "container_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "rows": [
+        {
+          "unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+          "content": {
+            "kind": "math",
+            "expr": {
+              "id": "0197675f-71f4-7000-8000-0000000000c1",
+              "surface_text": "a/b",
+              "surface_format": "mathmeander",
+              "input_syntax": "latex",
+              "original_input": "\\frac{a}{b}",
+              "parse_status": "renderable",
+              "occurrences": []
+            }
+          },
+          "row_relation": "eq"
+        },
+        {
+          "unit_id": "0197675f-71f4-7000-8000-0000000000b3",
+          "content": {
+            "kind": "math",
+            "expr": {
+              "id": "0197675f-71f4-7000-8000-0000000000c1",
+              "surface_text": "a/b",
+              "surface_format": "mathmeander",
+              "input_syntax": "latex",
+              "original_input": "\\frac{a}{b}",
+              "parse_status": "renderable",
+              "occurrences": []
+            }
+          }
+        }
+      ]
+    },
+    "valid": true,
+    "note": "per-row row_relation optional"
+  },
+  {
+    "type": "InsertEquationsInput",
+    "value": {
+      "expected_revision": 2,
+      "container_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "rows": []
+    },
+    "valid": false,
+    "note": "anchor_unit_id missing"
+  },
+  {
+    "type": "EquationRowInput",
+    "value": {
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "content": {
+        "kind": "prose",
+        "text": "where x>0",
+        "inline": []
+      }
+    },
+    "valid": true,
+    "note": "row_relation absent (None)"
+  },
+  {
+    "type": "EquationRowInput",
+    "value": {
+      "content": {
+        "kind": "math",
+        "expr": {
+          "id": "0197675f-71f4-7000-8000-0000000000c1",
+          "surface_text": "a/b",
+          "surface_format": "mathmeander",
+          "input_syntax": "latex",
+          "original_input": "\\frac{a}{b}",
+          "parse_status": "renderable",
+          "occurrences": []
+        }
+      }
+    },
+    "valid": false,
+    "note": "unit_id missing"
   },
   {
     "type": "LinkDraft",
