@@ -8,6 +8,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
+import { wholeDisplaySource } from './mathSyntax';
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
 const cps = (s: string): string[] => Array.from(s);
@@ -29,6 +30,21 @@ export function isFlatProse(content: MathContent): boolean {
   });
 }
 
+/** The graded editability predicate (structured-math increment 1): a day is editable if every unit is
+ *  TOP-LEVEL and is either representable prose (as `isFlatProse`) or a `math` display unit. Later increments
+ *  widen this to one level of container→row nesting (System/Derivation/CaseSplit); anything not yet admitted
+ *  still fails CLOSED to the read-only `MathContentView`. */
+export function isEditable(content: MathContent): boolean {
+  return content.units.every((u) => {
+    if (u.parent_unit_id !== undefined && u.parent_unit_id !== null) return false;
+    if (u.content.kind === 'math') return true;
+    if (u.content.kind !== 'prose') return false;
+    return u.content.inline.every(
+      (i) => i.kind === 'mark' || i.kind === 'math' || i.kind === 'reference',
+    );
+  });
+}
+
 /** The `$…$` text node for a canonical inline `Math` (slice 2d editable-syntax): the surface rides as LITERAL
  *  text wrapped in the `mathExpr` mark, so it is editable + copy/pasteable, and the expr identity (id etc.)
  *  rides the mark. Zero-width in the canonical prose `text` (the `$…$` chars are an editor-only
@@ -41,6 +57,55 @@ function mathText(expr: MathExpression): Node {
   return editorSchema.text(`$${expr.surface_text ?? ''}$`, [
     editorSchema.marks.mathExpr.create({ expr }),
   ]);
+}
+
+/** The PM nodes for a canonical display `Math` unit (structured-math increment 1): the `$$surface$$` source
+ *  rides as LITERAL text wrapped in the `mathExpr` mark with `display:true`, so a display equation is authored
+ *  exactly like inline math — editable source, live-preview render (centered), keystone-stable id. A MULTI-LINE
+ *  surface (`\n` in `surface_text`) splits into text + `hard_break` nodes (like `inlineToNodes` does for prose
+ *  `\n`); the projection seam maps a whole-block `$$…$$` ⇄ a standalone `Math` unit. */
+function mathDisplayNodes(expr: MathExpression): Node[] {
+  const mark = editorSchema.marks.mathExpr.create({ expr, display: true });
+  const src = `$$${expr.surface_text ?? ''}$$`;
+  const out: Node[] = [];
+  src.split('\n').forEach((part, i) => {
+    if (i > 0) out.push(editorSchema.nodes.hard_break.create(null, null, [mark]));
+    if (part.length > 0) out.push(editorSchema.text(part, [mark]));
+  });
+  return out;
+}
+
+/** The block's display source with `\n` per hard_break (display math may be multi-line); null if the block has a
+ *  non-text/non-hard_break inline. Mirrors `mathRecognize`'s `blockSource`. */
+function displaySource(block: Node): string | null {
+  let text = '';
+  let ok = true;
+  block.forEach((child) => {
+    if (child.isText) text += child.text ?? '';
+    else if (child.type.name === 'hard_break') text += '\n';
+    else ok = false;
+  });
+  return ok ? text : null;
+}
+
+/** If `block` is a whole-block display equation — every text node carries a `display:true` `mathExpr` mark, and
+ *  the only other children are hard_breaks (a multi-line `$$…$$`) — return its expression; else null. The seam's
+ *  test for "this prose block IS a `Math` unit". */
+function pureDisplayExpr(block: Node): MathExpression | null {
+  let expr: MathExpression | null = null;
+  let ok = true;
+  let anyText = false;
+  block.forEach((child) => {
+    if (child.isText) {
+      anyText = true;
+      const m = child.marks.find((mk) => mk.type.name === 'mathExpr');
+      if (!m || !(m.attrs.display as boolean)) ok = false;
+      else if (!expr) expr = m.attrs.expr as MathExpression;
+    } else if (child.type.name !== 'hard_break') {
+      ok = false; // a reference/atom → not a clean display block
+    }
+  });
+  return ok && anyText ? expr : null;
 }
 
 /** Canonical inline order so an unchanged unit round-trips byte-identically (sort by span, then kind). */
@@ -100,14 +165,29 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
   return out;
 }
 
-/** Project canonical content into an editable PM doc (assumes `isFlatProse`). An empty day yields a
- *  single empty prose block (a cursor home) whose null `unitId` flush skips until the user types. */
+/** Project canonical content into an editable PM doc (assumes `isEditable`). Top-level prose + `math`
+ *  units interleave by `position`. A `math` unit becomes a PROSE block holding its `$$surface$$` source as a
+ *  `display:true` `mathExpr` span — so it is authored/edited exactly like inline math (live-preview renders it
+ *  centered; the seam maps it back to a `Math` unit). An empty day yields a single empty prose block (a cursor
+ *  home) whose null `unitId` flush skips. */
 export function projectToDoc(content: MathContent): Node {
-  const prose = content.units
-    .filter((u) => u.content.kind === 'prose')
+  const units = content.units
+    .filter(
+      (u) =>
+        (u.parent_unit_id === undefined || u.parent_unit_id === null) &&
+        (u.content.kind === 'prose' || u.content.kind === 'math'),
+    )
     .slice()
     .sort((a, b) => a.position - b.position);
-  const blocks = prose.map((u) => {
+  const blocks = units.map((u) => {
+    if (u.content.kind === 'math') {
+      // Display math is a prose block whose content is the `$$…$$` display source (NOT a separate atom node):
+      // editable text (multi-line → text + hard_breaks), live-preview renders it centered, the seam maps it back.
+      return editorSchema.nodes.prose.create(
+        { unitId: u.id, unitType: null },
+        mathDisplayNodes((u.content as { kind: 'math'; expr: MathExpression }).expr),
+      );
+    }
     const c = u.content as { kind: 'prose'; text: string; inline: Inline[] };
     // `unitType` mirrors the unit's §6.0 type for display + as the source for the set_unit_type delta
     // (typeNeeds); it never rides the prose `save_content` delta (flushToContent ignores it).
@@ -116,7 +196,13 @@ export function projectToDoc(content: MathContent): Node {
       inlineToNodes(c.text, c.inline),
     );
   });
-  if (blocks.length === 0) blocks.push(editorSchema.nodes.prose.create({ unitId: null }));
+  // Always leave a PLAIN prose block to home the caret: an empty day, OR a day ENDING in a display equation
+  // (whose source is hidden when blurred — so without this there'd be no plain line to click/type below it).
+  // The trailing placeholder has a null unitId, so the flush skips it until the user types.
+  const last = blocks[blocks.length - 1];
+  if (!last || pureDisplayExpr(last)) {
+    blocks.push(editorSchema.nodes.prose.create({ unitId: null }));
+  }
   return editorSchema.nodes.doc.create(null, blocks);
 }
 
@@ -202,6 +288,18 @@ function newProseUnit(
   };
 }
 
+function newMathUnit(id: string, objectId: string, position: number, expr: MathExpression): Unit {
+  return {
+    id, // the block's idStamper-minted id (a brand-new equation) — keeps the block anchored after save
+    object_id: objectId,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'math', expr },
+    provenance_id: uuidv7(), // placeholder; overwritten server-side for new units
+  };
+}
+
 /** Key-order-independent JSON (recursively sorts object keys). Change-detection compares the
  *  locally-built content (`{kind,text,inline}` literal order) against the SERVER's zod-parsed content,
  *  whose key order differs — a plain `JSON.stringify` would then report every saved unit as "changed"
@@ -246,23 +344,79 @@ export function flushToContent(
   const seen = new Set<string>();
   const upserts: Unit[] = [];
   let position = 0;
+
+  // Emit one block as a unit. When the prior unit's KIND matches → edit/reposition it; otherwise CREATE: a
+  // brand-new block keeps its idStamper-stamped id, while a KIND-FLIP (the prior unit was a different kind)
+  // mints a FRESH id and leaves the prior unit OUT of `seen` so it falls into `deletes` — i.e. the core does
+  // a prose↔math flip as delete+create (it forbids changing an existing unit's kind in place).
+  const emit = (block: Node, prev: Unit | undefined, content: Unit['content']) => {
+    const unitId = block.attrs.unitId as string | null;
+    if (prev && prev.content.kind === content.kind) {
+      seen.add(prev.id);
+      const next: Unit = { ...prev, position, content };
+      if (
+        next.position !== prev.position ||
+        contentKeyOf(next.content) !== contentKeyOf(prev.content)
+      )
+        upserts.push(next);
+    } else {
+      const id = prev ? uuidv7() : (unitId ?? uuidv7());
+      upserts.push(
+        content.kind === 'math'
+          ? newMathUnit(id, prior.object_id, position, (content as { expr: MathExpression }).expr)
+          : newProseUnit(
+              id,
+              prior.object_id,
+              position,
+              (content as { text: string }).text,
+              (content as { inline: Inline[] }).inline,
+            ),
+      );
+    }
+    position += 1;
+  };
+
   doc.forEach((block) => {
     if (block.type.name !== 'prose') return;
-    const { text, inline } = blockToProse(block);
     const unitId = block.attrs.unitId as string | null;
     const prev = unitId ? priorById.get(unitId) : undefined;
-    if (prev) {
-      seen.add(prev.id);
-      const next: Unit = { ...prev, position, content: { kind: 'prose', text, inline } };
-      if (!proseUnchanged(next, prev)) upserts.push(next);
-      position += 1;
-    } else {
-      if (cpLen(text) === 0 && inline.length === 0) return; // empty placeholder — not persisted
-      upserts.push(newProseUnit(unitId ?? uuidv7(), prior.object_id, position, text, inline));
-      position += 1;
+
+    // A whole-block `$$…$$` (display) → a `Math` unit. The surface is rebuilt from the displayed source —
+    // text + `\n` per hard_break, then strip the two leading/trailing `$` (so a MULTI-LINE source round-trips
+    // with its newlines) — for a FRESH expr; an ANCHORED expr's surface is frozen (keystone §6.3a).
+    const dispExpr = pureDisplayExpr(block);
+    if (dispExpr) {
+      // Inner surface via the single source-of-truth recognizer (tolerates trailing whitespace + multi-line),
+      // for a FRESH expr; an ANCHORED expr's surface is frozen (keystone §6.3a).
+      const surface =
+        (dispExpr.occurrences?.length ?? 0) > 0
+          ? dispExpr.surface_text
+          : (wholeDisplaySource(displaySource(block) ?? '') ?? dispExpr.surface_text);
+      emit(block, prev, { kind: 'math', expr: { ...dispExpr, surface_text: surface } });
+      return;
     }
+
+    const { text, inline } = blockToProse(block);
+    if (cpLen(text) === 0 && inline.length === 0) {
+      // Empty block: a brand-new placeholder is dropped; an emptied EXISTING prose unit stays empty; an
+      // emptied unit of another kind (a display equation cleared out) is removed (falls into `deletes`).
+      if (prev && prev.content.kind === 'prose') {
+        seen.add(prev.id);
+        const next: Unit = { ...prev, position, content: { kind: 'prose', text, inline } };
+        if (!proseUnchanged(next, prev)) upserts.push(next);
+        position += 1;
+      }
+      return;
+    }
+    emit(block, prev, { kind: 'prose', text, inline });
   });
-  const deletes = prior.units.filter((u) => !seen.has(u.id)).map((u) => u.id);
+
+  // `save_content` now deletes a zero-anchor PROSE *or* MATH unit (the symmetric relaxation), so a removed
+  // equation is dropped here like a removed paragraph. A CITED Math unit can't be silently dropped (the core
+  // 422s — moot today, no citations); it would need a reviewable op.
+  const deletes = prior.units
+    .filter((u) => !seen.has(u.id) && (u.content.kind === 'prose' || u.content.kind === 'math'))
+    .map((u) => u.id);
   return { upserts, deletes };
 }
 

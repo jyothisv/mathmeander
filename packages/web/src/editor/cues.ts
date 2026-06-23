@@ -19,6 +19,7 @@ import {
 import type { ResolvedPos } from 'prosemirror-model';
 import type { UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
+import { wholeDisplaySource } from './mathSyntax';
 
 export const CUE_MAP: Record<string, UnitType> = {
   Thm: 'theorem',
@@ -163,6 +164,95 @@ export const enterParagraph: Command = (state, dispatch) => {
   }
   // plain empty line → new unit; typed 2nd-consecutive-blank → exit. Both → a new PLAIN unit.
   if (dispatch) splitInto(state, dispatch, { unitId: null, unitType: null });
+  return true;
+};
+
+/** Enter inside a DISPLAY equation (`$$…$$`, possibly multi-line): a newline (`hard_break`) STAYS in the
+ *  equation — even on a blank line — so its source can span multiple lines until the closing `$$`. The ONLY exit
+ *  is Enter at the very END of a CLOSED `$$…$$`, which opens a new plain unit BELOW the (still-rendered)
+ *  equation. Returns false for a non-display block → the normal paragraph Enter runs. Chained BEFORE
+ *  `enterParagraph` so display blocks pre-empt the soft-break/split paragraph model. */
+export const displayEnter: Command = (state, dispatch) => {
+  const { $cursor } = state.selection as TextSelection;
+  if (!$cursor || $cursor.parent.type.name !== 'prose') return false;
+  const block = $cursor.parent;
+  // The block's source with `\n` per hard_break (a display equation may be multi-line).
+  let src = '';
+  let clean = true;
+  block.forEach((child) => {
+    if (child.isText) src += child.text ?? '';
+    else if (child.type.name === 'hard_break') src += '\n';
+    else clean = false; // a reference/atom → not a clean display block
+  });
+  if (!clean || !src.startsWith('$$')) return false;
+  const closed = wholeDisplaySource(src) != null; // whole block is `$$…$$` (multi-line + trailing-ws tolerant)
+  const open = !src.slice(2).includes('$$'); // no closing `$$` yet → still authoring
+  if (!closed && !open) return false; // e.g. `$$a$$ trailing` — not a clean display block → normal Enter
+  if (dispatch) {
+    if (closed && $cursor.parentOffset === block.content.size) {
+      // EXIT: a new plain unit below; the equation stays closed + rendered.
+      const tr = state.tr;
+      tr.split($cursor.pos, 1, [{ type: proseType, attrs: { unitId: null, unitType: null } }]);
+      const $after = tr.doc.resolve(tr.mapping.map($cursor.pos, 1));
+      dispatch(tr.setSelection(Selection.near($after, 1)).scrollIntoView());
+    } else {
+      // STAY: a newline within the equation source (multi-line authoring/editing).
+      dispatch(state.tr.replaceSelectionWith(hardBreak()).scrollIntoView());
+    }
+  }
+  return true;
+};
+
+/** A whole-block CLOSED display equation `$$…$$` (possibly multi-line). Joining another block into it — or it
+ *  into another — would break the `$$…$$` form and DESTROY the rendered, identity-bearing equation (demote it to
+ *  literal text + delete/recreate its Math unit), so the Backspace/Delete chains REFUSE such a join (the
+ *  equation behaves atomically for block joins). */
+function isDisplayBlock(block: import('prosemirror-model').Node): boolean {
+  if (block.type.name !== 'prose') return false;
+  let src = '';
+  let clean = true;
+  block.forEach((c) => {
+    if (c.isText) src += c.text ?? '';
+    else if (c.type.name === 'hard_break') src += '\n';
+    else clean = false;
+  });
+  return clean && wholeDisplaySource(src) != null; // a complete `$$…$$` (multi-line + trailing-ws tolerant)
+}
+
+/** Backspace at a block START, when a join would dissolve a display equation (the current block IS one, or the
+ *  previous sibling is): refuse the join, but instead of a DEAD KEY, MOVE the caret to the end of the previous
+ *  block — into the equation's source when that's the equation (revealing it), or up out of the equation
+ *  otherwise. Non-destructive, with clear feedback; a deliberate delete is still a selection-then-delete or
+ *  editing the source. Returns false for a normal (non-equation) merge → the usual Backspace chain. */
+export const guardDisplayMerge: Command = (state, dispatch) => {
+  const { $cursor } = state.selection as TextSelection;
+  if (!$cursor || $cursor.parent.type.name !== 'prose' || $cursor.parentOffset !== 0) return false;
+  const before = $cursor.before();
+  const prev = state.doc.resolve(before).nodeBefore;
+  if (!isDisplayBlock($cursor.parent) && !(prev && isDisplayBlock(prev))) return false;
+  if (dispatch && prev) {
+    // end of the previous block's content (= `before - 1`, just inside its close token)
+    dispatch(
+      state.tr.setSelection(Selection.near(state.doc.resolve(before - 1), -1)).scrollIntoView(),
+    );
+  }
+  return true; // handled (swallowed at the first block, where there is nothing above to move to)
+};
+
+/** Delete at a block END: the forward mirror of `guardDisplayMerge` — refuse a join that would dissolve a
+ *  display equation (this block, or the next sibling), moving the caret to the start of the next block instead. */
+export const guardDisplayMergeForward: Command = (state, dispatch) => {
+  const { $cursor } = state.selection as TextSelection;
+  if (!$cursor || $cursor.parent.type.name !== 'prose') return false;
+  if ($cursor.parentOffset !== $cursor.parent.content.size) return false;
+  const after = $cursor.after();
+  const next = state.doc.resolve(after).nodeAfter;
+  if (!isDisplayBlock($cursor.parent) && !(next && isDisplayBlock(next))) return false;
+  if (dispatch && next) {
+    dispatch(
+      state.tr.setSelection(Selection.near(state.doc.resolve(after + 1), 1)).scrollIntoView(),
+    );
+  }
   return true;
 };
 

@@ -17,7 +17,8 @@ export const idStamper = new Plugin({
     const seen = new Set<string>();
     let tr: ReturnType<typeof newState.tr.setNodeAttribute> | null = null;
     newState.doc.descendants((node, pos) => {
-      if (node.type.name !== 'prose') return false; // prose blocks only; don't descend into inline
+      // Identity-bearing blocks are prose blocks (display equations are prose blocks too — a `$$…$$` span).
+      if (node.type.name !== 'prose') return false;
       const id = node.attrs.unitId as string | null;
       if (id == null || seen.has(id)) {
         tr = (tr ?? newState.tr).setNodeAttribute(pos, 'unitId', uuidv7());

@@ -71,6 +71,34 @@ describe('mathLivePreview — render vs reveal by selection touch', () => {
   });
 });
 
+describe('mathLivePreview — display math (render ALWAYS; source revealed on focus)', () => {
+  // doc: prose "A" (block [0,3), text at [1,2)), then a display block "$$x$$" (block [3,10), span [4,9),
+  // the render widget at 9). Display behaves unlike inline: the centered render persists even when the
+  // selection is inside; only the `$$…$$` source is hidden (when blurred) / shown (when focused).
+  function dispDoc(): Node {
+    return editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'p' }, editorSchema.text('A')),
+      editorSchema.nodes.prose.create({ unitId: 'm' }, [
+        editorSchema.text('$$x$$', [MARK.create({ expr: expr('m-e', 'x'), display: true })]),
+      ]),
+    ]);
+  }
+  const d = dispDoc();
+
+  it('renders the centered equation whether the caret is OUTSIDE or INSIDE the block', () => {
+    expect(decosIn(d, 1, 3, 10).length).toBeGreaterThan(0); // caret in "A" (blurred) → render present
+    expect(decosIn(d, 6, 3, 10).length).toBeGreaterThan(0); // caret inside $$x$$ (focused) → still present
+  });
+
+  it('hides the $$…$$ source when the caret is OUTSIDE the block', () => {
+    expect(decosIn(d, 1, 4, 8).length).toBeGreaterThan(0); // a math-hidden decoration over the source
+  });
+
+  it('reveals the $$…$$ source (no hide) when the caret is INSIDE the block', () => {
+    expect(decosIn(d, 6, 4, 8)).toHaveLength(0); // source shown for editing; render stays (widget at 9)
+  });
+});
+
 describe('mathLivePreview — open-region coloring', () => {
   it('colors an unclosed $x while the caret is inside it', () => {
     const d = doc({ text: '$x' }); // no mark — still being typed

@@ -200,3 +200,127 @@ describe('mathRecognize — fixpoint / no churn', () => {
     expect(h.normalizeFresh).not.toHaveBeenCalled();
   });
 });
+
+describe('mathRecognize — display math ($$…$$ is LINE-ONLY)', () => {
+  /** Recognized spans with their display flag, in order. */
+  function markedD(d: Node): { text: string; surface: string; display: boolean }[] {
+    const out: { text: string; surface: string; display: boolean }[] = [];
+    d.descendants((node) => {
+      if (!node.isText) return;
+      const m = node.marks.find((x) => x.type === MARK);
+      if (m)
+        out.push({
+          text: node.text ?? '',
+          surface: (m.attrs.expr as MathExpression).surface_text,
+          display: (m.attrs.display as boolean) ?? false,
+        });
+    });
+    return out;
+  }
+
+  it('marks a whole-line $$x^2$$ as ONE display span', () => {
+    const ms = markedD(typed('$$x^2$$'));
+    expect(ms).toHaveLength(1);
+    expect(ms[0]!.text).toBe('$$x^2$$');
+    expect(ms[0]!.surface).toBe('x^2');
+    expect(ms[0]!.display).toBe(true);
+  });
+
+  it('does NOT treat $$…$$ as display mid-line (line-only); inline $…$ stays inline', () => {
+    expect(markedD(typed('see $$x$$ here'))).toHaveLength(0); // mid-line $$ → not display, not inline
+    const inline = markedD(typed('an $x$ inline'));
+    expect(inline).toHaveLength(1);
+    expect(inline[0]!.display).toBe(false);
+  });
+
+  it('does not mark a partial $$x$ or an empty $$$$', () => {
+    expect(markedD(typed('$$x$'))).toHaveLength(0);
+    expect(markedD(typed('$$$$'))).toHaveLength(0);
+  });
+
+  it('preserves the id + display across an in-place display edit (resyncs the surface)', () => {
+    const a = makeExpr('disp-A', 'x'); // a display block "$$x$$"; type `y` before the closing $$
+    const d = prose(editorSchema.text('$$x$$', [MARK.create({ expr: a, display: true })]));
+    const ms = markedD(afterEdit(d, (tr) => tr.insertText('y', 4))); // $$x[y]$$
+    expect(ms).toHaveLength(1);
+    expect(ms[0]!.surface).toBe('xy');
+    expect(ms[0]!.display).toBe(true);
+    const id = afterEdit(d, (tr) => tr.insertText('y', 4));
+    id.descendants((n) => {
+      const m = n.marks.find((x) => x.type === MARK);
+      if (m) expect((m.attrs.expr as MathExpression).id).toBe('disp-A');
+    });
+  });
+
+  it('drops the display mark when a delimiter is removed (display → plain prose)', () => {
+    const a = makeExpr('disp-B', 'x');
+    const d = prose(editorSchema.text('$$x$$', [MARK.create({ expr: a, display: true })]));
+    // delete the final `$` (last char of the text run) → "$$x$" is no longer a whole-line display equation
+    const end = 1 + (d.firstChild?.content.size ?? 0); // content start (1) + block text length
+    const after = afterEdit(d, (tr) => tr.delete(end - 1, end));
+    expect(markedD(after)).toHaveLength(0);
+  });
+
+  it('recognizes a MULTI-LINE $$⏎a$$ as one display equation (newlines are hard_breaks)', () => {
+    const hb = () => editorSchema.nodes.hard_break.create();
+    // "$$" on its own line, then "a$$" — text '$$' [1,3), hard_break [3,4), text 'a$$' [4,7)
+    const d = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [
+        editorSchema.text('$$'),
+        hb(),
+        editorSchema.text('a$$'),
+      ]),
+    ]);
+    const after = afterEdit(d, (tr) => tr.insertText('b', 5)); // insert 'b' before the closing $$ → inner "\nab"
+    const ms = markedD(after);
+    expect(ms.length).toBeGreaterThan(0);
+    expect(ms.every((m) => m.display)).toBe(true); // the WHOLE multi-line block is the display equation
+    expect(ms.every((m) => m.surface === '\nab')).toBe(true); // surface carries the newline
+  });
+
+  it('copy-mints-fresh: a pasted DISPLAY equation gets a new expr id (no shared id across blocks)', () => {
+    const a = makeExpr('dup-d', 'x');
+    // two display blocks sharing ONE expr id (a paste-clone of a rendered equation)
+    const d = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [
+        editorSchema.text('$$x$$', [MARK.create({ expr: a, display: true })]),
+      ]),
+      editorSchema.nodes.prose.create({ unitId: 'u2' }, [
+        editorSchema.text('$$x$$', [MARK.create({ expr: a, display: true })]),
+      ]),
+    ]);
+    const after = afterEdit(d, (tr) => tr.insertText('y', 4)); // nudge block 1 → recognizer re-scans both
+    const ids: string[] = [];
+    after.forEach((block) => {
+      let id: string | undefined;
+      block.forEach((c) => {
+        if (!c.isText) return;
+        const m = c.marks.find((x) => x.type === MARK);
+        if (m && (m.attrs.display as boolean)) id = (m.attrs.expr as MathExpression).id;
+      });
+      if (id) ids.push(id);
+    });
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]); // the clone was re-minted → §6.3a expr-id stability holds
+  });
+
+  it('tolerates a trailing space after the closing $$ (still a display equation, surface trimmed)', () => {
+    const ms = markedD(typed('$$x$$ '));
+    expect(ms.length).toBeGreaterThan(0);
+    expect(ms.every((m) => m.display)).toBe(true);
+    expect(ms[0]!.surface).toBe('x');
+  });
+
+  it('does NOT recognize an OPEN multi-line $$⏎a (no closing $$) as display', () => {
+    const hb = () => editorSchema.nodes.hard_break.create();
+    const d = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [
+        editorSchema.text('$$'),
+        hb(),
+        editorSchema.text('a'),
+      ]),
+    ]);
+    const after = afterEdit(d, (tr) => tr.insertText('x', 5)); // "$$⏎ax" — still no closing $$
+    expect(markedD(after)).toHaveLength(0);
+  });
+});

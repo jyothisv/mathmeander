@@ -7,8 +7,9 @@ constraints are one UX tradeoff (§ "the one real limit") and one sizable-but-co
 diagrams; citations come AFTER annotations** as a specialization (§ sequencing).
 
 Companion to `mvp_architecture.md` (§6 data model, §6.3a keystone, §9.x InputEnvironment, §9.y authoring,
-§9.z math input, §2.5/§3.9 propose-not-impose). This note records the design direction discovered while
-scoping "low-effort intra-document citations."
+§9.z math input, §2.5/§3.9 propose-not-impose) and `structured-math.md` (the display-math → multi-row →
+sub-expression-annotation substrate that this note's numbering/citation work builds on). This note records the
+design direction discovered while scoping "low-effort intra-document citations."
 
 ## Goal
 

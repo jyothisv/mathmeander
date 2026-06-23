@@ -56,6 +56,7 @@ import {
   ContentConstraintError,
   loadContent,
   loadCurrentLinks,
+  loadInboundLinks,
   loadCurrentTaggings,
   loadObject,
   loadObjectSubgraph,
@@ -129,7 +130,16 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
         priorIds.has(u.id) ? u : { ...u, provenance_id: provenance.id },
       );
 
-      const result = saveContent(prior, upserts, body.deletes, opCtx, now);
+      // The §6.3a display-math keystone (like rewrite_surface): the core needs the current edges to reject
+      // re-authoring/deleting a CITED equation via the coarse delta. BOTH directions matter — this object's
+      // OUTBOUND ExpressionSpan anchors AND INBOUND cross-object ExpressionRef citations into its expressions
+      // (else a cited equation could be silently re-authored, orphaning the citation's span). Two indexed
+      // reads; the common no-edges case yields empty lists → every Math edit is keystone-safe.
+      const currentLinks = [
+        ...(await loadCurrentLinks(deps.db, id)),
+        ...(await loadInboundLinks(deps.db, id)),
+      ];
+      const result = saveContent(prior, currentLinks, upserts, body.deletes, opCtx, now);
       if (!result.ok) return sendCoreError(reply, result.error);
 
       let won: boolean;
@@ -244,7 +254,13 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
       const content = await loadContent(deps.db, ctx.spaceId, id);
       if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
 
-      const currentLinks = await loadCurrentLinks(deps.db, id);
+      // Outbound `ExpressionSpan` anchors (re-anchored) + inbound cross-object `ExpressionRef` citations
+      // (which rewrite_surface refuses to rename until target-side re-anchoring lands) — same edge set the
+      // save_content keystone inspects, so the two paths agree on what a cited expression is.
+      const currentLinks = [
+        ...(await loadCurrentLinks(deps.db, id)),
+        ...(await loadInboundLinks(deps.db, id)),
+      ];
       const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
       const result = rewriteSurface(content, currentLinks, input, opCtx, now);
       return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);

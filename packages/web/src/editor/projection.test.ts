@@ -2,7 +2,14 @@
 // inline-atom contract (§6.0) and Mark regions. Pure (prosemirror-model runs in node, no DOM).
 import { describe, expect, it } from 'vitest';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
-import { flushToContent, isFlatProse, projectToDoc, typeNeeds, typeIntents } from './projection';
+import {
+  flushToContent,
+  isEditable,
+  isFlatProse,
+  projectToDoc,
+  typeNeeds,
+  typeIntents,
+} from './projection';
 import { editorSchema } from './schema';
 
 const OBJ = '0197675f-71f4-7000-8000-000000000001';
@@ -26,6 +33,30 @@ function prose(
   };
 }
 const content = (units: Unit[]): MathContent => ({ object_id: OBJ, revision: 3, units });
+
+/** A top-level display-math (`UnitContent::Math`) unit. */
+function mathUnit(id: string, position: number, surface: string): Unit {
+  return {
+    id,
+    object_id: OBJ,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: {
+      kind: 'math',
+      expr: {
+        id: `${id}-e`,
+        surface_text: surface,
+        surface_format: 'mathmeander',
+        input_syntax: 'mathmeander',
+        original_input: surface,
+        parse_status: 'renderable',
+        occurrences: [],
+      },
+    },
+    provenance_id: '0197675f-71f4-7000-8000-0000000000d2',
+  };
+}
 
 /** Project content to a doc, then flush it back unchanged → the delta must be EMPTY (round-trip). */
 function roundTripIsClean(c: MathContent): boolean {
@@ -349,5 +380,190 @@ describe('flush — surface_text keystone guard (§6.3a)', () => {
 
   it('a FRESH expr rebuilds surface_text from the displayed text', () => {
     expect(flushedMath('$xy$', mathExprOf('f1', 'x')).surface_text).toBe('xy');
+  });
+});
+
+describe('display math (structured-math increment 1) — line-only $$…$$ ⇄ Math unit', () => {
+  /** A prose block whose sole content is a `$$surface$$` display span (a typed/edited display equation). */
+  function displayBlock(unitId: string, surface: string, exprId = `${unitId}-e`, occurrences = 0) {
+    const expr: MathExpression = {
+      id: exprId,
+      surface_text: surface,
+      surface_format: 'mathmeander',
+      input_syntax: 'mathmeander',
+      original_input: surface,
+      parse_status: 'renderable',
+      occurrences: Array.from({ length: occurrences }, () => ({})) as MathExpression['occurrences'],
+    };
+    return editorSchema.nodes.prose.create({ unitId }, [
+      editorSchema.text(`$$${surface}$$`, [
+        editorSchema.marks.mathExpr.create({ expr, display: true }),
+      ]),
+    ]);
+  }
+  const docOf = (...blocks: ReturnType<typeof displayBlock>[]) =>
+    editorSchema.nodes.doc.create(null, blocks);
+  const exprOf = (u: Unit) => (u.content as { expr: MathExpression }).expr;
+
+  it('isEditable admits top-level prose + math; isFlatProse still rejects math', () => {
+    const c = content([prose('u1', 0, 'A'), mathUnit('m1', 1, 'x^2')]);
+    expect(isEditable(c)).toBe(true);
+    expect(isFlatProse(c)).toBe(false); // math is not flat prose
+  });
+
+  it('a display-math unit round-trips with NO delta (project → flush is clean)', () => {
+    expect(roundTripIsClean(content([prose('u1', 0, 'before'), mathUnit('m1', 1, 'x^2')]))).toBe(
+      true,
+    );
+    expect(
+      roundTripIsClean(
+        content([mathUnit('m0', 0, 'a + b'), prose('u1', 1, 'mid'), mathUnit('m2', 2, 'c = d')]),
+      ),
+    ).toBe(true);
+  });
+
+  it('projects a math unit to a PROSE block holding its `$$surface$$` display span', () => {
+    const doc = projectToDoc(content([prose('u1', 0, 'A'), mathUnit('m1', 1, 'x^2')]));
+    const block = doc.child(1);
+    expect(block.type.name).toBe('prose');
+    expect(block.attrs.unitId).toBe('m1');
+    expect(block.textContent).toBe('$$x^2$$');
+    const mark = block.firstChild!.marks.find((m) => m.type.name === 'mathExpr')!;
+    expect(mark.attrs.display).toBe(true);
+  });
+
+  it('CREATE: a new block typed as $$x^2$$ flushes to a new Math unit (keeps the block id)', () => {
+    const { upserts, deletes } = flushToContent(docOf(displayBlock('new1', 'x^2')), content([]));
+    expect(deletes).toEqual([]);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.id).toBe('new1');
+    expect(upserts[0]!.content.kind).toBe('math');
+    expect(exprOf(upserts[0]!).surface_text).toBe('x^2');
+  });
+
+  it('EDIT: changing a display surface upserts the Math unit, expr id preserved', () => {
+    const prior = content([mathUnit('m1', 0, 'x')]);
+    const { upserts, deletes } = flushToContent(docOf(displayBlock('m1', 'y + 1', 'm1-e')), prior);
+    expect(deletes).toEqual([]);
+    const m = upserts.find((u) => u.id === 'm1')!;
+    expect(exprOf(m).surface_text).toBe('y + 1');
+    expect(exprOf(m).id).toBe('m1-e'); // identity preserved across the in-place edit
+  });
+
+  it('DELETE: removing a display equation deletes its (zero-anchor) Math unit', () => {
+    const prior = content([prose('u1', 0, 'A'), mathUnit('m1', 1, 'x^2')]);
+    const doc = projectToDoc(content([prose('u1', 0, 'A')])); // the equation is gone
+    const { deletes } = flushToContent(doc, prior);
+    expect(deletes).toContain('m1'); // the symmetric delete relaxation — erasing an equation just saves
+  });
+
+  it('REPOSITION: a moved math unit emits a position-only upsert (content unchanged)', () => {
+    const prior = content([prose('u1', 0, 'A'), mathUnit('m1', 1, 'x^2')]);
+    const doc = projectToDoc(content([mathUnit('m1', 0, 'x^2'), prose('u1', 1, 'A')]));
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toEqual([]);
+    const m = upserts.find((u) => u.id === 'm1');
+    expect(m?.position).toBe(0);
+    expect(m?.content.kind).toBe('math');
+  });
+
+  it('KIND-FLIP prose→display: a prose block retyped as $$…$$ deletes the prose + creates a Math unit (fresh id)', () => {
+    const prior = content([prose('u1', 0, 'hello')]);
+    const { upserts, deletes } = flushToContent(docOf(displayBlock('u1', 'x^2')), prior);
+    expect(deletes).toContain('u1'); // can't change a unit's kind in place → delete + create
+    const created = upserts.find((u) => u.content.kind === 'math')!;
+    expect(created).toBeTruthy();
+    expect(created.id).not.toBe('u1'); // a kind flip mints a fresh id
+  });
+
+  it('KIND-FLIP display→prose: a display block retyped as plain text deletes the Math + creates a prose unit', () => {
+    const prior = content([mathUnit('m1', 0, 'x')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'm1' }, editorSchema.text('hello')),
+    ]);
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toContain('m1');
+    const created = upserts.find((u) => u.content.kind === 'prose')!;
+    expect(created).toBeTruthy();
+    expect(created.id).not.toBe('m1');
+  });
+
+  it('keystone: an ANCHORED display equation keeps its stored surface (frozen, not re-derived)', () => {
+    const prior = content([mathUnit('m1', 0, 'x')]);
+    // The displayed text has drifted to "$$xy$$" but the cited expr's stored surface is "x"
+    // (occurrences>0) — the flush must NOT overwrite it from the displayed text.
+    const anchored: MathExpression = {
+      id: 'm1-e',
+      surface_text: 'x',
+      surface_format: 'mathmeander',
+      input_syntax: 'mathmeander',
+      original_input: 'x',
+      parse_status: 'renderable',
+      occurrences: [{}] as MathExpression['occurrences'],
+    };
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'm1' }, [
+        editorSchema.text('$$xy$$', [
+          editorSchema.marks.mathExpr.create({ expr: anchored, display: true }),
+        ]),
+      ]),
+    ]);
+    const m = flushToContent(doc, prior).upserts.find((u) => u.id === 'm1')!;
+    expect(exprOf(m).surface_text).toBe('x'); // frozen — not clobbered to 'xy'
+  });
+
+  it('MULTI-LINE: a display equation with a newline in its surface round-trips clean', () => {
+    expect(roundTripIsClean(content([mathUnit('m1', 0, 'a +\nb = c')]))).toBe(true);
+  });
+
+  it('MULTI-LINE: projectToDoc splits the surface on \\n into text + hard_break (all display-marked)', () => {
+    const doc = projectToDoc(content([mathUnit('m1', 0, 'a\nb')]));
+    const block = doc.child(0);
+    expect(block.type.name).toBe('prose');
+    const kinds: string[] = [];
+    block.forEach((child) => kinds.push(child.isText ? `t:${child.text}` : child.type.name));
+    expect(kinds).toEqual(['t:$$a', 'hard_break', 't:b$$']); // "$$a⏎b$$"
+    block.forEach((child) => {
+      if (child.isText)
+        expect(child.marks.some((mk) => mk.type.name === 'mathExpr' && mk.attrs.display)).toBe(
+          true,
+        );
+    });
+  });
+
+  it('MULTI-LINE: flush reads a hard_break block back to a `\\n` surface', () => {
+    const hb = () => editorSchema.nodes.hard_break.create();
+    const e: MathExpression = {
+      id: 'm1-e',
+      surface_text: 'X',
+      surface_format: 'mathmeander',
+      input_syntax: 'mathmeander',
+      original_input: 'X',
+      parse_status: 'renderable',
+      occurrences: [],
+    };
+    const mk = () => editorSchema.marks.mathExpr.create({ expr: e, display: true });
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'm1' }, [
+        editorSchema.text('$$a', [mk()]),
+        hb(),
+        editorSchema.text('b$$', [mk()]),
+      ]),
+    ]);
+    const { upserts } = flushToContent(doc, content([mathUnit('m1', 0, 'OLD')]));
+    const m = upserts.find((u) => u.id === 'm1')!;
+    expect(exprOf(m).surface_text).toBe('a\nb'); // the hard_break became a `\n` in the surface
+  });
+});
+
+describe('display math — caret home', () => {
+  it('a math-only day projects a trailing empty prose block (a caret home)', () => {
+    const doc = projectToDoc(content([mathUnit('m1', 0, 'x^2')]));
+    const last = doc.child(doc.childCount - 1);
+    expect(last.type.name).toBe('prose'); // a place to put the cursor
+    expect(last.attrs.unitId).toBeNull(); // null id → flush skips it until typed
+    // and it does not create a spurious unit on flush
+    const { upserts } = flushToContent(doc, content([mathUnit('m1', 0, 'x^2')]));
+    expect(upserts).toEqual([]);
   });
 });

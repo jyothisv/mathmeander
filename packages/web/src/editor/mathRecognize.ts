@@ -23,7 +23,7 @@ import { v7 as uuidv7 } from 'uuid';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { MathExpression } from '@mathmeander/schema';
 import { editorSchema } from './schema';
-import { findMathRegions } from './mathSyntax';
+import { findMathRegions, wholeDisplaySource } from './mathSyntax';
 import { normalizeFresh, isMathRuntimeReady } from './mathRuntime';
 
 const MARK = editorSchema.marks.mathExpr;
@@ -34,6 +34,7 @@ interface Marked {
   to: number;
   expr: MathExpression;
   text: string;
+  display: boolean;
 }
 /** A reconciled span to apply. */
 interface Desired {
@@ -87,6 +88,7 @@ function blockMarked(block: PMNode, contentStart: number): Marked[] {
           to: pos + child.nodeSize,
           expr: m.attrs.expr as MathExpression,
           text: child.text ?? '',
+          display: (m.attrs.display as boolean) ?? false,
         });
     }
     pos += child.nodeSize;
@@ -126,8 +128,15 @@ function blockSegments(block: PMNode, contentStart: number): { start: number; te
 }
 
 /** The desired marked spans for one block: keep self-recognizing existing spans (resync fresh, never touch
- *  anchored), then scan the gaps between them for new math. */
-function reconcileBlock(block: PMNode, contentStart: number, current: Marked[]): Desired[] {
+ *  anchored), then scan the gaps between them for new math. `seen` is the DOC-WIDE set of expression ids
+ *  already claimed (copy-mints-fresh): a span whose id is already taken (a paste-clone, even across blocks)
+ *  is re-minted, so two units never share a `MathExpression.id` (§6.3a). */
+function reconcileBlock(
+  block: PMNode,
+  contentStart: number,
+  current: Marked[],
+  seen: Set<string>,
+): Desired[] {
   // 1. Decide which current spans to KEEP (occupying their range); the rest are released to the gap pool.
   const kept: { from: number; to: number; expr: MathExpression; inner: string }[] = [];
   for (const span of current) {
@@ -185,27 +194,28 @@ function reconcileBlock(block: PMNode, contentStart: number, current: Marked[]):
     })),
   ].sort((a, b) => a.from - b.from);
 
-  const usedIds = new Set<string>();
   const desired: Desired[] = [];
   for (const item of items) {
     let expr: MathExpression;
-    if (item.expr && !usedIds.has(item.expr.id)) {
-      expr = item.expr; // kept span — already resynced; id still free
+    if (item.expr && !seen.has(item.expr.id)) {
+      expr = item.expr; // kept span — already resynced; id still free (doc-wide)
     } else if (item.expr) {
-      expr = freshExpr(item.inner, undefined); // kept span with a duplicate id → re-mint
+      expr = freshExpr(item.inner, undefined); // duplicate id (within OR across blocks) → re-mint
     } else {
       const overlap = current.find((c) => c.from < item.to && item.from < c.to);
-      const reuse = overlap && !usedIds.has(overlap.expr.id) ? overlap.expr : undefined;
+      const reuse = overlap && !seen.has(overlap.expr.id) ? overlap.expr : undefined;
       expr = freshExpr(item.inner, reuse); // gap-new — mint (inherit a released span's id if any)
     }
-    usedIds.add(expr.id);
+    seen.add(expr.id);
     desired.push({ from: item.from, to: item.to, expr });
   }
   return desired;
 }
 
-/** Do the desired marks already match what's on the doc (same spans, same expr id/surface/status)? */
+/** Do the desired (inline) marks already match what's on the doc (same spans, same expr id/surface/status)? */
 function inSync(desired: Desired[], current: Marked[]): boolean {
+  // A stale display mark left in a now-non-display block must always be re-marked (→ removed/inline).
+  if (current.some((c) => c.display)) return false;
   if (desired.length !== current.length) return false;
   for (let i = 0; i < desired.length; i++) {
     const d = desired[i]!;
@@ -218,22 +228,104 @@ function inSync(desired: Desired[], current: Marked[]): boolean {
   return true;
 }
 
+/** A block's source with `\n` for each hard_break (display math may be MULTI-LINE — newlines are hard_breaks,
+ *  the same representation prose soft-lines use). Returns null if the block has a non-text/non-hard_break inline
+ *  (a reference/atom) → not a clean display block. */
+function blockSource(block: PMNode): string | null {
+  let text = '';
+  let ok = true;
+  block.forEach((child) => {
+    if (child.isText) text += child.text ?? '';
+    else if (child.type.name === 'hard_break') text += '\n';
+    else ok = false;
+  });
+  return ok ? text : null;
+}
+
+/** DISPLAY recognition (structured-math increment 1): if this prose block's entire content is `$$…$$` (one
+ *  equation, possibly MULTI-LINE — the closing `$$` need only be the block's last two chars), it is a display
+ *  equation — one `mathExpr{display:true}` region over the whole block (text + hard_breaks). Returns the desired
+ *  span (id reused from an existing mark; keystone keeps an anchored expr verbatim), or null if the block isn't
+ *  a clean `$$…$$` (then the inline scanner runs instead). */
+function displaySpan(
+  block: PMNode,
+  contentStart: number,
+  current: Marked[],
+  seen: Set<string>,
+): Desired | null {
+  const src = blockSource(block);
+  if (src == null) return null;
+  const inner = wholeDisplaySource(src);
+  if (inner == null) return null;
+  const prior = current[0]?.expr;
+  const canReuseId = !!prior && !seen.has(prior.id); // a paste-clone's id is already taken → copy-mints-fresh
+  let expr: MathExpression;
+  if (prior && isAnchored(prior) && canReuseId) {
+    expr = prior; // keystone: a cited expr is never re-normalized (surface frozen; edited via rewrite_surface)
+  } else if (prior && prior.surface_text === inner && canReuseId) {
+    expr = prior; // unchanged → reuse verbatim (no parse_status churn)
+  } else {
+    expr = freshExpr(inner, canReuseId ? prior : undefined); // fresh/drifted/dup → re-fit (mint if id is taken)
+  }
+  seen.add(expr.id);
+  return { from: contentStart, to: contentStart + block.content.size, expr };
+}
+
+/** Is the block already marked as the desired display equation — EVERY text node carrying `display:true` with
+ *  the desired expr (id/surface/status)? A multi-line display block is several text runs split by hard_breaks,
+ *  so we check each run (not "exactly one span"), which also prevents a re-mark loop. */
+function displayInSync(block: PMNode, desired: Desired): boolean {
+  let ok = true;
+  let any = false;
+  block.forEach((child) => {
+    if (!child.isText) return;
+    any = true;
+    const m = child.marks.find((x) => x.type === MARK);
+    const e = m?.attrs.expr as MathExpression | undefined;
+    if (
+      !m ||
+      !(m.attrs.display as boolean) ||
+      !e ||
+      e.id !== desired.expr.id ||
+      e.surface_text !== desired.expr.surface_text ||
+      e.parse_status !== desired.expr.parse_status
+    )
+      ok = false;
+  });
+  return ok && any;
+}
+
 export const mathRecognize = new Plugin({
   appendTransaction(transactions, _old, newState) {
     // Pure caret moves change no text, so the marks are already settled — only the live-preview decoration
     // (props.decorations) reacts to them. Re-scan only on a doc edit.
     if (!transactions.some((t) => t.docChanged)) return null;
     let tr: ReturnType<typeof newState.tr.removeMark> | null = null;
+    // Doc-wide set of expression ids already claimed this pass — drives copy-mints-fresh ACROSS blocks (a
+    // pasted display/inline equation can't keep an id another unit already uses, §6.3a expr-id stability).
+    const seen = new Set<string>();
     newState.doc.forEach((block, offset) => {
       if (block.type.name !== 'prose') return;
       const contentStart = offset + 1; // top-level block at `offset`; its content begins one position in
       const current = blockMarked(block, contentStart);
-      const desired = reconcileBlock(block, contentStart, current);
+
+      // DISPLAY first (line-only): a whole-block `$$…$$` is one display span; skip the inline scan for it.
+      const disp = displaySpan(block, contentStart, current, seen);
+      if (disp) {
+        if (displayInSync(block, disp)) return;
+        tr = tr ?? newState.tr;
+        tr.removeMark(contentStart, contentStart + block.content.size, MARK);
+        tr.addMark(disp.from, disp.to, MARK.create({ expr: disp.expr, display: true }));
+        return;
+      }
+
+      const desired = reconcileBlock(block, contentStart, current, seen);
       if (inSync(desired, current)) return;
       tr = tr ?? newState.tr;
       // Mark steps are size-preserving, so positions computed from `newState.doc` stay valid as we apply.
       tr.removeMark(contentStart, contentStart + block.content.size, MARK);
-      for (const d of desired) tr.addMark(d.from, d.to, MARK.create({ expr: d.expr }));
+      for (const d of desired)
+        tr.addMark(d.from, d.to, MARK.create({ expr: d.expr, display: false }));
     });
     return tr;
   },

@@ -28,8 +28,11 @@ import { flushToContent, projectToDoc, typeNeeds, typeIntents, type TypeNeed } f
 import {
   cueRule,
   clearTypeAtStart,
+  displayEnter,
   enterParagraph,
   exitTypedUnit,
+  guardDisplayMerge,
+  guardDisplayMergeForward,
   insertHardBreak,
   mergeIntoPrevious,
 } from './cues';
@@ -215,14 +218,23 @@ export function DayEditor({
             // whole equation. Otherwise falls through to baseKeymap's native char delete. Delete (forward) gets
             // the mirror guard (mathDelete). Both are placed before baseKeymap so they pre-empt native.
             keymap({
-              Backspace: chainCommands(clearTypeAtStart, mergeIntoPrevious, mathBackspace),
+              // guardDisplayMerge refuses a join that would dissolve a `$$…$$` equation (atomic for block
+              // joins); else clear type / soft-break-merge / single-char math-boundary delete, then native.
+              Backspace: chainCommands(
+                clearTypeAtStart,
+                guardDisplayMerge,
+                mergeIntoPrevious,
+                mathBackspace,
+              ),
             }),
-            keymap({ Delete: mathDelete }),
+            keymap({ Delete: chainCommands(guardDisplayMergeForward, mathDelete) }),
             // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
             // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).
             // Shift-Enter is always a soft line break; ⌘/Ctrl-Enter finishes a unit and starts a new one.
             keymap({
-              Enter: enterParagraph,
+              // displayEnter pre-empts inside a `$$…$$` equation: a newline stays in the equation (multi-line),
+              // and Enter at the end of a closed one exits to a new line below. Else the paragraph model runs.
+              Enter: chainCommands(displayEnter, enterParagraph),
               'Shift-Enter': insertHardBreak,
               'Mod-Enter': exitTypedUnit,
             }),
@@ -231,8 +243,8 @@ export function DayEditor({
             inputRules({ rules: [cueRule] }),
             keymap(baseKeymap),
             idStamper,
-            mathRecognize, // scan `$…$` text → the mathExpr identity mark + synced expr (id/surface/status)
-            mathLivePreview, // render KaTeX over a marked span when the caret is outside it; raw when inside
+            mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr
+            mathLivePreview, // render KaTeX over a marked span (inline on caret-out; display always, centered)
             activeUnit,
           ],
         }),

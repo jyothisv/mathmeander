@@ -2,6 +2,7 @@
 // ("parse, don't trust") — a drifting server fails loudly at runtime, never silently.
 // Attaches the bearer token, maps the error envelope, and routes 401 to /login.
 import { z } from 'zod';
+import { v7 as uuidv7 } from 'uuid';
 import {
   CanonicalObjectSchema,
   MathpackGraphSchema,
@@ -10,6 +11,8 @@ import {
   type MathpackGraph,
   type ObjectPatch,
   type OpOutcome,
+  type RewriteSurfaceInput,
+  type ToggleExpressionPlacementInput,
   type Unit,
   type UnitType,
 } from '@mathmeander/schema';
@@ -170,6 +173,36 @@ export async function setUnitType(
 ): Promise<OpOutcome> {
   return (
     await request('POST', `/api/objects/${objectId}/ops/set-unit-type`, OpOutcomeEnvelope, body)
+  ).outcome;
+}
+
+/** `toggle_expression_placement` (§6.3a, the "$$/$" gesture): PROMOTE an inline expression to a display
+ *  `Math` unit, or DEMOTE a display unit back inline — the op infers the direction from `unit_id`. The server
+ *  MINTS the display + trailing unit ids (graph.ts), but the request schema still requires them, so we send
+ *  throwaway uuids the server overwrites. A stale `expected_revision` → 409 (same gate as save_content). */
+export async function togglePlacement(
+  objectId: string,
+  body: Omit<ToggleExpressionPlacementInput, 'display_unit_id' | 'trailing_unit_id'>,
+): Promise<OpOutcome> {
+  const full: ToggleExpressionPlacementInput = {
+    ...body,
+    display_unit_id: uuidv7(), // re-minted server-side (graph.ts); sent only to satisfy the request schema
+    trailing_unit_id: uuidv7(),
+  };
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/toggle-placement`, OpOutcomeEnvelope, full)
+  ).outcome;
+}
+
+/** `rewrite_surface` (§6.3a keystone): RENAME an identifier (`from`→`to`) across an anchored expression's
+ *  surface, preserving its id and re-anchoring current edges. It is a rename — NOT an arbitrary re-author
+ *  (free re-authoring of a placed equation is demote → edit inline → promote). Stale revision → 409. */
+export async function rewriteSurface(
+  objectId: string,
+  body: RewriteSurfaceInput,
+): Promise<OpOutcome> {
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/rewrite-surface`, OpOutcomeEnvelope, body)
   ).outcome;
 }
 

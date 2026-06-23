@@ -129,6 +129,19 @@
         cursor: pointer;
         padding: 0 0.05rem;
       }
+      /* Display math (structured-math increment 1): a whole-line `$$…$$` renders as a CENTERED block (KaTeX
+         displayMode) that is ALWAYS visible; clicking it reveals the `$$…$$` source ABOVE it for editing (the
+         `.math-src-display` line), which collapses again on blur. The render hugs the surrounding content (no
+         spurious blank line); the page reflows when the source line appears/collapses. */
+      .day-editor .math-render-display {
+        display: block;
+        text-align: center;
+        margin: 0.5rem 0;
+        cursor: pointer;
+      }
+      .day-editor .math-src-display {
+        display: block;
+      }
       .day-editor .math-invalid {
         color: #b00020;
         border-bottom: 1px dotted #b00020;

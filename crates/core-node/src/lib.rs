@@ -93,10 +93,12 @@ pub fn split_unit(
     mathmeander_core::api::split_unit(&content_json, &input_json, &ctx_json, &now_iso)
 }
 
-/// Apply a prose-authoring delta (slice 2c coarse path) → `OpOutcomeResult` JSON.
+/// Apply a content-authoring delta (slice 2c coarse path; current links passed in for the
+/// display-math keystone check) → `OpOutcomeResult` JSON.
 #[napi]
 pub fn save_content(
     prior_json: String,
+    current_links_json: String,
     upserts_json: String,
     deletes_json: String,
     ctx_json: String,
@@ -104,6 +106,7 @@ pub fn save_content(
 ) -> String {
     mathmeander_core::api::save_content(
         &prior_json,
+        &current_links_json,
         &upserts_json,
         &deletes_json,
         &ctx_json,
