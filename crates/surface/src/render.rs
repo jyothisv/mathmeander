@@ -3,7 +3,7 @@
 //! the LaTeX serialization; MathML is a direct structural serialization honoring the
 //! Model-A fraction display (`Expr::frac_built_up`).
 
-use crate::ast::{Expr, ExprKind};
+use crate::ast::{Expr, ExprKind, MulOp};
 use crate::latex;
 
 /// The string fed to KaTeX in the frontend (KaTeX renders LaTeX): the LaTeX export.
@@ -51,6 +51,11 @@ fn emit(e: &Expr, out: &mut String) {
             push_escaped(s, out);
             out.push_str("</mtext></merror>");
         }
+        ExprKind::Text(s) => {
+            out.push_str("<mtext>");
+            push_escaped(s, out);
+            out.push_str("</mtext>");
+        }
         ExprKind::Group(inner) => {
             out.push_str("<mrow><mo>(</mo>");
             emit(inner, out);
@@ -64,6 +69,19 @@ fn emit(e: &Expr, out: &mut String) {
                 out.push_str("<msqrt>");
                 emit(&args[0], out);
                 out.push_str("</msqrt>");
+                return;
+            }
+            // `cases(row0, row1, …)` → a braced piecewise table.
+            if let ExprKind::Ident(h) = &head.kind
+                && h == "cases"
+            {
+                out.push_str("<mrow><mo>{</mo><mtable columnalign=\"left\">");
+                for a in args {
+                    out.push_str("<mtr><mtd>");
+                    emit(a, out);
+                    out.push_str("</mtd></mtr>");
+                }
+                out.push_str("</mtable></mrow>");
                 return;
             }
             out.push_str("<mrow>");
@@ -117,10 +135,13 @@ fn emit(e: &Expr, out: &mut String) {
                 out.push_str("</mrow>");
             }
         }
-        ExprKind::Mul { lhs, rhs } => {
+        ExprKind::Mul { lhs, op, rhs } => {
             out.push_str("<mrow>");
             emit(lhs, out);
-            out.push_str("<mo>\u{22C5}</mo>");
+            out.push_str(match op {
+                MulOp::Cdot => "<mo>\u{22C5}</mo>",  // ⋅
+                MulOp::Cross => "<mo>\u{00D7}</mo>", // ×
+            });
             emit(rhs, out);
             out.push_str("</mrow>");
         }

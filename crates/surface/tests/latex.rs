@@ -22,6 +22,10 @@ fn export_covers_the_core() {
         ("(a + b)/c", "\\frac{a + b}{c}"),
         ("frac(a, b)", "\\frac{a}{b}"),
         ("f(x) = x^2 + 1", "f\\left(x\\right) = x^{2} + 1"),
+        // v3: × (times), variant star, piecewise.
+        ("N times N", "N \\times N"),
+        ("Z*", "Z^{*}"),
+        ("cases(a, b)", "\\begin{cases}a \\\\ b\\end{cases}"),
     ];
     for (mm, tex) in cases {
         assert_eq!(export(&parse(mm)), tex, "export mismatch for {mm:?}");
@@ -39,6 +43,11 @@ fn export_then_import_is_idempotent() {
         "a \\cdot b",
         "x \\in S",
         "\\frac{1}{2} x^{2}",
+        // v3: × (times), variant star, piecewise — each must survive a LaTeX round-trip.
+        "a \\times b",
+        "Z^{*}",
+        "\\begin{cases} a \\\\ b \\end{cases}",
+        "\\begin{cases} 0 \\text{if} x < 0 \\\\ x \\text{if} x \\geq 0 \\end{cases}",
     ];
     for l in latex_inputs {
         let once = export(&import(l));
@@ -49,10 +58,15 @@ fn export_then_import_is_idempotent() {
 
 #[test]
 fn import_is_lenient_on_unknown_macros() {
-    // An unknown macro degrades to a plain name rather than failing.
+    // An unknown macro degrades to a plain name rather than failing. v2 segments the multi-letter
+    // run into single-letter variables (`foobar` → `f o o b a r`), so the letters are preserved in
+    // order even though the run is split — leniency intact, content not lost.
     let e = import("\\foobar + x");
     let tex = export(&e);
-    assert!(tex.contains("foobar"), "unknown macro lost: {tex}");
+    assert!(
+        tex.replace(' ', "").contains("foobar"),
+        "unknown macro lost: {tex}"
+    );
 }
 
 #[test]
