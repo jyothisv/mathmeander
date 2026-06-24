@@ -39,6 +39,9 @@ import {
 import { idStamper } from './idStamper';
 import { activeUnit } from './activeUnit';
 import { mathRecognize } from './mathRecognize';
+import { markRecognize } from './markRecognize';
+import { markLivePreview } from './markLivePreview';
+import { formattingKeymap } from './markKeys';
 import { mathLivePreview } from './mathLivePreview';
 import { mathBackspace, mathDelete } from './mathKeys';
 import {
@@ -238,13 +241,19 @@ export function DayEditor({
               'Shift-Enter': insertHardBreak,
               'Mod-Enter': exitTypedUnit,
             }),
+            // Inline-formatting shortcuts (Mod-b/i/`, Shift-Mod-x): insert/toggle the markdown delimiters;
+            // markRecognize applies the styling from them (delimiters are never consumed — keyboard-friendly,
+            // no hidden text). Before baseKeymap so Mod-b etc. aren't shadowed.
+            keymap(formattingKeymap),
             // The cue input rule (`Thm.` etc.). Inline math needs no input rule — `$` is just typed text;
             // mathRecognize (below) scans `$…$` and applies the identity mark + live preview.
             inputRules({ rules: [cueRule] }),
             keymap(baseKeymap),
             idStamper,
             mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr
+            markRecognize, // scan `**…**`/`*…*`/`~~…~~`/`` `…` `` → the styled mark (after math; math wins)
             mathLivePreview, // render KaTeX over a marked span (inline on caret-out; display always, centered)
+            markLivePreview, // hide the markdown delimiters when the caret is out; reveal on touch (like math)
             activeUnit,
           ],
         }),

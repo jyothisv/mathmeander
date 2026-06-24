@@ -125,6 +125,13 @@
       .day-editor .math-hidden {
         display: none;
       }
+      /* Inline formatting (`**bold**`/`*italic*`/`~~strike~~`/`` `code` ``): markRecognize styles the inner;
+         markLivePreview HIDES the wrapping delimiters while the caret is outside the region, revealing them
+         (this class drops) the moment the selection touches it — the same hide-on-blur/reveal-on-caret model
+         as math, so the delimiters are never consumed yet stay out of the way while reading. */
+      .day-editor .mark-delim-hidden {
+        display: none;
+      }
       .day-editor .math-render {
         cursor: pointer;
         padding: 0 0.05rem;
