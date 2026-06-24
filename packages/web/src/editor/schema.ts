@@ -85,7 +85,9 @@ export const editorSchema = new Schema({
               ? 'code'
               : style === 'em' || style === 'emph'
                 ? 'em'
-                : 'span';
+                : style === 'strike' || style === 'strikethrough'
+                  ? 's'
+                  : 'span';
         return [tag, { 'data-style': style }, 0];
       },
     },
