@@ -3,6 +3,15 @@
 //! THIS tree's canonical serialization (`serializer.rs`). Designed **sub-term-addressable**
 //! (every node reached by a `StructuralPath`, `path.rs`) so structural (tree) editing and
 //! sub-term occurrence resolution are additive later (§14), not rewrites.
+//!
+//! Every node carries the `CharSpan` of the VERBATIM source it was parsed from (`Expr::span`),
+//! so a `StructuralPath` maps to the exact source range no matter how the user typed it
+//! (spacing, brackets, packing). This is the foundation for precise click + sub-expression
+//! annotations: the click→source mapping reads `node.span` directly (`path::verbatim_paths`),
+//! never a re-serialized canonical span. The span is metadata — `PartialEq` ignores it, so
+//! equality stays purely STRUCTURAL (two trees are equal iff their `kind`s are).
+
+use crate::span::CharSpan;
 
 /// Author's syntactic fraction form (Model A, pure-lexical — the style lives in the
 /// surface). The DISPLAY (built-up vs inline slash) is DERIVED from the form + operand
@@ -33,11 +42,24 @@ impl AddOp {
     }
 }
 
-/// One `mathmeander` expression node. Constructed only by the parser (or, later, by
-/// structural-editing operations); the parser is TOTAL, so any input yields a valid tree
-/// (with `Error` nodes for recovered fragments).
+/// One `mathmeander` expression node = its `kind` + the `span` of the verbatim source it was
+/// parsed from. Constructed only by the parser (which stamps the real span) or by
+/// structural-editing helpers (`Expr::synthetic`, span ignored — re-serialized/re-parsed). The
+/// parser is TOTAL, so any input yields a valid tree (with `Error` nodes for recovered fragments).
+#[derive(Debug, Clone)]
+pub struct Expr {
+    pub kind: ExprKind,
+    /// The verbatim source range (`CharSpan`, code points) this node was parsed from. Excludes
+    /// surrounding whitespace; includes structural delimiters the node owns (a `Group`'s parens,
+    /// a `Call`'s `(...)`). `CharSpan::new(0,0)` on synthetically-built nodes (never reach
+    /// `verbatim_paths`). NOT part of equality — see the `PartialEq` impl below.
+    pub span: CharSpan,
+}
+
+/// `Expr` without its source span — the structural shape. Equality/`matches!` over an `Expr`
+/// compares `kind` only (the manual `PartialEq` on `Expr`), so the span never affects it.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum ExprKind {
     /// Empty input (serializes to "").
     Empty,
     /// A numeric literal, verbatim ("42", "3.14").
@@ -88,27 +110,55 @@ pub enum Expr {
     },
 }
 
+/// STRUCTURAL equality — the source span is metadata, never part of identity (so `parse(s) ==
+/// parse(canonical(s))` and the round-trip/idempotence proptests hold regardless of spacing).
+/// `ExprKind`'s derived `PartialEq` recurses through `Box<Expr>`/`Vec<Expr>` children back into
+/// this impl, so the span is ignored at every depth.
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
 impl Expr {
+    /// A node carrying its real verbatim source span (the parser's constructor).
+    pub fn new(kind: ExprKind, span: CharSpan) -> Self {
+        Expr { kind, span }
+    }
+
+    /// A node with no meaningful source span — for synthetically built trees (rewrite/import)
+    /// that get re-serialized and re-parsed, so their spans never reach `verbatim_paths`.
+    pub fn synthetic(kind: ExprKind) -> Self {
+        Expr {
+            kind,
+            span: CharSpan::new(0, 0),
+        }
+    }
+
     /// Children in canonical order — the basis for `StructuralPath` addressing (`path.rs`).
     pub fn children(&self) -> Vec<&Expr> {
-        match self {
-            Expr::Empty | Expr::Number(_) | Expr::Ident(_) | Expr::Symbol(_) | Expr::Error(_) => {
+        match &self.kind {
+            ExprKind::Empty
+            | ExprKind::Number(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Symbol(_)
+            | ExprKind::Error(_) => {
                 vec![]
             }
-            Expr::Group(e) => vec![e.as_ref()],
-            Expr::Call { head, args } => {
+            ExprKind::Group(e) => vec![e.as_ref()],
+            ExprKind::Call { head, args } => {
                 let mut v = vec![head.as_ref()];
                 v.extend(args.iter());
                 v
             }
-            Expr::Sup { base, exp } => vec![base.as_ref(), exp.as_ref()],
-            Expr::Sub { base, sub } => vec![base.as_ref(), sub.as_ref()],
-            Expr::Unary { operand, .. } => vec![operand.as_ref()],
-            Expr::Juxtapose(fs) => fs.iter().collect(),
-            Expr::Frac { num, den, .. } => vec![num.as_ref(), den.as_ref()],
-            Expr::Mul { lhs, rhs } => vec![lhs.as_ref(), rhs.as_ref()],
-            Expr::Add { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
-            Expr::Rel { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
+            ExprKind::Sup { base, exp } => vec![base.as_ref(), exp.as_ref()],
+            ExprKind::Sub { base, sub } => vec![base.as_ref(), sub.as_ref()],
+            ExprKind::Unary { operand, .. } => vec![operand.as_ref()],
+            ExprKind::Juxtapose(fs) => fs.iter().collect(),
+            ExprKind::Frac { num, den, .. } => vec![num.as_ref(), den.as_ref()],
+            ExprKind::Mul { lhs, rhs } => vec![lhs.as_ref(), rhs.as_ref()],
+            ExprKind::Add { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
+            ExprKind::Rel { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
         }
     }
 
@@ -116,12 +166,12 @@ impl Expr {
     /// grouped/structured operand makes a bare `/` build up.
     pub fn is_structured(&self) -> bool {
         matches!(
-            self,
-            Expr::Group(_)
-                | Expr::Call { .. }
-                | Expr::Sup { .. }
-                | Expr::Sub { .. }
-                | Expr::Frac { .. }
+            &self.kind,
+            ExprKind::Group(_)
+                | ExprKind::Call { .. }
+                | ExprKind::Sup { .. }
+                | ExprKind::Sub { .. }
+                | ExprKind::Frac { .. }
         )
     }
 
@@ -137,14 +187,14 @@ impl Expr {
 
     /// Whether the tree contains any recovered `Error` fragment.
     pub fn has_error(&self) -> bool {
-        matches!(self, Expr::Error(_)) || self.children().iter().any(|c| c.has_error())
+        matches!(&self.kind, ExprKind::Error(_)) || self.children().iter().any(|c| c.has_error())
     }
 
     /// Whether the tree carries any real (non-empty, non-error) content.
     pub fn has_content(&self) -> bool {
-        match self {
-            Expr::Empty | Expr::Error(_) => false,
-            Expr::Number(_) | Expr::Ident(_) | Expr::Symbol(_) => true,
+        match &self.kind {
+            ExprKind::Empty | ExprKind::Error(_) => false,
+            ExprKind::Number(_) | ExprKind::Ident(_) | ExprKind::Symbol(_) => true,
             _ => self.children().iter().any(|c| c.has_content()),
         }
     }

@@ -2,7 +2,7 @@
 //! round-trip / fixpoint, parser totality, script combining, and the resolution-ready
 //! occurrence-site model.
 
-use mathmeander_surface::ast::{Expr, FracForm};
+use mathmeander_surface::ast::{Expr, ExprKind, FracForm};
 use mathmeander_surface::normalize::normalize_fresh;
 use mathmeander_surface::parser::parse;
 use mathmeander_surface::serializer::serialize;
@@ -12,8 +12,8 @@ use proptest::prelude::*;
 
 /// Pull the form + built-up decision from a surface whose root is a fraction.
 fn frac_of(s: &str) -> (FracForm, bool) {
-    match parse(s) {
-        Expr::Frac { num, den, form } => (form, Expr::frac_built_up(&num, &den, form)),
+    match parse(s).kind {
+        ExprKind::Frac { num, den, form } => (form, Expr::frac_built_up(&num, &den, form)),
         other => panic!("expected a fraction at the root of {s:?}, got {other:?}"),
     }
 }
@@ -76,25 +76,27 @@ fn canonical_surfaces_round_trip() {
 /// operators; this is not — it pins the numeric ladder.
 fn shape(s: &str) -> String {
     fn go(e: &Expr) -> String {
-        match e {
-            Expr::Empty => "∅".into(),
-            Expr::Number(n) | Expr::Ident(n) | Expr::Symbol(n) | Expr::Error(n) => n.clone(),
-            Expr::Group(x) => format!("({})", go(x)),
-            Expr::Call { head, args } => format!(
+        match &e.kind {
+            ExprKind::Empty => "∅".into(),
+            ExprKind::Number(n) | ExprKind::Ident(n) | ExprKind::Symbol(n) | ExprKind::Error(n) => {
+                n.clone()
+            }
+            ExprKind::Group(x) => format!("({})", go(x)),
+            ExprKind::Call { head, args } => format!(
                 "{}({})",
                 go(head),
                 args.iter().map(go).collect::<Vec<_>>().join(",")
             ),
-            Expr::Sup { base, exp } => format!("({}^{})", go(base), go(exp)),
-            Expr::Sub { base, sub } => format!("({}_{})", go(base), go(sub)),
-            Expr::Unary { op, operand } => format!("({}{})", op.as_str(), go(operand)),
-            Expr::Juxtapose(fs) => {
+            ExprKind::Sup { base, exp } => format!("({}^{})", go(base), go(exp)),
+            ExprKind::Sub { base, sub } => format!("({}_{})", go(base), go(sub)),
+            ExprKind::Unary { op, operand } => format!("({}{})", op.as_str(), go(operand)),
+            ExprKind::Juxtapose(fs) => {
                 format!("[{}]", fs.iter().map(go).collect::<Vec<_>>().join(" "))
             }
-            Expr::Frac { num, den, .. } => format!("({}/{})", go(num), go(den)),
-            Expr::Mul { lhs, rhs } => format!("({}*{})", go(lhs), go(rhs)),
-            Expr::Add { lhs, op, rhs } => format!("({}{}{})", go(lhs), op.as_str(), go(rhs)),
-            Expr::Rel { lhs, op, rhs } => format!("({}{}{})", go(lhs), op, go(rhs)),
+            ExprKind::Frac { num, den, .. } => format!("({}/{})", go(num), go(den)),
+            ExprKind::Mul { lhs, rhs } => format!("({}*{})", go(lhs), go(rhs)),
+            ExprKind::Add { lhs, op, rhs } => format!("({}{}{})", go(lhs), op.as_str(), go(rhs)),
+            ExprKind::Rel { lhs, op, rhs } => format!("({}{}{})", go(lhs), op, go(rhs)),
         }
     }
     go(&parse(s))
@@ -120,15 +122,15 @@ fn precedence_and_associativity_are_pinned_by_shape() {
 fn scripts_combine_on_the_base() {
     // sub then sup attach to the same base (not nested).
     assert!(matches!(
-        parse("x_i^2"),
-        Expr::Sup { base, .. } if matches!(*base, Expr::Sub { .. })
+        parse("x_i^2").kind,
+        ExprKind::Sup { base, .. } if matches!(base.kind, ExprKind::Sub { .. })
     ));
     assert!(matches!(
-        parse("x^2_i"),
-        Expr::Sub { base, .. } if matches!(*base, Expr::Sup { .. })
+        parse("x^2_i").kind,
+        ExprKind::Sub { base, .. } if matches!(base.kind, ExprKind::Sup { .. })
     ));
     // a script does not grab the following juxtaposed factor.
-    assert!(matches!(parse("x^2 y"), Expr::Juxtapose(_)));
+    assert!(matches!(parse("x^2 y").kind, ExprKind::Juxtapose(_)));
 }
 
 #[test]

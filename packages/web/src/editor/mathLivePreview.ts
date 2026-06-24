@@ -12,14 +12,22 @@
 //     colored (`math-src`) via a caret-local decoration — the live "math mode" feedback before the closing `$`.
 //   • Cost: the marked-span list is cached in plugin state and recomputed only on a doc edit, so a pure caret
 //     move does O(#math spans) + an O(run) open-region scan — not a full-document walk.
-import { Plugin, PluginKey, Selection, type EditorState } from 'prosemirror-state';
+import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from 'prosemirror-state';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { MathExpression } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { renderMathInto } from './renderMath';
+import {
+  type PathBox,
+  deepestPathAt,
+  docPosForSurfaceOffset,
+  sameArray,
+  singleClickCaretOffset,
+  systemRowStarts,
+} from './mathClickMap';
 import { openRegionStart, splitSystemRows, wholeDisplaySource } from './mathSyntax';
-import { isMathRuntimeReady, normalizeFresh } from './mathRuntime';
+import { isMathRuntimeReady, normalizeFresh, surfacePaths } from './mathRuntime';
 
 const MARK = editorSchema.marks.mathExpr;
 
@@ -32,6 +40,9 @@ interface Span {
   /** A co-equal SYSTEM (2-B): the per-row surfaces of a multi-line `$$…$$` (≥2 non-empty lines). When set,
    *  the widget renders an aligned stack of rows instead of one centered equation. */
   rows?: string[];
+  /** Parallel to `rows`: the doc position of each row's first source char (F3 precise click), accounting for
+   *  the skipped blank/leading lines so a clicked sub-term maps to the right row. Set iff `rows` is. */
+  rowStarts?: number[];
 }
 
 /** A block's source with `\n` per hard_break (a system's `$$…$$` is multi-line); null if it has a
@@ -82,7 +93,7 @@ function computeSpans(doc: PMNode): Span[] {
         to: contentStart + block.content.size,
         expr: displayExpr,
         display: true,
-        ...(rows.length >= 2 ? { rows } : {}),
+        ...(rows.length >= 2 ? { rows, rowStarts: systemRowStarts(src!, contentStart) } : {}),
       });
       return;
     }
@@ -111,11 +122,70 @@ function computeSpans(doc: PMNode): Span[] {
   return spans;
 }
 
+/** PRECISE CLICK (F3): if the click landed on a `data-path` sub-term (tagged by `toKatexDisplay`'s
+ *  `\htmlData`), map it to the source via `surfacePaths(rowSurface)` and place a selection. The spans
+ *  index the VERBATIM `rowSurface` the doc holds (each node carries its source range), so this is exact
+ *  for ANY input — no canonical-form guard. Single-click → a caret at the sub-term (for an operator/
+ *  structural node, just after its left operand — see `singleClickCaretOffset`); double-click → a
+ *  selection over the whole sub-term. `rowStart` is the doc position of the row's first surface char
+ *  (after `$$` for a single equation; `systemRowStarts[i]` for a system row). Returns false (caller
+ *  falls back to reveal-at-start) when the runtime is down, the click missed a tagged node, or the path
+ *  isn't found. */
+function precisePlace(
+  view: EditorView,
+  e: MouseEvent,
+  container: HTMLElement,
+  rowSurface: string,
+  rowStart: number,
+): boolean {
+  if (!isMathRuntimeReady()) return false;
+  // Resolve the click by GEOMETRY (smallest `data-path` box containing the point), NOT by
+  // `e.target.closest` — KaTeX script vlists stack an ancestor box over the script glyphs, so the
+  // event target there is the enclosing node, not the deeper script sub-term (`deepestPathAt`).
+  const boxes: PathBox[] = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-path]'),
+    (el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        path: el.dataset.path ?? '',
+        rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+      };
+    },
+  );
+  const hitPath = deepestPathAt(boxes, e.clientX, e.clientY);
+  if (hitPath == null) return false;
+  const want = hitPath.split('.').filter(Boolean).map(Number); // "" → [] (root)
+  const paths = surfacePaths(rowSurface);
+  const hit = paths.find((p) => sameArray(p.path, want));
+  if (!hit) return false;
+  const tr =
+    e.detail >= 2
+      ? view.state.tr.setSelection(
+          TextSelection.create(
+            view.state.doc,
+            docPosForSurfaceOffset(rowStart, rowSurface, hit.charSpan.start),
+            docPosForSurfaceOffset(rowStart, rowSurface, hit.charSpan.end),
+          ),
+        )
+      : view.state.tr.setSelection(
+          Selection.near(
+            view.state.doc.resolve(
+              docPosForSurfaceOffset(rowStart, rowSurface, singleClickCaretOffset(hit, paths)),
+            ),
+            1,
+          ),
+        );
+  view.dispatch(tr); // the selection moving into the block reveals the hidden source
+  view.focus();
+  return true;
+}
+
 /** Build the KaTeX widget DOM for a rendered span. INLINE (`display:false`): single click → caret beside (stays
  *  rendered, suppress flag); double click → caret just inside (reveal). DISPLAY (`display:true`, centered): the
- *  render stays ALWAYS visible, so a click just reveals the source for editing — caret at the source end
- *  (best-effort; precise click→sub-expression position is the deferred F3 capability). */
-function renderWidget(expr: MathExpression, display: boolean) {
+ *  render stays ALWAYS visible; a click maps to the precise sub-term (F3) — single → caret there, double →
+ *  select it — falling back to reveal-at-start off a tagged node. `spanFrom` is the source start (the block
+ *  content start, the position of the first `$`). */
+function renderWidget(expr: MathExpression, display: boolean, spanFrom: number) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = display ? 'math-render math-render-display' : 'math-render';
@@ -123,11 +193,16 @@ function renderWidget(expr: MathExpression, display: boolean) {
     renderMathInto(expr, el, { display });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      const pos = view.posAtDOM(el, 0);
       if (display) {
-        const sel = Selection.near(view.state.doc.resolve(pos), -1); // into the source (end) → reveal it
-        view.dispatch(view.state.tr.setSelection(sel));
-      } else if (e.detail >= 2) {
+        // A single display equation's surface starts right after the opening `$$` (spanFrom is the first `$`).
+        if (precisePlace(view, e, el, expr.surface_text ?? '', spanFrom + 2)) return;
+        const pos = view.posAtDOM(el, 0); // fallback: reveal the source (caret near start)
+        view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), -1)));
+        view.focus();
+        return;
+      }
+      const pos = view.posAtDOM(el, 0);
+      if (e.detail >= 2) {
         const sel = Selection.near(view.state.doc.resolve(pos + 1), 1); // just inside → reveal
         view.dispatch(view.state.tr.setSelection(sel));
       } else {
@@ -157,15 +232,19 @@ function transientRowExpr(surface: string): MathExpression {
 
 /** Build the widget DOM for a co-equal SYSTEM (2-B): each row rendered (KaTeX) in a `[relation | body]` grid,
  *  reusing the 2-A read-only `.equations` layout for visual consistency (`row_relation` gutter empty for now —
- *  the `&`-alignment override is deferred). The render stays ALWAYS visible; a click reveals the `$$…$$` source. */
-function renderSystemWidget(rows: string[]) {
+ *  the `&`-alignment override is deferred). The render stays ALWAYS visible; a click maps to the precise
+ *  sub-term of the clicked row (F3) — single → caret there, double → select it. Each row carries `data-row=i`
+ *  so the handler locates the row (and its surface) without DOM-index math. `rowStarts[i]` is the doc position
+ *  of `rows[i]`'s first char (from `systemRowStarts`, which accounts for skipped blank/leading lines). */
+function renderSystemWidget(rows: string[], rowStarts: number[]) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = 'math-render math-render-display equations';
     el.contentEditable = 'false';
-    for (const surface of rows) {
+    rows.forEach((surface, i) => {
       const row = document.createElement('span');
       row.className = 'row';
+      row.dataset.row = String(i);
       const rel = document.createElement('span');
       rel.className = 'row-relation';
       const body = document.createElement('span');
@@ -173,12 +252,20 @@ function renderSystemWidget(rows: string[]) {
       renderMathInto(transientRowExpr(surface), body, { display: true });
       row.append(rel, body);
       el.append(row);
-    }
+    });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      const pos = view.posAtDOM(el, 0);
-      const sel = Selection.near(view.state.doc.resolve(pos), -1); // into the source → reveal it for editing
-      view.dispatch(view.state.tr.setSelection(sel));
+      const rowEl = (e.target as HTMLElement | null)?.closest('[data-row]') as HTMLElement | null;
+      if (rowEl && el.contains(rowEl)) {
+        const rowIndex = Number(rowEl.dataset.row);
+        const rowStart = rowStarts[rowIndex];
+        // Scope the geometry search to the ROW element (each row is pathed from its own root, so the
+        // `data-path` values collide across rows — searching the whole widget would be ambiguous).
+        if (rowStart != null && precisePlace(view, e, rowEl, rows[rowIndex] ?? '', rowStart))
+          return;
+      }
+      const pos = view.posAtDOM(el, 0); // fallback: reveal the source (caret near start)
+      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), -1)));
       view.focus();
     });
     return el;
@@ -244,7 +331,9 @@ export const mathLivePreview = new Plugin<PluginState>({
           decos.push(
             Decoration.widget(
               span.to,
-              isSystem ? renderSystemWidget(span.rows!) : renderWidget(span.expr, true),
+              isSystem
+                ? renderSystemWidget(span.rows!, span.rowStarts ?? [])
+                : renderWidget(span.expr, true, span.from),
               {
                 side: 1,
                 marks: [],
@@ -261,7 +350,7 @@ export const mathLivePreview = new Plugin<PluginState>({
         if (touches && ps.suppress !== span.from) continue; // inline: reveal raw on touch
         decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
         decos.push(
-          Decoration.widget(span.from, renderWidget(span.expr, false), {
+          Decoration.widget(span.from, renderWidget(span.expr, false, span.from), {
             side: -1,
             // No marks: a widget defaults to inheriting the marks at its position, so for two ADJACENT `$…$`
             // spans the second equation's KaTeX would render INSIDE the first's `mathExpr` (`.math-src`) span

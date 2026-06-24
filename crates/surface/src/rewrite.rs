@@ -4,7 +4,7 @@
 //! is ever silently invalidated: an anchor that cannot be re-placed comes back `None`
 //! (the core marks that edge stale / to-review, never dropped — §6.1b).
 
-use crate::ast::Expr;
+use crate::ast::{Expr, ExprKind};
 use crate::normalize::parse_status;
 use crate::parser::parse;
 use crate::serializer::serialize_with_sites;
@@ -85,50 +85,54 @@ fn apply_edit(e: &Expr, edit: &SurfaceEdit) -> Expr {
 }
 
 fn rename_ident(e: &Expr, from: &str, to: &str) -> Expr {
+    // The rewritten tree is re-serialized then re-parsed (the canonical stored form), so the
+    // synthetic spans here never surface — `Expr::synthetic` keeps construction terse.
     let rec = |x: &Expr| Box::new(rename_ident(x, from, to));
-    match e {
-        Expr::Ident(s) if s == from => Expr::Ident(to.to_string()),
-        Expr::Empty | Expr::Number(_) | Expr::Ident(_) | Expr::Symbol(_) | Expr::Error(_) => {
-            e.clone()
-        }
-        Expr::Group(inner) => Expr::Group(rec(inner)),
-        Expr::Call { head, args } => Expr::Call {
+    match &e.kind {
+        ExprKind::Ident(s) if s == from => Expr::synthetic(ExprKind::Ident(to.to_string())),
+        ExprKind::Empty
+        | ExprKind::Number(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Symbol(_)
+        | ExprKind::Error(_) => e.clone(),
+        ExprKind::Group(inner) => Expr::synthetic(ExprKind::Group(rec(inner))),
+        ExprKind::Call { head, args } => Expr::synthetic(ExprKind::Call {
             head: rec(head),
             args: args.iter().map(|a| rename_ident(a, from, to)).collect(),
-        },
-        Expr::Sup { base, exp } => Expr::Sup {
+        }),
+        ExprKind::Sup { base, exp } => Expr::synthetic(ExprKind::Sup {
             base: rec(base),
             exp: rec(exp),
-        },
-        Expr::Sub { base, sub } => Expr::Sub {
+        }),
+        ExprKind::Sub { base, sub } => Expr::synthetic(ExprKind::Sub {
             base: rec(base),
             sub: rec(sub),
-        },
-        Expr::Unary { op, operand } => Expr::Unary {
+        }),
+        ExprKind::Unary { op, operand } => Expr::synthetic(ExprKind::Unary {
             op: *op,
             operand: rec(operand),
-        },
-        Expr::Juxtapose(fs) => {
-            Expr::Juxtapose(fs.iter().map(|f| rename_ident(f, from, to)).collect())
-        }
-        Expr::Frac { num, den, form } => Expr::Frac {
+        }),
+        ExprKind::Juxtapose(fs) => Expr::synthetic(ExprKind::Juxtapose(
+            fs.iter().map(|f| rename_ident(f, from, to)).collect(),
+        )),
+        ExprKind::Frac { num, den, form } => Expr::synthetic(ExprKind::Frac {
             num: rec(num),
             den: rec(den),
             form: *form,
-        },
-        Expr::Mul { lhs, rhs } => Expr::Mul {
+        }),
+        ExprKind::Mul { lhs, rhs } => Expr::synthetic(ExprKind::Mul {
             lhs: rec(lhs),
             rhs: rec(rhs),
-        },
-        Expr::Add { lhs, op, rhs } => Expr::Add {
+        }),
+        ExprKind::Add { lhs, op, rhs } => Expr::synthetic(ExprKind::Add {
             lhs: rec(lhs),
             op: *op,
             rhs: rec(rhs),
-        },
-        Expr::Rel { lhs, op, rhs } => Expr::Rel {
+        }),
+        ExprKind::Rel { lhs, op, rhs } => Expr::synthetic(ExprKind::Rel {
             lhs: rec(lhs),
             op: op.clone(),
             rhs: rec(rhs),
-        },
+        }),
     }
 }

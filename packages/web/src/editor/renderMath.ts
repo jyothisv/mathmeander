@@ -5,7 +5,7 @@
 // failed to load, math degrades to source-only (verbatim, no KaTeX) rather than crashing.
 import katex from 'katex';
 import type { MathExpression } from '@mathmeander/schema';
-import { toKatex, isMathRuntimeReady } from './mathRuntime';
+import { toKatex, toKatexDisplay, isMathRuntimeReady } from './mathRuntime';
 
 /** Render `expr` into `into` (cleared first). `display` = block (centered) vs inline. */
 export function renderMathInto(
@@ -35,9 +35,18 @@ export function renderMathInto(
     return;
   }
 
-  katex.render(toKatex(text), into, {
+  // DISPLAY (incl. system rows) uses the `\htmlData`-tagged transpile so the DOM carries a `data-path`
+  // per sub-term (precise click, F3); inline keeps the cheaper untagged transpile. `trust` is SCOPED to
+  // exactly the one command we emit (`\htmlData`) and ONLY on the display path — inline emits no trusted
+  // command at all, so it gets `trust:false` (zero attack surface). Defense-in-depth atop the surface
+  // emitter's escaping: even a future escaping gap or a new emitter command can't become an injection
+  // vector (KaTeX rejects `\href`/`\url`/`\includegraphics`/etc.). `strict:false` silences its warning
+  // on the custom data attr.
+  katex.render(opts.display ? toKatexDisplay(text) : toKatex(text), into, {
     displayMode: opts.display,
     throwOnError: false, // defense-in-depth; the surface transpile already escapes error fragments
+    trust: opts.display ? (ctx) => ctx.command === '\\htmlData' : false,
+    strict: false,
   });
 
   // Partially parsed: it DOES render (the transpiler shows the bad fragments verbatim), but flag the partial

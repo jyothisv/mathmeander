@@ -3,13 +3,19 @@
 //! recovered as `Expr::Error` (preserved verbatim, §2.2) and reported as `ParseError`
 //! diagnostics carrying a `ByteSpan`. Precedence and the slash/fraction rule are exactly
 //! the pinned table; see `grammar.rs`.
+//!
+//! Every node is stamped with the `CharSpan` (code points) of the VERBATIM source it was
+//! parsed from — the span runs from the first consumed token's start to the last consumed
+//! token's end, so it EXCLUDES surrounding whitespace and INCLUDES the delimiters a node owns
+//! (a `Group`'s parens, a `Call`'s `(...)`). This is what makes precise click / sub-expression
+//! addressing robust regardless of how the user typed the surface (`path::verbatim_paths`).
 
-use crate::ast::{AddOp, Expr, FracForm};
+use crate::ast::{AddOp, Expr, ExprKind, FracForm};
 use crate::grammar::{
     self, BP_ADD, BP_DIV, BP_JUXTAPOSE, BP_MUL, BP_REL, BP_UNARY_OPERAND, FRAC_HEAD, MAX_DEPTH,
 };
 use crate::lexer::{Tok, Token, lex};
-use crate::span::ByteSpan;
+use crate::span::{ByteSpan, CharSpan};
 
 /// A recovered parse problem (the parser is total; this is a diagnostic, not a failure).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,11 +31,25 @@ pub fn parse(input: &str) -> Expr {
 
 /// Parse `input` totally, returning the tree and any recovered-error diagnostics.
 pub fn parse_with_diagnostics(input: &str) -> (Expr, Vec<ParseError>) {
+    // Prefix map byte offset → char count (code points before that byte), so token `ByteSpan`s
+    // convert to wire `CharSpan`s in O(1). Token boundaries are always char boundaries, so only
+    // boundary lookups matter; interior bytes carry the leading char's count (never read).
+    let mut byte_to_char = vec![0u32; input.len() + 1];
+    let mut chars = 0u32;
+    for (b, c) in input.char_indices() {
+        for slot in &mut byte_to_char[b..b + c.len_utf8()] {
+            *slot = chars;
+        }
+        chars += 1;
+    }
+    byte_to_char[input.len()] = chars;
+
     let mut p = Parser {
         toks: lex(input),
         pos: 0,
         diags: Vec::new(),
         depth: 0,
+        byte_to_char,
     };
     let mut e = p.parse_expr(0);
     // Absorb any leftover tokens (e.g. an unmatched ')') as recovered fragments. Stray
@@ -41,7 +61,7 @@ pub fn parse_with_diagnostics(input: &str) -> (Expr, Vec<ParseError>) {
                 let span = p.peek_span();
                 p.bump();
                 p.diag("unexpected close/comma", span);
-                Expr::Error(tok_text(&tok))
+                Expr::new(ExprKind::Error(tok_text(&tok)), p.cspan(span))
             }
             _ => p.parse_prefix(),
         };
@@ -57,6 +77,8 @@ struct Parser {
     /// Current recursive-descent depth (nesting). Bounded by `MAX_DEPTH` so untrusted deep
     /// input can never overflow the stack (an abort, not a catchable panic).
     depth: u32,
+    /// `byte_to_char[b]` = number of code points before byte `b` (for `ByteSpan → CharSpan`).
+    byte_to_char: Vec<u32>,
 }
 
 impl Parser {
@@ -86,6 +108,52 @@ impl Parser {
         });
     }
 
+    // ── Source-span bookkeeping ──────────────────────────────────────────────
+
+    /// Byte offset of the next token to consume (a node's span START is captured here, before
+    /// its first token is bumped). At EOF there is no token → use the end of the last one.
+    fn mark(&self) -> usize {
+        self.toks
+            .get(self.pos)
+            .map(|t| t.span.start)
+            .unwrap_or_else(|| self.last_end())
+    }
+
+    /// Byte offset just past the last CONSUMED token (a node's span END, read after it's built).
+    fn last_end(&self) -> usize {
+        if self.pos == 0 {
+            0
+        } else {
+            self.toks[self.pos - 1].span.end
+        }
+    }
+
+    fn ch(&self, byte: usize) -> u32 {
+        self.byte_to_char.get(byte).copied().unwrap_or(0)
+    }
+
+    fn cspan(&self, b: ByteSpan) -> CharSpan {
+        CharSpan::new(self.ch(b.start), self.ch(b.end))
+    }
+
+    /// The span of a node whose first token started at byte `start` and whose last token has
+    /// just been consumed (`start .. last_end()`, in code points).
+    fn node_span(&self, start: usize) -> CharSpan {
+        CharSpan::new(self.ch(start), self.ch(self.last_end()))
+    }
+
+    /// Like `node_span`, but the start is an already-computed CHAR offset (a left operand's
+    /// `span.start`) — used by the Pratt folds, which extend a running `left`.
+    fn span_from_char(&self, start_char: u32) -> CharSpan {
+        CharSpan::new(start_char, self.ch(self.last_end()))
+    }
+
+    /// A zero-width span at byte `byte` (for `Empty`/`Error` recovery nodes that consume nothing).
+    fn zero_at(&self, byte: usize) -> CharSpan {
+        let c = self.ch(byte);
+        CharSpan::new(c, c)
+    }
+
     // ── Pratt core ───────────────────────────────────────────────────────────
 
     fn parse_expr(&mut self, min_bp: u8) -> Expr {
@@ -98,7 +166,7 @@ impl Parser {
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
             self.diag("expression nesting too deep", self.peek_span());
-            return Expr::Error(String::new());
+            return Expr::new(ExprKind::Error(String::new()), self.zero_at(self.mark()));
         }
         let mut left = self.parse_prefix();
         // `chain` bounds left-associative SPINES (`1+1+…`, built by this loop, not by
@@ -138,68 +206,91 @@ impl Parser {
     }
 
     fn parse_infix(&mut self, left: Expr) -> Expr {
+        // The whole infix node spans from the left operand's start to the RHS's end.
+        let start = left.span.start;
         match self.peek().cloned() {
             Some(Tok::Slash) => {
                 self.bump();
-                let den = self.parse_expr(BP_DIV);
-                Expr::Frac {
-                    num: Box::new(left),
-                    den: Box::new(den),
-                    form: FracForm::Slash,
-                }
+                let den = Box::new(self.parse_expr(BP_DIV));
+                Expr::new(
+                    ExprKind::Frac {
+                        num: Box::new(left),
+                        den,
+                        form: FracForm::Slash,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::SlashSlash) => {
                 self.bump();
-                let den = self.parse_expr(BP_DIV);
-                Expr::Frac {
-                    num: Box::new(left),
-                    den: Box::new(den),
-                    form: FracForm::SlashSlash,
-                }
+                let den = Box::new(self.parse_expr(BP_DIV));
+                Expr::new(
+                    ExprKind::Frac {
+                        num: Box::new(left),
+                        den,
+                        form: FracForm::SlashSlash,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::Star) => {
                 self.bump();
-                let rhs = self.parse_expr(BP_MUL);
-                Expr::Mul {
-                    lhs: Box::new(left),
-                    rhs: Box::new(rhs),
-                }
+                let rhs = Box::new(self.parse_expr(BP_MUL));
+                Expr::new(
+                    ExprKind::Mul {
+                        lhs: Box::new(left),
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::Plus) => {
                 self.bump();
-                let rhs = self.parse_expr(BP_ADD);
-                Expr::Add {
-                    lhs: Box::new(left),
-                    op: AddOp::Plus,
-                    rhs: Box::new(rhs),
-                }
+                let rhs = Box::new(self.parse_expr(BP_ADD));
+                Expr::new(
+                    ExprKind::Add {
+                        lhs: Box::new(left),
+                        op: AddOp::Plus,
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::Minus) => {
                 self.bump();
-                let rhs = self.parse_expr(BP_ADD);
-                Expr::Add {
-                    lhs: Box::new(left),
-                    op: AddOp::Minus,
-                    rhs: Box::new(rhs),
-                }
+                let rhs = Box::new(self.parse_expr(BP_ADD));
+                Expr::new(
+                    ExprKind::Add {
+                        lhs: Box::new(left),
+                        op: AddOp::Minus,
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::Rel(op)) => {
                 self.bump();
-                let rhs = self.parse_expr(BP_REL);
-                Expr::Rel {
-                    lhs: Box::new(left),
-                    op,
-                    rhs: Box::new(rhs),
-                }
+                let rhs = Box::new(self.parse_expr(BP_REL));
+                Expr::new(
+                    ExprKind::Rel {
+                        lhs: Box::new(left),
+                        op,
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
             }
             Some(Tok::Name(s)) if grammar::is_word_relation(&s) => {
                 self.bump();
-                let rhs = self.parse_expr(BP_REL);
-                Expr::Rel {
-                    lhs: Box::new(left),
-                    op: s,
-                    rhs: Box::new(rhs),
-                }
+                let rhs = Box::new(self.parse_expr(BP_REL));
+                Expr::new(
+                    ExprKind::Rel {
+                        lhs: Box::new(left),
+                        op: s,
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
             }
             // value-start → juxtaposition: parse one more factor and append.
             Some(Tok::Num(_) | Tok::Name(_) | Tok::LParen | Tok::Sym(_)) => {
@@ -216,20 +307,29 @@ impl Parser {
     /// The left operand of an expression: a unary sign (whose operand is a sub-expression
     /// up to `BP_DIV`, so `-x^2` = `-(x^2)` and `-a/b` = `(-a)/b`) or a scripted primary.
     fn parse_prefix(&mut self) -> Expr {
+        let start = self.mark();
         match self.peek() {
             Some(Tok::Plus) => {
                 self.bump();
-                Expr::Unary {
-                    op: AddOp::Plus,
-                    operand: Box::new(self.parse_expr(BP_UNARY_OPERAND)),
-                }
+                let operand = Box::new(self.parse_expr(BP_UNARY_OPERAND));
+                Expr::new(
+                    ExprKind::Unary {
+                        op: AddOp::Plus,
+                        operand,
+                    },
+                    self.node_span(start),
+                )
             }
             Some(Tok::Minus) => {
                 self.bump();
-                Expr::Unary {
-                    op: AddOp::Minus,
-                    operand: Box::new(self.parse_expr(BP_UNARY_OPERAND)),
-                }
+                let operand = Box::new(self.parse_expr(BP_UNARY_OPERAND));
+                Expr::new(
+                    ExprKind::Unary {
+                        op: AddOp::Minus,
+                        operand,
+                    },
+                    self.node_span(start),
+                )
             }
             _ => self.parse_postfix(),
         }
@@ -251,18 +351,28 @@ impl Parser {
                 Some(Tok::Caret) => {
                     self.bump();
                     chain += 1;
-                    base = Expr::Sup {
-                        base: Box::new(base),
-                        exp: Box::new(self.parse_script_operand()),
-                    };
+                    let exp = Box::new(self.parse_script_operand());
+                    let span = self.span_from_char(base.span.start);
+                    base = Expr::new(
+                        ExprKind::Sup {
+                            base: Box::new(base),
+                            exp,
+                        },
+                        span,
+                    );
                 }
                 Some(Tok::Underscore) => {
                     self.bump();
                     chain += 1;
-                    base = Expr::Sub {
-                        base: Box::new(base),
-                        sub: Box::new(self.parse_script_operand()),
-                    };
+                    let sub = Box::new(self.parse_script_operand());
+                    let span = self.span_from_char(base.span.start);
+                    base = Expr::new(
+                        ExprKind::Sub {
+                            base: Box::new(base),
+                            sub,
+                        },
+                        span,
+                    );
                 }
                 _ => break,
             }
@@ -274,20 +384,29 @@ impl Parser {
     /// (`x^-1`, `x^(a+b)`, `a_n`). It does NOT grab juxtaposition or its own trailing
     /// scripts, so chaining stays in `parse_postfix`.
     fn parse_script_operand(&mut self) -> Expr {
+        let start = self.mark();
         match self.peek() {
             Some(Tok::Plus) => {
                 self.bump();
-                Expr::Unary {
-                    op: AddOp::Plus,
-                    operand: Box::new(self.parse_atom()),
-                }
+                let operand = Box::new(self.parse_atom());
+                Expr::new(
+                    ExprKind::Unary {
+                        op: AddOp::Plus,
+                        operand,
+                    },
+                    self.node_span(start),
+                )
             }
             Some(Tok::Minus) => {
                 self.bump();
-                Expr::Unary {
-                    op: AddOp::Minus,
-                    operand: Box::new(self.parse_atom()),
-                }
+                let operand = Box::new(self.parse_atom());
+                Expr::new(
+                    ExprKind::Unary {
+                        op: AddOp::Minus,
+                        operand,
+                    },
+                    self.node_span(start),
+                )
             }
             _ => self.parse_atom(),
         }
@@ -295,12 +414,13 @@ impl Parser {
 
     /// A primary: group, number, name (or call / `frac`), symbol, or recovered error.
     fn parse_atom(&mut self) -> Expr {
+        let start = self.mark();
         match self.peek().cloned() {
-            None => Expr::Empty,
+            None => Expr::new(ExprKind::Empty, self.zero_at(start)),
             Some(Tok::LParen) => {
                 self.bump();
                 let inner = if matches!(self.peek(), Some(Tok::RParen)) {
-                    Expr::Empty
+                    Expr::new(ExprKind::Empty, self.zero_at(self.mark()))
                 } else {
                     self.parse_expr(0)
                 };
@@ -309,50 +429,58 @@ impl Parser {
                 } else {
                     self.diag("unclosed '('", self.peek_span());
                 }
-                Expr::Group(Box::new(inner))
+                Expr::new(ExprKind::Group(Box::new(inner)), self.node_span(start))
             }
             Some(Tok::Num(s)) => {
                 self.bump();
-                Expr::Number(s)
+                Expr::new(ExprKind::Number(s), self.node_span(start))
             }
             Some(Tok::Name(s)) => {
                 self.bump();
                 // A name immediately followed by '(' is a call (or `frac(..)`).
                 if matches!(self.peek(), Some(Tok::LParen)) {
+                    let head_span = self.node_span(start); // just the name, before its args
                     let args = self.parse_call_args();
                     if s == FRAC_HEAD && args.len() == 2 {
                         let mut it = args.into_iter();
-                        let num = it.next().unwrap_or(Expr::Empty);
-                        let den = it.next().unwrap_or(Expr::Empty);
-                        Expr::Frac {
-                            num: Box::new(num),
-                            den: Box::new(den),
-                            form: FracForm::FracCall,
-                        }
+                        let num = Box::new(
+                            it.next()
+                                .unwrap_or_else(|| Expr::synthetic(ExprKind::Empty)),
+                        );
+                        let den = Box::new(
+                            it.next()
+                                .unwrap_or_else(|| Expr::synthetic(ExprKind::Empty)),
+                        );
+                        Expr::new(
+                            ExprKind::Frac {
+                                num,
+                                den,
+                                form: FracForm::FracCall,
+                            },
+                            self.node_span(start),
+                        )
                     } else {
-                        Expr::Call {
-                            head: Box::new(Expr::Ident(s)),
-                            args,
-                        }
+                        let head = Box::new(Expr::new(ExprKind::Ident(s), head_span));
+                        Expr::new(ExprKind::Call { head, args }, self.node_span(start))
                     }
                 } else {
-                    Expr::Ident(s)
+                    Expr::new(ExprKind::Ident(s), self.node_span(start))
                 }
             }
             Some(Tok::Sym(s)) => {
                 self.bump();
-                Expr::Symbol(s)
+                Expr::new(ExprKind::Symbol(s), self.node_span(start))
             }
             // Terminators belong to an enclosing group/call/arg-list: yield Empty WITHOUT
             // consuming (e.g. a missing operator RHS), so the enclosing `)` is not stolen.
             // A genuinely top-level stray terminator is consumed by the leftover loop.
-            Some(Tok::RParen | Tok::Comma) => Expr::Empty,
+            Some(Tok::RParen | Tok::Comma) => Expr::new(ExprKind::Empty, self.zero_at(start)),
             // A stray prefix operator where a value was expected → recover (consume it).
             Some(other) => {
                 let span = self.peek_span();
                 self.bump();
                 self.diag(format!("unexpected {other:?}"), span);
-                Expr::Error(tok_text(&other))
+                Expr::new(ExprKind::Error(tok_text(&other)), self.cspan(span))
             }
         }
     }
@@ -390,25 +518,31 @@ impl Parser {
     }
 }
 
-/// Combine two expressions by juxtaposition, flattening and absorbing `Empty`.
+/// Combine two expressions by juxtaposition, flattening and absorbing `Empty`. The resulting
+/// `Juxtapose` node spans from the first factor's start to the last factor's end (a free
+/// function, so it derives its span from the children's already-recorded spans).
 fn juxtapose(left: Expr, right: Expr) -> Expr {
-    match (left, right) {
-        (Expr::Empty, r) => r,
-        (l, Expr::Empty) => l,
-        (Expr::Juxtapose(mut fs), Expr::Juxtapose(rs)) => {
-            fs.extend(rs);
-            Expr::Juxtapose(fs)
-        }
-        (Expr::Juxtapose(mut fs), r) => {
-            fs.push(r);
-            Expr::Juxtapose(fs)
-        }
-        (l, Expr::Juxtapose(rs)) => {
-            let mut fs = vec![l];
-            fs.extend(rs);
-            Expr::Juxtapose(fs)
-        }
-        (l, r) => Expr::Juxtapose(vec![l, r]),
+    if matches!(left.kind, ExprKind::Empty) {
+        return right;
+    }
+    if matches!(right.kind, ExprKind::Empty) {
+        return left;
+    }
+    let mut fs = into_factors(left);
+    fs.extend(into_factors(right));
+    let span = CharSpan::new(
+        fs.first().map(|f| f.span.start).unwrap_or(0),
+        fs.last().map(|f| f.span.end).unwrap_or(0),
+    );
+    Expr::new(ExprKind::Juxtapose(fs), span)
+}
+
+/// Flatten a node into juxtaposition factors: a `Juxtapose` spreads into its factors (each
+/// keeps its own span); anything else is a single factor (keeping its span).
+fn into_factors(e: Expr) -> Vec<Expr> {
+    match e.kind {
+        ExprKind::Juxtapose(v) => v,
+        kind => vec![Expr { kind, span: e.span }],
     }
 }
 

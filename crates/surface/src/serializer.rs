@@ -6,7 +6,7 @@
 //! identifier atoms in the canonical text — the coarse, resolution-ready occurrence model
 //! the core turns into edges (§6.1b) and that sub-term resolution refines later (§14).
 
-use crate::ast::{Expr, FracForm};
+use crate::ast::{Expr, ExprKind, FracForm};
 use crate::span::CharSpan;
 
 /// An identifier occurrence in a canonical surface: its name and char-span. Coarse by
@@ -96,17 +96,20 @@ fn fuses(a: char, b: char) -> bool {
     two_char_op || ident_run || number_run
 }
 
+/// Emit `e`'s canonical text into `out`. (Sub-expression addressing no longer rides this walk —
+/// precise click reads each node's verbatim `Expr::span` via `path::verbatim_paths`; this stays
+/// the pure canonical serializer + occurrence-site collector.)
 fn emit(e: &Expr, out: &mut Out) {
-    match e {
-        Expr::Empty => {}
-        Expr::Number(s) | Expr::Symbol(s) | Expr::Error(s) => out.push(s),
-        Expr::Ident(s) => out.push_ident(s),
-        Expr::Group(inner) => {
+    match &e.kind {
+        ExprKind::Empty => {}
+        ExprKind::Number(s) | ExprKind::Symbol(s) | ExprKind::Error(s) => out.push(s),
+        ExprKind::Ident(s) => out.push_ident(s),
+        ExprKind::Group(inner) => {
             out.push("(");
             emit(inner, out);
             out.push(")");
         }
-        Expr::Call { head, args } => {
+        ExprKind::Call { head, args } => {
             emit(head, out);
             out.push("(");
             for (i, a) in args.iter().enumerate() {
@@ -117,21 +120,21 @@ fn emit(e: &Expr, out: &mut Out) {
             }
             out.push(")");
         }
-        Expr::Sup { base, exp } => {
+        ExprKind::Sup { base, exp } => {
             emit(base, out);
             out.push("^");
             emit(exp, out);
         }
-        Expr::Sub { base, sub } => {
+        ExprKind::Sub { base, sub } => {
             emit(base, out);
             out.push("_");
             emit(sub, out);
         }
-        Expr::Unary { op, operand } => {
+        ExprKind::Unary { op, operand } => {
             out.push(op.as_str());
             emit(operand, out);
         }
-        Expr::Juxtapose(fs) => {
+        ExprKind::Juxtapose(fs) => {
             for (i, f) in fs.iter().enumerate() {
                 if i > 0 {
                     out.push(" ");
@@ -139,7 +142,7 @@ fn emit(e: &Expr, out: &mut Out) {
                 emit(f, out);
             }
         }
-        Expr::Frac { num, den, form } => match form {
+        ExprKind::Frac { num, den, form } => match form {
             FracForm::Slash => {
                 emit(num, out);
                 out.push("/");
@@ -158,19 +161,19 @@ fn emit(e: &Expr, out: &mut Out) {
                 out.push(")");
             }
         },
-        Expr::Mul { lhs, rhs } => {
+        ExprKind::Mul { lhs, rhs } => {
             emit(lhs, out);
             out.push(" * ");
             emit(rhs, out);
         }
-        Expr::Add { lhs, op, rhs } => {
+        ExprKind::Add { lhs, op, rhs } => {
             emit(lhs, out);
             out.push(" ");
             out.push(op.as_str());
             out.push(" ");
             emit(rhs, out);
         }
-        Expr::Rel { lhs, op, rhs } => {
+        ExprKind::Rel { lhs, op, rhs } => {
             emit(lhs, out);
             out.push(" ");
             out.push(op);
