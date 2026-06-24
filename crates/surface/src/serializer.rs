@@ -6,7 +6,7 @@
 //! identifier atoms in the canonical text — the coarse, resolution-ready occurrence model
 //! the core turns into edges (§6.1b) and that sub-term resolution refines later (§14).
 
-use crate::ast::{Expr, ExprKind, FracForm};
+use crate::ast::{Expr, ExprKind, FracForm, MulOp};
 use crate::span::CharSpan;
 
 /// An identifier occurrence in a canonical surface: its name and char-span. Coarse by
@@ -103,6 +103,12 @@ fn emit(e: &Expr, out: &mut Out) {
     match &e.kind {
         ExprKind::Empty => {}
         ExprKind::Number(s) | ExprKind::Symbol(s) | ExprKind::Error(s) => out.push(s),
+        // A `"…"` text literal round-trips with its quotes (content has no `"` — see the lexer).
+        ExprKind::Text(s) => {
+            out.push("\"");
+            out.push(s);
+            out.push("\"");
+        }
         ExprKind::Ident(s) => out.push_ident(s),
         ExprKind::Group(inner) => {
             out.push("(");
@@ -161,9 +167,12 @@ fn emit(e: &Expr, out: &mut Out) {
                 out.push(")");
             }
         },
-        ExprKind::Mul { lhs, rhs } => {
+        ExprKind::Mul { lhs, op, rhs } => {
             emit(lhs, out);
-            out.push(" * ");
+            out.push(match op {
+                MulOp::Cdot => " * ",
+                MulOp::Cross => " times ",
+            });
             emit(rhs, out);
         }
         ExprKind::Add { lhs, op, rhs } => {
@@ -211,6 +220,14 @@ mod tests {
         for a in 0x21u8..=0x7e {
             for b in 0x21u8..=0x7e {
                 let (a, b) = (a as char, b as char);
+                // `"` opens a DELIMITED string that consumes following chars (a space inside changes
+                // its content), so the "insert a space" probe spuriously flags it as fusing. Strings
+                // aren't maximal-munch fusions — `fuses` doesn't model them — and the serializer always
+                // emits a Text node as a MATCHED `"…"` pair, never a bare `"` adjoining other content,
+                // so the parse∘serialize fixpoint holds regardless. Skip the string-delimiter opener.
+                if a == '"' {
+                    continue;
+                }
                 // A space is whitespace-skipped, so `separated` is the no-fusion baseline; if
                 // adjacency changes the token stream, the lexer munched across the boundary.
                 let lexer_fuses = kinds(&format!("{a}{b}")) != kinds(&format!("{a} {b}"));

@@ -5,21 +5,10 @@
 //! (full LaTeX parity is a non-goal; the exotic tail is the core's `original_input` +
 //! `parse_status` escape hatch, §6.3a).
 
-use crate::ast::{Expr, ExprKind};
+use crate::ast::{Expr, ExprKind, MulOp};
+use crate::dictionary::{FUNCTIONS, NAMES, blackboard};
 use crate::parser::parse;
 use crate::path::StructuralPath;
-
-/// Names shared by both directions: `mathmeander` name ⇔ LaTeX macro (without backslash).
-/// Greek + a few letterlike/big operators. Anything else passes through as a plain name.
-const NAMES: &[&str] = &[
-    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
-    "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau", "phi", "chi", "psi", "omega", "Gamma",
-    "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Phi", "Psi", "Omega", "infty", "sum", "prod",
-    "int", "nabla", "partial",
-];
-
-/// Function names exported as LaTeX operators (`\sin`, …) for nicer rendering.
-const FUNCTIONS: &[&str] = &["sin", "cos", "tan", "log", "ln", "exp", "lim", "max", "min"];
 
 /// Relation token (mathmeander) ⇒ LaTeX. The reverse drives import.
 fn rel_to_latex(op: &str) -> &str {
@@ -91,8 +80,15 @@ fn emit_inner(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
         // input), so they MUST be escaped before going into a LaTeX/KaTeX string — otherwise
         // a crafted `\`/`{`/`$` is a KaTeX-injection / render-break vector (matches the
         // XML-escaping the MathML path already does, render.rs). (\htmlData also needs trust.)
-        ExprKind::Symbol(s) | ExprKind::Error(s) => out.push_str(&latex_escape(s)),
+        ExprKind::Symbol(s) => out.push_str(&symbol_to_latex(s)),
+        ExprKind::Error(s) => out.push_str(&latex_escape(s)),
         ExprKind::Ident(name) => out.push_str(&ident_to_latex(name)),
+        // A `"…"` text literal → upright `\text{…}`; content is arbitrary user text, so escape it.
+        ExprKind::Text(s) => {
+            out.push_str("\\text{");
+            out.push_str(&latex_escape(s));
+            out.push('}');
+        }
         ExprKind::Group(inner) => {
             out.push_str("\\left(");
             emit(inner, &path.child(0), out, tag);
@@ -106,6 +102,18 @@ fn emit_inner(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
                     ("bb", [x]) => return wrap_macro(out, "\\mathbb", x, path, tag),
                     ("frak", [x]) => return wrap_macro(out, "\\mathfrak", x, path, tag),
                     ("bold" | "bf", [x]) => return wrap_macro(out, "\\mathbf", x, path, tag),
+                    // `cases(row0, row1, …)` → the piecewise environment (args are rows; head elided).
+                    ("cases", _) => {
+                        out.push_str("\\begin{cases}");
+                        for (i, a) in args.iter().enumerate() {
+                            if i > 0 {
+                                out.push_str(" \\\\ ");
+                            }
+                            emit(a, &path.child(1 + i), out, tag);
+                        }
+                        out.push_str("\\end{cases}");
+                        return;
+                    }
                     _ => {}
                 }
             }
@@ -156,9 +164,12 @@ fn emit_inner(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
                 emit(den, &path.child(1), out, tag);
             }
         }
-        ExprKind::Mul { lhs, rhs } => {
+        ExprKind::Mul { lhs, op, rhs } => {
             emit(lhs, &path.child(0), out, tag);
-            out.push_str(" \\cdot ");
+            out.push_str(match op {
+                MulOp::Cdot => " \\cdot ",
+                MulOp::Cross => " \\times ",
+            });
             emit(rhs, &path.child(1), out, tag);
         }
         ExprKind::Add { lhs, op, rhs } => {
@@ -232,12 +243,24 @@ fn latex_escape(s: &str) -> String {
 }
 
 fn ident_to_latex(name: &str) -> String {
-    if NAMES.contains(&name) || FUNCTIONS.contains(&name) {
+    if let Some(letter) = blackboard(name) {
+        // Blackboard shorthand: `RR` → `\mathbb{R}` (NOT `\RR`, which isn't a macro).
+        format!("\\mathbb{{{letter}}}")
+    } else if NAMES.contains(&name) || FUNCTIONS.contains(&name) {
         format!("\\{name}")
     } else {
         // A plain identifier: `[A-Za-z]` + folded combining marks (no LaTeX-special chars), so this is
         // byte-identical — escaped defensively to keep the no-injection guarantee mechanical, not by-comment.
         latex_escape(name)
+    }
+}
+
+/// A `Symbol`'s LaTeX. Most pass through `latex_escape` (so `{`/`}` → `\{`/`\}`); `|` becomes
+/// `\mid` for proper set-builder/divides spacing (Typst's `{ x | P }`).
+fn symbol_to_latex(s: &str) -> String {
+    match s {
+        "|" => "\\mid".to_string(),
+        _ => latex_escape(s),
     }
 }
 
@@ -337,7 +360,13 @@ fn translate_macro(chars: &[char], i: &mut usize, out: &mut String) {
         "mathbb" => wrap_in(chars, i, out, "bb"),
         "mathfrak" => wrap_in(chars, i, out, "frak"),
         "mathbf" | "boldsymbol" => wrap_in(chars, i, out, "bold"),
-        "mathrm" | "operatorname" | "text" => {
+        "text" => {
+            // `\text{…}` → a `"…"` text literal (round-trips our `Text` node through LaTeX).
+            out.push('"');
+            read_group(chars, i, out);
+            out.push('"');
+        }
+        "mathrm" | "operatorname" => {
             // drop the styling wrapper, keep the content
             read_group(chars, i, out);
         }
@@ -353,7 +382,8 @@ fn translate_macro(chars: &[char], i: &mut usize, out: &mut String) {
                 *i += 1;
             }
         }
-        "cdot" | "times" | "ast" => out.push('*'),
+        "cdot" | "ast" => out.push('*'),
+        "times" => out.push_str(" times "), // import × as the product operator-word (not `·`)
         "leq" | "le" => out.push_str("<="),
         "geq" | "ge" => out.push_str(">="),
         "neq" | "ne" => out.push_str("!="),
@@ -364,9 +394,87 @@ fn translate_macro(chars: &[char], i: &mut usize, out: &mut String) {
         "notin" => out.push_str(" notin "),
         "subset" => out.push_str(" subset "),
         "subseteq" => out.push_str(" subseteq "),
+        "begin" => {
+            // `\begin{cases} r0 \\ r1 … \end{cases}` → `cases(r0, r1, …)`. Other environments
+            // degrade to their name (lenient — full env parity is a non-goal §6.3a).
+            skip_spaces(chars, i);
+            let env = read_brace_name(chars, i);
+            if env == "cases" {
+                out.push_str("cases(");
+                translate_cases_body(chars, i, out);
+                out.push(')');
+            } else {
+                out.push_str(&env);
+            }
+        }
+        "end" => {
+            // A stray `\end` (no matching `\begin` reached here) — consume its `{name}`, emit nothing.
+            skip_spaces(chars, i);
+            let _ = read_brace_name(chars, i);
+        }
         // Known names map to themselves (mathmeander name == macro name); unknown macros
         // degrade leniently to their name (a plain identifier).
         _ => out.push_str(&name),
+    }
+}
+
+/// Translate a `\begin{cases}` body into `cases(…)` ARGS: rows split on `\\` (→ `, `), column
+/// separators `&` dropped (alignment isn't modeled yet). Consumes the closing `\end{…}`. Total.
+fn translate_cases_body(chars: &[char], i: &mut usize, out: &mut String) {
+    while *i < chars.len() {
+        match chars[*i] {
+            '\\' => {
+                if chars[*i..].starts_with(&['\\', 'e', 'n', 'd']) {
+                    *i += 4; // past `\end`
+                    skip_spaces(chars, i);
+                    let _ = read_brace_name(chars, i); // `{cases}`
+                    return;
+                }
+                if *i + 1 < chars.len() && chars[*i + 1] == '\\' {
+                    out.push_str(", "); // `\\` row separator
+                    *i += 2;
+                    continue;
+                }
+                translate_macro(chars, i, out);
+            }
+            '{' => {
+                *i += 1;
+                out.push('(');
+                translate(chars, i, out, Some('}'));
+                if *i < chars.len() && chars[*i] == '}' {
+                    *i += 1;
+                }
+                out.push(')');
+            }
+            '}' => *i += 1, // stray close
+            '&' => *i += 1, // alignment column — dropped (not modeled)
+            '~' => {
+                out.push(' ');
+                *i += 1;
+            }
+            c => {
+                out.push(c);
+                *i += 1;
+            }
+        }
+    }
+}
+
+/// Read a `{name}` group (e.g. after `\begin`/`\end`), returning `name` and consuming through `}`.
+fn read_brace_name(chars: &[char], i: &mut usize) -> String {
+    if *i < chars.len() && chars[*i] == '{' {
+        *i += 1;
+        let start = *i;
+        while *i < chars.len() && chars[*i] != '}' {
+            *i += 1;
+        }
+        let name: String = chars[start..*i].iter().collect();
+        if *i < chars.len() {
+            *i += 1; // consume `}`
+        }
+        name
+    } else {
+        String::new()
     }
 }
 

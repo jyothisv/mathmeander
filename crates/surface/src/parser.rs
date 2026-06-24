@@ -10,7 +10,8 @@
 //! (a `Group`'s parens, a `Call`'s `(...)`). This is what makes precise click / sub-expression
 //! addressing robust regardless of how the user typed the surface (`path::verbatim_paths`).
 
-use crate::ast::{AddOp, Expr, ExprKind, FracForm};
+use crate::ast::{AddOp, Expr, ExprKind, FracForm, MulOp};
+use crate::dictionary;
 use crate::grammar::{
     self, BP_ADD, BP_DIV, BP_JUXTAPOSE, BP_MUL, BP_REL, BP_UNARY_OPERAND, FRAC_HEAD, MAX_DEPTH,
 };
@@ -198,8 +199,11 @@ impl Parser {
             Tok::Plus | Tok::Minus => Some(BP_ADD),
             Tok::Rel(_) => Some(BP_REL),
             Tok::Name(s) if grammar::is_word_relation(s) => Some(BP_REL),
+            Tok::Name(s) if dictionary::is_product_word(s) => Some(BP_MUL), // `times` → ×
             // value-starts → juxtaposition (implicit multiplication)
-            Tok::Num(_) | Tok::Name(_) | Tok::LParen | Tok::Sym(_) => Some(BP_JUXTAPOSE),
+            Tok::Num(_) | Tok::Name(_) | Tok::Str(_) | Tok::LParen | Tok::Sym(_) => {
+                Some(BP_JUXTAPOSE)
+            }
             // terminators / postfix scripts
             Tok::RParen | Tok::Comma | Tok::Caret | Tok::Underscore => None,
         }
@@ -239,6 +243,20 @@ impl Parser {
                 Expr::new(
                     ExprKind::Mul {
                         lhs: Box::new(left),
+                        op: MulOp::Cdot,
+                        rhs,
+                    },
+                    self.span_from_char(start),
+                )
+            }
+            // `times` (a product operator-word) → the × / Cartesian product.
+            Some(Tok::Name(s)) if dictionary::is_product_word(&s) => {
+                self.bump();
+                let rhs = Box::new(self.parse_expr(BP_MUL));
+                Expr::new(
+                    ExprKind::Mul {
+                        lhs: Box::new(left),
+                        op: MulOp::Cross,
                         rhs,
                     },
                     self.span_from_char(start),
@@ -293,7 +311,7 @@ impl Parser {
                 )
             }
             // value-start → juxtaposition: parse one more factor and append.
-            Some(Tok::Num(_) | Tok::Name(_) | Tok::LParen | Tok::Sym(_)) => {
+            Some(Tok::Num(_) | Tok::Name(_) | Tok::Str(_) | Tok::LParen | Tok::Sym(_)) => {
                 let rhs = self.parse_expr(BP_JUXTAPOSE);
                 juxtapose(left, rhs)
             }
@@ -374,10 +392,43 @@ impl Parser {
                         span,
                     );
                 }
+                // Postfix variant star: a `*` NOT followed by an operand (so it can't be the `·`
+                // product `a*b`) and on a star-able base is the set-variant star `Z*` → desugar to
+                // `Z^*` (a `Sup` with a `*` Symbol exp). An operand-following `*` is left for the
+                // infix loop (the product); a NUMBER base (`2*`) is too (no `2^*` — see
+                // `takes_postfix_star`).
+                Some(Tok::Star)
+                    if !self.is_operand_start_at(self.pos + 1) && takes_postfix_star(&base) =>
+                {
+                    let star_span = self.cspan(self.peek_span());
+                    self.bump();
+                    chain += 1;
+                    let span = self.span_from_char(base.span.start);
+                    base = Expr::new(
+                        ExprKind::Sup {
+                            base: Box::new(base),
+                            exp: Box::new(Expr::new(ExprKind::Symbol("*".to_string()), star_span)),
+                        },
+                        span,
+                    );
+                }
                 _ => break,
             }
         }
         base
+    }
+
+    /// Whether the token at `pos` BEGINS an operand (a value) — distinguishes an infix `*` (`a*b`,
+    /// a value follows) from a postfix variant star (`Z*`, `Z* + 1`, `Z* in G`, EOF, …). A `Name`
+    /// is an operand UNLESS it's a relation-word (`in`) or product-word (`times`), which are
+    /// operators. Unary `+`/`-` are deliberately NOT operands here, so `Z* + 1` reads as `(Z*) + 1`
+    /// (write `a*(-b)` for the rare "times a negative").
+    fn is_operand_start_at(&self, pos: usize) -> bool {
+        match self.toks.get(pos).map(|t| &t.tok) {
+            Some(Tok::Num(_) | Tok::Str(_) | Tok::LParen | Tok::Sym(_)) => true,
+            Some(Tok::Name(s)) => !grammar::is_word_relation(s) && !dictionary::is_product_word(s),
+            _ => false,
+        }
     }
 
     /// A script's argument: a tight operand — an optional unary sign then a single atom
@@ -467,9 +518,21 @@ impl Parser {
                     Expr::new(ExprKind::Ident(s), self.node_span(start))
                 }
             }
+            Some(Tok::Str(s)) => {
+                self.bump();
+                Expr::new(ExprKind::Text(s), self.node_span(start))
+            }
             Some(Tok::Sym(s)) => {
                 self.bump();
                 Expr::new(ExprKind::Symbol(s), self.node_span(start))
+            }
+            // A bare `*` in atom/script-operand position is the asterisk SYMBOL (not an error): it's
+            // the exp of a variant star `Z^*` (and the desugar of postfix `Z*`), so both forms parse
+            // to the SAME `Sup{exp: Symbol("*")}` tree — `Z^*` (the canonical/exported form) round-
+            // trips cleanly instead of recovering as `Error("*")`. Infix `*` is consumed earlier.
+            Some(Tok::Star) => {
+                self.bump();
+                Expr::new(ExprKind::Symbol("*".to_string()), self.node_span(start))
             }
             // Terminators belong to an enclosing group/call/arg-list: yield Empty WITHOUT
             // consuming (e.g. a missing operator RHS), so the enclosing `)` is not stolen.
@@ -546,9 +609,20 @@ fn into_factors(e: Expr) -> Vec<Expr> {
     }
 }
 
+/// Whether the postfix variant star applies to `e`. The variant star is meaningful on a set/name
+/// (`Z*`, `G^2*`, `(A×B)*`) but NOT on a bare NUMBER — `2^*` is nonsense, so `2*` is left to read as
+/// an (incomplete) `·` product instead. `Empty`/`Error` bases (degenerate) are excluded too.
+fn takes_postfix_star(e: &Expr) -> bool {
+    !matches!(
+        e.kind,
+        ExprKind::Number(_) | ExprKind::Empty | ExprKind::Error(_)
+    )
+}
+
 /// The raw surface text of a token (for verbatim `Expr::Error` recovery).
 fn tok_text(t: &Tok) -> String {
     match t {
+        Tok::Str(s) => format!("\"{s}\""),
         Tok::Num(s) | Tok::Name(s) | Tok::Rel(s) | Tok::Sym(s) => s.clone(),
         Tok::Plus => "+".into(),
         Tok::Minus => "-".into(),

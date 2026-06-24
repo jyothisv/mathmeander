@@ -21,6 +21,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ast;
+pub mod dictionary;
 pub mod grammar;
 pub mod latex;
 pub mod lexer;
@@ -49,4 +50,9 @@ pub use syntax::{SyntaxAdapter, adapter_for, transcode};
 /// (§13a.1) folds the grammar into the same migration discipline: changing the grammar in
 /// a way that re-reads stored surfaces requires a `GRAMMAR_VERSION` bump + a registered
 /// migration + frozen fixtures (see `migrate.rs` and `tests/grammar_migration.rs`).
-pub const GRAMMAR_VERSION: u32 = 1;
+///
+/// v2 (dictionary-aware letter-run segmentation + `"…"` text literals + blackboard names):
+/// a letter-run is one whole `dictionary::is_known_name` or splits into single-letter
+/// variables, so `aa` = `a·a` while `sin`/`RR`/`in` stay whole.
+/// v3 (`times` → × distinct from `*` → `·`; postfix `*` → variant star `^*`).
+pub const GRAMMAR_VERSION: u32 = 3;

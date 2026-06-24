@@ -42,6 +42,16 @@ impl AddOp {
     }
 }
 
+/// Multiplicative operator: `·` (scalar/ring, from `*`) vs `×` (Cartesian/cross, from `times`).
+/// Same precedence (`BP_MUL`); only the rendered/serialized operator differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulOp {
+    /// `a * b` → `\cdot` (⋅).
+    Cdot,
+    /// `a times b` → `\times` (×).
+    Cross,
+}
+
 /// One `mathmeander` expression node = its `kind` + the `span` of the verbatim source it was
 /// parsed from. Constructed only by the parser (which stamps the real span) or by
 /// structural-editing helpers (`Expr::synthetic`, span ignored — re-serialized/re-parsed). The
@@ -73,6 +83,10 @@ pub enum ExprKind {
     /// A recovered un-parseable fragment, preserved VERBATIM (totality + §2.2). Marks the
     /// surface `partially_resolved` (some good content) or `invalid` (nothing usable).
     Error(String),
+    /// A double-quoted text literal `"…"` (Typst): an upright multi-letter name or label (the
+    /// escape hatch now that bare letter-runs segment). Content WITHOUT the quotes; renders
+    /// `\text{…}` / `<mtext>`.
+    Text(String),
     /// Explicit grouping `( .. )` — REMEMBERED (not flattened): both the slash/fraction
     /// rule and faithful round-trip depend on whether an operand was parenthesized.
     Group(Box<Expr>),
@@ -93,8 +107,12 @@ pub enum ExprKind {
         den: Box<Expr>,
         form: FracForm,
     },
-    /// Explicit binary multiplication `a * b`.
-    Mul { lhs: Box<Expr>, rhs: Box<Expr> },
+    /// Explicit binary multiplication: `a * b` (`·`, `MulOp::Cdot`) or `a times b` (`×`, `Cross`).
+    Mul {
+        lhs: Box<Expr>,
+        op: MulOp,
+        rhs: Box<Expr>,
+    },
     /// Additive `a + b` / `a - b`.
     Add {
         lhs: Box<Expr>,
@@ -142,7 +160,8 @@ impl Expr {
             | ExprKind::Number(_)
             | ExprKind::Ident(_)
             | ExprKind::Symbol(_)
-            | ExprKind::Error(_) => {
+            | ExprKind::Error(_)
+            | ExprKind::Text(_) => {
                 vec![]
             }
             ExprKind::Group(e) => vec![e.as_ref()],
@@ -156,7 +175,7 @@ impl Expr {
             ExprKind::Unary { operand, .. } => vec![operand.as_ref()],
             ExprKind::Juxtapose(fs) => fs.iter().collect(),
             ExprKind::Frac { num, den, .. } => vec![num.as_ref(), den.as_ref()],
-            ExprKind::Mul { lhs, rhs } => vec![lhs.as_ref(), rhs.as_ref()],
+            ExprKind::Mul { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
             ExprKind::Add { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
             ExprKind::Rel { lhs, rhs, .. } => vec![lhs.as_ref(), rhs.as_ref()],
         }
@@ -194,7 +213,9 @@ impl Expr {
     pub fn has_content(&self) -> bool {
         match &self.kind {
             ExprKind::Empty | ExprKind::Error(_) => false,
-            ExprKind::Number(_) | ExprKind::Ident(_) | ExprKind::Symbol(_) => true,
+            ExprKind::Number(_) | ExprKind::Ident(_) | ExprKind::Symbol(_) | ExprKind::Text(_) => {
+                true
+            }
             _ => self.children().iter().any(|c| c.has_content()),
         }
     }

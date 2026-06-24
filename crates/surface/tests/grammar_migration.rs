@@ -12,7 +12,7 @@
 //! red build, which is the migration discipline working (bump + migrate, don't flip silently).
 
 use mathmeander_surface::GRAMMAR_VERSION;
-use mathmeander_surface::migrate::migration_from;
+use mathmeander_surface::migrate::{migrate_surface_to_current, migration_from};
 use mathmeander_surface::parser::parse;
 use mathmeander_surface::serializer::serialize;
 
@@ -64,13 +64,18 @@ fn frozen_fixtures_are_canonical_under_the_current_grammar() {
     for version in 1..=GRAMMAR_VERSION {
         for (name, surface) in fixture_surfaces(version) {
             let label = format!("fixtures/grammar_v{version}/{name}");
-            // The fixture is canonical: parsing then serializing reproduces it exactly,
-            // and re-parsing is stable (the pinned grammar still reads it the same way).
+            // The fixture file on disk is the frozen record of what ITS grammar read (e.g. a v1
+            // `dy/dx`, which v2 re-reads as `d·y / d·x`). This test does NOT re-assert that file is
+            // byte-frozen; it verifies the MIGRATION of it to the current grammar is canonical
+            // (`serialize(parse(migrated)) == migrated`) — so the migration provably produces a
+            // current-canonical surface. (Current-version fixtures migrate as a no-op, `from ==
+            // GRAMMAR_VERSION`, so they're checked as-authored.)
+            let migrated = migrate_surface_to_current(&surface, version);
             assert_eq!(
-                serialize(&parse(&surface)),
-                surface,
-                "{label}: no longer canonical under the current grammar — bump \
-                 GRAMMAR_VERSION + add a migration, don't change the grammar silently"
+                serialize(&parse(&migrated)),
+                migrated,
+                "{label}: its migration to the current grammar is not canonical — fix the \
+                 migration (or bump GRAMMAR_VERSION + add one), don't change the grammar silently"
             );
         }
     }

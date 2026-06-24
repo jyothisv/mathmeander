@@ -5,14 +5,19 @@
 //! `f (x)` is NOT needed in v1 — kept for future use. Byte spans are tracked; the
 //! parser/boundary convert them to wire `CharSpan`s.
 
+use crate::dictionary::is_known_name;
 use crate::span::ByteSpan;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tok {
     /// A numeric literal (digits with at most one interior `.`).
     Num(String),
-    /// An ASCII identifier/name (`[A-Za-z]+`).
+    /// An ASCII identifier/name. v2: a maximal letter-run is one `Name` only if it's a known
+    /// dictionary name (`sin`, `RR`, `in`, …); otherwise it splits into one single-letter `Name`
+    /// per letter (so `aa` → `a`,`a`). Trailing combining marks fold onto the (last) letter.
     Name(String),
+    /// A double-quoted text literal `"…"` (Typst): the content WITHOUT the surrounding quotes.
+    Str(String),
     Plus,
     Minus,
     Star,
@@ -93,19 +98,65 @@ pub fn lex(input: &str) -> Vec<Token> {
             continue;
         }
 
-        // Names: maximal run of ASCII letters, plus any trailing combining marks.
+        // Names: a maximal run of ASCII letters (+ trailing combining marks). v2 segmentation:
+        // a KNOWN dictionary name stays ONE `Name`; any other run splits into one single-letter
+        // `Name` per letter, so `aa`→`a`,`a` while `sin`/`RR`/`in` stay whole. Each split letter
+        // gets its own span (so each is independently addressable via `path::verbatim_paths`).
         if c.is_ascii_alphabetic() {
             i += 1;
             while i < n && bytes[i].is_ascii_alphabetic() {
                 i += 1;
             }
+            let letters_end = i;
             absorb_combining(input, &mut i);
-            out.push(mk(
-                Tok::Name(input[start..i].to_string()),
-                start,
-                i,
-                pending_space,
-            ));
+            let combine_end = i;
+            let run = &input[start..letters_end]; // pure ASCII letters (no combining marks)
+            if is_known_name(run) {
+                // Whole name; combining marks fold onto it (as in v1).
+                out.push(mk(
+                    Tok::Name(input[start..combine_end].to_string()),
+                    start,
+                    combine_end,
+                    pending_space,
+                ));
+            } else {
+                // Split per letter. The LAST letter absorbs any trailing combining-mark suffix
+                // (so a base+mark grapheme is never split). Letters are ASCII (1 byte each), so
+                // byte index == char boundary throughout — totality preserved.
+                let mut first = true;
+                for j in start..letters_end {
+                    let end = if j == letters_end - 1 {
+                        combine_end
+                    } else {
+                        j + 1
+                    };
+                    out.push(mk(
+                        Tok::Name(input[j..end].to_string()),
+                        j,
+                        end,
+                        first && pending_space,
+                    ));
+                    first = false;
+                }
+            }
+            pending_space = false;
+            continue;
+        }
+
+        // String/text literal `"…"` (Typst): the content WITHOUT the quotes, verbatim. Total — an
+        // unterminated string runs to EOF. No escapes in v1 (a `"` always closes), so the content
+        // can never contain a `"` and round-trips as `"…"`.
+        if c == b'"' {
+            let content_start = (i + 1).min(n);
+            i = content_start;
+            while i < n && bytes[i] != b'"' {
+                i = (i + utf8_char_len(bytes[i])).min(n); // advance whole chars (no mid-char slice)
+            }
+            let content = input.get(content_start..i).unwrap_or("").to_string();
+            if i < n {
+                i += 1; // consume the closing quote
+            }
+            out.push(mk(Tok::Str(content), start, i, pending_space));
             pending_space = false;
             continue;
         }

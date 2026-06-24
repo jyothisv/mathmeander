@@ -2287,7 +2287,9 @@ fn rewrite_on_inline_math_leaves_prose_intact() {
             unit_id: UnitId(v7(2)),
             expression_id: e,
             from: "x".into(),
-            to: "longername".into(),
+            // A known name (`alpha`) so the rewrite grows the surface WITHOUT v2 segmentation
+            // splitting it (a bare multi-letter run like `longername` would become `l o n g …`).
+            to: "alpha".into(),
         },
         &op_ctx(),
         op_now(),
@@ -2305,7 +2307,74 @@ fn rewrite_on_inline_math_leaves_prose_intact() {
                     assert_eq!(*span, CharSpan::new(4, 4), "enclosing atom span untouched");
                     assert_eq!(expr.id, e, "expression id preserved");
                     assert_eq!(expr.original_input, "x + y", "original_input verbatim");
-                    assert_eq!(expr.surface_text, "longername + y", "surface updated");
+                    assert_eq!(expr.surface_text, "alpha + y", "surface updated");
+                }
+                _ => panic!("expected inline math"),
+            }
+        }
+        _ => panic!("expected prose"),
+    }
+    assert_content_well_formed(&out.content);
+}
+
+#[test]
+fn rewrite_to_a_quoted_name_yields_a_text_literal() {
+    // The v2 escape hatch: to rename a variable to a genuine MULTI-LETTER name (which a bare run
+    // would segment into single letters), QUOTE it — `x` → `"longername"` becomes a `"…"` text
+    // literal, kept whole and rendered upright. The enclosing prose still stays intact (the inline
+    // math atom is zero-width), exactly as for the unquoted case above.
+    let e = ExpressionId(v7(70));
+    let unit = a_prose_unit(
+        UnitId(v7(2)),
+        ObjectId(v7(1)),
+        0,
+        "see  here",
+        vec![
+            Inline::Mark {
+                span: CharSpan::new(0, 3),
+                style: "emph".into(),
+            },
+            Inline::Math {
+                span: CharSpan::new(4, 4),
+                expr: an_expr(e, "x + y", vec![]),
+            },
+        ],
+    );
+    let content = MathContent {
+        object_id: ObjectId(v7(1)),
+        revision: 1,
+        units: vec![unit],
+    };
+    let out = rewrite_surface(
+        content,
+        &[],
+        &RewriteSurfaceInput {
+            expected_revision: 1,
+            unit_id: UnitId(v7(2)),
+            expression_id: e,
+            from: "x".into(),
+            to: "\"longername\"".into(), // quoted → a text literal, NOT a segmented run
+        },
+        &op_ctx(),
+        op_now(),
+    )
+    .unwrap();
+    match &out.content.units[0].content {
+        UnitContent::Prose { text, inline } => {
+            assert_eq!(text.as_str(), "see  here", "prose text untouched");
+            assert_eq!(inline.len(), 2);
+            assert!(
+                matches!(&inline[0], Inline::Mark { span, .. } if *span == CharSpan::new(0, 3))
+            );
+            match &inline[1] {
+                Inline::Math { span, expr } => {
+                    assert_eq!(*span, CharSpan::new(4, 4), "enclosing atom span untouched");
+                    assert_eq!(expr.id, e, "expression id preserved");
+                    assert_eq!(expr.original_input, "x + y", "original_input verbatim");
+                    assert_eq!(
+                        expr.surface_text, "\"longername\" + y",
+                        "renamed to a quoted text literal, kept whole"
+                    );
                 }
                 _ => panic!("expected inline math"),
             }

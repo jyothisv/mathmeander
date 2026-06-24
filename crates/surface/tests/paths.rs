@@ -34,6 +34,15 @@ const CORPUS: &[&str] = &[
     "-x+1",
     "cal(F)",
     "2 x",
+    // v2/v3 shapes — the render-path threading changed for these, so guard their span↔source map.
+    "aa",
+    "RR + NN",
+    "\"radius\"",
+    "N times N",
+    "Z*",
+    "ZZ*",
+    "cases(0 \"if\" x < 0, x \"if\" x >= 0)",
+    "{ x in RR | x \"is natural\" }",
 ];
 
 fn cp_len(s: &str) -> u32 {
@@ -119,15 +128,17 @@ fn span_slices_are_the_exact_verbatim_substrings() {
     assert_eq!(by_path[&vec![0]], "i");
     assert_eq!(by_path[&vec![1]], "0");
 
-    // Packed juxtaposition + brackets: spans index the literal characters.
-    let t = "2ab"; // Juxtapose(2, ab)
+    // Packed juxtaposition: v2 segments `ab` into separate letters, so `2ab` = Juxtapose(2, a, b),
+    // each its own clickable span.
+    let t = "2ab";
     let by_path: std::collections::HashMap<Vec<usize>, String> = verbatim_paths(t)
         .into_iter()
         .map(|(p, sp)| (p.0, char_slice(t, sp.start, sp.end)))
         .collect();
     assert_eq!(by_path[&vec![]], "2ab");
     assert_eq!(by_path[&vec![0]], "2");
-    assert_eq!(by_path[&vec![1]], "ab");
+    assert_eq!(by_path[&vec![1]], "a");
+    assert_eq!(by_path[&vec![2]], "b");
 }
 
 #[test]

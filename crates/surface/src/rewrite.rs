@@ -94,7 +94,8 @@ fn rename_ident(e: &Expr, from: &str, to: &str) -> Expr {
         | ExprKind::Number(_)
         | ExprKind::Ident(_)
         | ExprKind::Symbol(_)
-        | ExprKind::Error(_) => e.clone(),
+        | ExprKind::Error(_)
+        | ExprKind::Text(_) => e.clone(),
         ExprKind::Group(inner) => Expr::synthetic(ExprKind::Group(rec(inner))),
         ExprKind::Call { head, args } => Expr::synthetic(ExprKind::Call {
             head: rec(head),
@@ -120,8 +121,9 @@ fn rename_ident(e: &Expr, from: &str, to: &str) -> Expr {
             den: rec(den),
             form: *form,
         }),
-        ExprKind::Mul { lhs, rhs } => Expr::synthetic(ExprKind::Mul {
+        ExprKind::Mul { lhs, op, rhs } => Expr::synthetic(ExprKind::Mul {
             lhs: rec(lhs),
+            op: *op,
             rhs: rec(rhs),
         }),
         ExprKind::Add { lhs, op, rhs } => Expr::synthetic(ExprKind::Add {

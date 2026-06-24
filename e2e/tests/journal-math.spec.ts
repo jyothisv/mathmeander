@@ -429,16 +429,87 @@ test('F3: a NON-canonically typed row is precisely clickable (was: caret jumped 
   await openToday(page, `journal-f3-noncanon-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
   await editor.click();
-  // `2ab` (no spaces) canonicalizes to `2 ab`, so the OLD canonical-span guard mismatched on length
-  // and fell back — the caret jumped to AFTER the closing `$$`. With verbatim source spans the click
-  // maps into the exact source the doc holds, for any spelling.
+  // `2ab` is `Juxtapose(2, a, b)` (v2 segments the run), each letter its own clickable node. Click the
+  // first letter (path 1 = `a`); the caret lands just before it (verbatim spans map into the exact
+  // source for any spelling — the old canonical-length guard used to mismatch and jump to the end).
   await page.keyboard.type('$$2ab$$');
   const render = page.locator('.day-editor .math-render-display');
   await expect(render.locator('.katex')).toBeVisible();
 
-  await render.locator('[data-path="1"]').first().click(); // the `ab` factor → caret just before it
+  await render.locator('[data-path="1"]').first().click(); // the `a` factor → caret just before it
   await page.keyboard.type('Z');
   await expect(editor).toContainText('$$2Zab$$'); // landed in the source — NOT `$$2ab$$Z` (the old bug)
+});
+
+test('F2 segmentation: aa is a·b — each letter independently clickable', async ({ page }) => {
+  await openToday(page, `journal-seg-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$aa$$'); // two separate variables (NOT one identifier "aa")
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  // Two distinct sub-terms: double-clicking the SECOND `a` (path 1) selects exactly that `a`.
+  await render.locator('[data-path="1"]').first().dblclick();
+  expect(await selectionText(page)).toBe('a');
+});
+
+test('Typst syntax: RR→ℝ, "…" upright text, and the set-builder { x in RR | x "is natural" }', async ({
+  page,
+}) => {
+  await openToday(page, `journal-typst-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$RR$$');
+  const rr = page.locator('.day-editor .math-render-display');
+  await expect(rr.locator('.katex')).toBeVisible();
+  // real-WASM boundary: `RR` transpiles to the blackboard `\mathbb{R}` (renders ℝ).
+  await expect(rr.locator('.katex annotation').first()).toContainText('\\mathbb{R}');
+
+  // A new line with a `"…"` text literal → upright `\text{…}`.
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$"radius"$$');
+  const text = page.locator('.day-editor .math-render-display').nth(1);
+  await expect(text.locator('.katex annotation').first()).toContainText('\\text{radius}');
+
+  // The headline set-builder renders: blackboard + bar + upright text + literal braces.
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$${ x in RR | x "is natural" }$$');
+  const set = page.locator('.day-editor .math-render-display').nth(2);
+  const tex = set.locator('.katex annotation').first();
+  await expect(tex).toContainText('\\mathbb{R}');
+  await expect(tex).toContainText('\\mid');
+  await expect(tex).toContainText('\\text{is natural}');
+});
+
+test('Typst v3: times→×, postfix-* variant (ZZ*), a*b→·, and cases(…) piecewise', async ({
+  page,
+}) => {
+  await openToday(page, `journal-typst3-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+
+  await page.keyboard.type('$$N times N$$'); // Cartesian product
+  const a = page.locator('.day-editor .math-render-display').nth(0);
+  await expect(a.locator('.katex')).toBeVisible();
+  await expect(a.locator('.katex annotation').first()).toContainText('\\times');
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$a*b$$'); // scalar product stays ·
+  const b = page.locator('.day-editor .math-render-display').nth(1);
+  await expect(b.locator('.katex annotation').first()).toContainText('\\cdot');
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$ZZ*$$'); // blackboard ℤ with a variant star
+  const c = page.locator('.day-editor .math-render-display').nth(2);
+  const ctex = c.locator('.katex annotation').first();
+  await expect(ctex).toContainText('\\mathbb{Z}');
+  await expect(ctex).toContainText('^'); // superscript star
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$cases(0 "if" x < 0, x "if" x >= 0)$$'); // piecewise
+  const d = page.locator('.day-editor .math-render-display').nth(3);
+  await expect(d.locator('.katex annotation').first()).toContainText('\\begin{cases}');
 });
 
 test('F3: clicking a relation operator carets near the operator, not the equation start (Bug B)', async ({
