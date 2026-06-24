@@ -32,6 +32,16 @@ async function openToday(page: import('@playwright/test').Page, email: string): 
 const put200 = (r: { url(): string; request(): { method(): string }; status(): number }): boolean =>
   r.url().includes('/content') && r.request().method() === 'PUT' && r.status() === 200;
 
+/** The current DOM selection's text. Runs INSIDE the browser via `page.evaluate`, so it must be self-contained
+ *  (no outer-scope refs). `window` isn't typed in the e2e (node) tsconfig — like the `navigator` casts
+ *  elsewhere here — so reach the browser global through `globalThis`. */
+const selectionText = (page: import('@playwright/test').Page): Promise<string | undefined> =>
+  page.evaluate(() =>
+    (globalThis as unknown as { getSelection(): { toString(): string } | null })
+      .getSelection()
+      ?.toString(),
+  );
+
 test('inline $…$ renders with KaTeX once the caret leaves it, and persists across reload', async ({
   page,
 }) => {
@@ -183,8 +193,11 @@ test('display $$…$$ on its own line renders centered (KaTeX displayMode) and p
   await page.keyboard.type('$$x^2$$'); // a whole-line display equation
   const render = page.locator('.day-editor .math-render-display');
   await expect(render.locator('.katex')).toBeVisible(); // centered KaTeX (displayMode)
-  // real-WASM boundary: the mathmeander source `x^2` was transpiled to LaTeX `x^{2}`.
-  await expect(render.locator('.katex annotation').first()).toContainText('x^{2}');
+  // real-WASM boundary: the mathmeander source `x^2` was transpiled to LaTeX with a `^{…}` superscript
+  // (the `}^{` between base and exponent in the MathML annotation), and F3-tagged so each sub-term carries a
+  // `data-path` for precise click — DISPLAY uses the `\htmlData`-tagged transpile (inline stays untagged).
+  await expect(render.locator('.katex annotation').first()).toContainText('}^{'); // superscript survived
+  await expect(render.locator('[data-path="1"]').first()).toBeVisible(); // the `2` exponent, F3-tagged
 
   await page.waitForResponse(put200, { timeout: 15000 }); // persisted as a standalone Math unit
   await page.reload();
@@ -347,4 +360,118 @@ test('a $$…$$ with ≥2 non-empty lines is a SYSTEM: renders aligned rows + pe
   await page.locator('.day-editor .equations').first().click();
   await page.keyboard.type('z');
   await page.waitForResponse(put200, { timeout: 15000 });
+});
+
+// ── F3: precise sub-expression click (display + system) ──
+// A click on a rendered sub-term maps to its EXACT source: single-click → caret there, double-click → selects
+// that sub-term's source range. Each sub-term carries a `data-path` (from the `\htmlData`-tagged transpile);
+// the source char-span comes from `surfacePaths`. Gated to DISPLAY equations + SYSTEM rows (inline keeps the
+// reveal-at-start stopgap, covered by the inline double-click test above).
+
+test('F3: double-clicking a display sub-term selects exactly that sub-term in the source', async ({
+  page,
+}) => {
+  await openToday(page, `journal-f3-disp-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$a + b$$'); // canonical spacing — Add serializes to `a + b`
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  // `a + b` parses to Add(a, b): `a` is path 0, `b` is path 1. Double-click the rendered `b` → its source
+  // range (just the `b`) is selected, proving the click→sub-term→char-span mapping.
+  await render.locator('[data-path="1"]').first().dblclick();
+  await expect(page.locator('.day-editor .math-src-display')).toBeVisible(); // source revealed
+  expect(await selectionText(page)).toBe('b');
+});
+
+test('F3: single-clicking a display sub-term puts the caret exactly there', async ({ page }) => {
+  await openToday(page, `journal-f3-caret-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$a + b$$');
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  await render.locator('[data-path="1"]').first().click(); // caret lands just before `b`
+  await page.keyboard.type('Z'); // inserts AT the caret → `a + Zb` (not at the source start)
+  await expect(editor).toContainText('$$a + Zb$$');
+});
+
+test('F3: a system row sub-term click maps to the CORRECT row (offset strides over prior rows)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-f3-sys-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('2x + y = 1'); // row 0
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('x - y = 4'); // row 1
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$');
+  await expect(page.locator('.day-editor .equations .row')).toHaveCount(2);
+
+  // Row 1 is `x - y = 4` → Rel(lhs, 4): the `4` is path 1. Double-click it (scoped to data-row=1). The
+  // selection must be exactly `4` — proving the offset strode over row 0 (`2x + y = 1`) + its hard_break,
+  // not landing on row 0's trailing `1`.
+  await page
+    .locator('.day-editor .equations .row[data-row="1"] [data-path="1"]')
+    .first()
+    .dblclick();
+  expect(await selectionText(page)).toBe('4');
+});
+
+test('F3: a NON-canonically typed row is precisely clickable (was: caret jumped to the end)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-f3-noncanon-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  // `2ab` (no spaces) canonicalizes to `2 ab`, so the OLD canonical-span guard mismatched on length
+  // and fell back — the caret jumped to AFTER the closing `$$`. With verbatim source spans the click
+  // maps into the exact source the doc holds, for any spelling.
+  await page.keyboard.type('$$2ab$$');
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  await render.locator('[data-path="1"]').first().click(); // the `ab` factor → caret just before it
+  await page.keyboard.type('Z');
+  await expect(editor).toContainText('$$2Zab$$'); // landed in the source — NOT `$$2ab$$Z` (the old bug)
+});
+
+test('F3: clicking a relation operator carets near the operator, not the equation start (Bug B)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-f3-op-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$i=0$$'); // non-canonical (`i = 0`) AND exercises an operator click
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  // The `=` glyph (KaTeX `.mrel`) belongs to the root relation (operators aren't their own nodes), so
+  // the caret lands just AFTER the left operand `i` (≈ at the operator), not at offset 0.
+  await render.locator('.mrel').first().click();
+  await page.keyboard.type('Z');
+  await expect(editor).toContainText('$$iZ=0$$'); // after `i` — NOT `$$Zi=0$$` (the old beginning bug)
+});
+
+test('F3: a sub-term inside a big-operator subscript is precisely clickable (KaTeX vlist overlap)', async ({
+  page,
+}) => {
+  await openToday(page, `journal-f3-sub-${Date.now()}@mathmeander.local`);
+  const editor = page.locator('.ProseMirror');
+  await editor.click();
+  await page.keyboard.type('$$sum_(i=0)^nabla$$');
+  const render = page.locator('.day-editor .math-render-display');
+  await expect(render.locator('.katex')).toBeVisible();
+
+  // `sum_(i=0)^nabla` = Sup(Sub(sum,(i=0)),nabla): the `i` limit is path 0.1.0.0. KaTeX stacks a
+  // `.vlist` box OVER the limit glyphs (so Playwright itself reports the pointer is "intercepted" —
+  // `force` dispatches at the glyph's center anyway, exactly like a real user's click, which our
+  // geometry-based resolver handles via the click COORDINATES, not the event target).
+  await render.locator('[data-path="0.1.0.0"]').first().dblclick({ force: true });
+  expect(await selectionText(page)).toBe('i'); // exactly the `i`, NOT `sum_(i=0)`
 });

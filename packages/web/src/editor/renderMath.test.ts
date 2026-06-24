@@ -8,6 +8,7 @@ vi.mock('katex', () => ({ default: { render: h.render } }));
 vi.mock('./mathRuntime', () => ({
   isMathRuntimeReady: () => h.ready,
   toKatex: (s: string) => s,
+  toKatexDisplay: (s: string) => `D:${s}`, // the `\htmlData`-tagged transpile (distinct from toKatex)
 }));
 
 import type { MathExpression } from '@mathmeander/schema';
@@ -90,6 +91,32 @@ describe('renderMathInto', () => {
     expect(h.render).toHaveBeenCalledTimes(1);
     expect(into.has('math-invalid')).toBe(false);
     expect(into.has('math-partial')).toBe(false);
+  });
+
+  it('display → toKatexDisplay (tagged) with trust SCOPED to \\htmlData only', () => {
+    const into = fakeInto();
+    renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), into as never, {
+      display: true,
+    });
+    expect(h.render).toHaveBeenCalledTimes(1);
+    const [input, , opts] = h.render.mock.calls[0]!;
+    expect(input).toBe('D:x^2'); // toKatexDisplay (NOT toKatex) — the `\htmlData`-tagged source
+    expect(opts).toMatchObject({ displayMode: true, strict: false });
+    // trust is a function that allows ONLY `\htmlData` — every other trusted command is rejected.
+    expect(typeof opts.trust).toBe('function');
+    expect(opts.trust({ command: '\\htmlData' })).toBe(true);
+    expect(opts.trust({ command: '\\href' })).toBe(false);
+    expect(opts.trust({ command: '\\includegraphics' })).toBe(false);
+  });
+
+  it('inline → toKatex (untagged) with trust:false (no trusted command emitted)', () => {
+    const into = fakeInto();
+    renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), into as never, {
+      display: false,
+    });
+    const [input, , opts] = h.render.mock.calls[0]!;
+    expect(input).toBe('x^2'); // toKatex — the cheaper untagged transpile for inline
+    expect(opts).toMatchObject({ displayMode: false, trust: false });
   });
 
   it('partially_resolved → renders AND flags the partial affordance', () => {

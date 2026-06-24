@@ -5,8 +5,9 @@
 //! (full LaTeX parity is a non-goal; the exotic tail is the core's `original_input` +
 //! `parse_status` escape hatch, §6.3a).
 
-use crate::ast::Expr;
+use crate::ast::{Expr, ExprKind};
 use crate::parser::parse;
+use crate::path::StructuralPath;
 
 /// Names shared by both directions: `mathmeander` name ⇔ LaTeX macro (without backslash).
 /// Greek + a few letterlike/big operators. Anything else passes through as a plain name.
@@ -39,133 +40,170 @@ fn rel_to_latex(op: &str) -> &str {
 
 // ── Export: Expr → LaTeX ─────────────────────────────────────────────────────
 
-/// Serialize an expression to a LaTeX string (clipboard / KaTeX input).
+/// Serialize an expression to a LaTeX string (clipboard / KaTeX input). UNTAGGED — byte-identical
+/// to the pre-F3 output (the `tag=false` path adds no `\htmlData`).
 pub fn export(e: &Expr) -> String {
     let mut s = String::new();
-    emit(e, &mut s);
+    emit(e, &StructuralPath::root(), &mut s, false);
     s
 }
 
-fn emit(e: &Expr, out: &mut String) {
-    match e {
-        Expr::Empty => {}
-        // Numbers are digits-only and identifiers are `[A-Za-z]+` or a known macro — safe.
-        Expr::Number(s) => out.push_str(s),
+/// Serialize to LaTeX with each sub-term wrapped in KaTeX `\htmlData{path=…}{…}`, so the rendered
+/// DOM carries a `data-path` per node (precise click, F3 — requires `katex.render {trust:true}`).
+/// The `path` strings match `path::verbatim_paths`/`path::resolve` (same `Expr::children()` order),
+/// so a clicked `data-path` resolves to the sub-term whose verbatim `CharSpan` `verbatim_paths`
+/// reports.
+pub fn export_with_paths(e: &Expr) -> String {
+    let mut s = String::new();
+    emit(e, &StructuralPath::root(), &mut s, true);
+    s
+}
+
+/// Dot-join a path for a `\htmlData` value: `[0,1]` → `"0.1"`, root `[]` → `""` (safe — no
+/// `,`/`=`/`{`/`}`).
+fn join_dots(p: &[usize]) -> String {
+    p.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
+}
+
+/// Emit `e`; when `tag`, wrap the WHOLE node in `\htmlData{path=…}{…}` (its per-node DOM tag). The
+/// per-variant body is `emit_inner`; this wrapper is the only place tagging happens, so `export`
+/// (`tag=false`) is byte-identical to the pre-F3 emitter.
+fn emit(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
+    if tag {
+        out.push_str("\\htmlData{path=");
+        out.push_str(&join_dots(&path.0));
+        out.push_str("}{");
+    }
+    emit_inner(e, path, out, tag);
+    if tag {
+        out.push('}');
+    }
+}
+
+fn emit_inner(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
+    match &e.kind {
+        ExprKind::Empty => {}
+        // A `Number` is `[0-9.]` plus any combining marks `absorb_combining` folded onto it — none are
+        // LaTeX-special, so `latex_escape` is byte-identical here; we escape anyway so the safety is
+        // MECHANICAL (a future lexer/emitter change can't silently turn this into an injection vector).
+        ExprKind::Number(s) => out.push_str(&latex_escape(s)),
         // Symbols and recovered error fragments carry ARBITRARY text (pasted glyphs, raw
         // input), so they MUST be escaped before going into a LaTeX/KaTeX string — otherwise
         // a crafted `\`/`{`/`$` is a KaTeX-injection / render-break vector (matches the
-        // XML-escaping the MathML path already does, render.rs).
-        Expr::Symbol(s) | Expr::Error(s) => out.push_str(&latex_escape(s)),
-        Expr::Ident(name) => out.push_str(&ident_to_latex(name)),
-        Expr::Group(inner) => {
+        // XML-escaping the MathML path already does, render.rs). (\htmlData also needs trust.)
+        ExprKind::Symbol(s) | ExprKind::Error(s) => out.push_str(&latex_escape(s)),
+        ExprKind::Ident(name) => out.push_str(&ident_to_latex(name)),
+        ExprKind::Group(inner) => {
             out.push_str("\\left(");
-            emit(inner, out);
+            emit(inner, &path.child(0), out, tag);
             out.push_str("\\right)");
         }
-        Expr::Call { head, args } => {
-            if let Expr::Ident(h) = head.as_ref() {
+        ExprKind::Call { head, args } => {
+            if let ExprKind::Ident(h) = &head.kind {
                 match (h.as_str(), args.as_slice()) {
-                    ("sqrt", [x]) => return wrap_macro(out, "\\sqrt", x),
-                    ("cal", [x]) => return wrap_macro(out, "\\mathcal", x),
-                    ("bb", [x]) => return wrap_macro(out, "\\mathbb", x),
-                    ("frak", [x]) => return wrap_macro(out, "\\mathfrak", x),
-                    ("bold" | "bf", [x]) => return wrap_macro(out, "\\mathbf", x),
+                    ("sqrt", [x]) => return wrap_macro(out, "\\sqrt", x, path, tag),
+                    ("cal", [x]) => return wrap_macro(out, "\\mathcal", x, path, tag),
+                    ("bb", [x]) => return wrap_macro(out, "\\mathbb", x, path, tag),
+                    ("frak", [x]) => return wrap_macro(out, "\\mathfrak", x, path, tag),
+                    ("bold" | "bf", [x]) => return wrap_macro(out, "\\mathbf", x, path, tag),
                     _ => {}
                 }
             }
-            emit(head, out);
+            emit(head, &path.child(0), out, tag);
             out.push_str("\\left(");
             for (i, a) in args.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                emit(a, out);
+                emit(a, &path.child(1 + i), out, tag);
             }
             out.push_str("\\right)");
         }
-        Expr::Sup { base, exp } => {
-            emit(base, out);
+        ExprKind::Sup { base, exp } => {
+            emit(base, &path.child(0), out, tag);
             out.push('^');
-            emit_braced(exp, out);
+            emit_braced(exp, &path.child(1), out, tag);
         }
-        Expr::Sub { base, sub } => {
-            emit(base, out);
+        ExprKind::Sub { base, sub } => {
+            emit(base, &path.child(0), out, tag);
             out.push('_');
-            emit_braced(sub, out);
+            emit_braced(sub, &path.child(1), out, tag);
         }
-        Expr::Unary { op, operand } => {
+        ExprKind::Unary { op, operand } => {
             out.push_str(op.as_str());
-            emit(operand, out);
+            emit(operand, &path.child(0), out, tag);
         }
-        Expr::Juxtapose(fs) => {
+        ExprKind::Juxtapose(fs) => {
             for (i, f) in fs.iter().enumerate() {
                 if i > 0 {
                     out.push(' ');
                 }
-                emit(f, out);
+                emit(f, &path.child(i), out, tag);
             }
         }
-        Expr::Frac { num, den, form } => {
+        ExprKind::Frac { num, den, form } => {
             if Expr::frac_built_up(num, den, *form) {
                 // The fraction bar groups, so a numerator/denominator `Group`'s visible
                 // parens are dropped (like script grouping) — `(a+b)/c` → `\frac{a + b}{c}`.
                 out.push_str("\\frac{");
-                emit_ungrouped(num, out);
+                emit_ungrouped(num, &path.child(0), out, tag);
                 out.push_str("}{");
-                emit_ungrouped(den, out);
+                emit_ungrouped(den, &path.child(1), out, tag);
                 out.push('}');
             } else {
-                emit(num, out);
+                emit(num, &path.child(0), out, tag);
                 out.push('/');
-                emit(den, out);
+                emit(den, &path.child(1), out, tag);
             }
         }
-        Expr::Mul { lhs, rhs } => {
-            emit(lhs, out);
+        ExprKind::Mul { lhs, rhs } => {
+            emit(lhs, &path.child(0), out, tag);
             out.push_str(" \\cdot ");
-            emit(rhs, out);
+            emit(rhs, &path.child(1), out, tag);
         }
-        Expr::Add { lhs, op, rhs } => {
-            emit(lhs, out);
+        ExprKind::Add { lhs, op, rhs } => {
+            emit(lhs, &path.child(0), out, tag);
             out.push(' ');
             out.push_str(op.as_str());
             out.push(' ');
-            emit(rhs, out);
+            emit(rhs, &path.child(1), out, tag);
         }
-        Expr::Rel { lhs, op, rhs } => {
-            emit(lhs, out);
+        ExprKind::Rel { lhs, op, rhs } => {
+            emit(lhs, &path.child(0), out, tag);
             out.push(' ');
             out.push_str(rel_to_latex(op));
             out.push(' ');
-            emit(rhs, out);
+            emit(rhs, &path.child(1), out, tag);
         }
     }
 }
 
 /// Emit `^`/`_` argument: a `Group` becomes the LaTeX `{ grouping }` (its visible parens
 /// are dropped — script grouping is invisible in LaTeX); anything else is braced as-is.
-fn emit_braced(e: &Expr, out: &mut String) {
+fn emit_braced(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
     out.push('{');
-    emit_ungrouped(e, out);
+    emit_ungrouped(e, path, out, tag);
     out.push('}');
 }
 
 /// Emit a node, dropping one layer of `Group` parens (used where surrounding LaTeX syntax
-/// already provides the grouping: `\frac{}{}`, `^{}`, `_{}`).
-fn emit_ungrouped(e: &Expr, out: &mut String) {
-    match e {
-        Expr::Group(inner) => emit(inner, out),
-        _ => emit(e, out),
+/// already provides the grouping: `\frac{}{}`, `^{}`, `_{}`). A dropped `Group` is still a real
+/// child — descend into its child 0 so the threaded path stays aligned with `children()`.
+fn emit_ungrouped(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
+    match &e.kind {
+        ExprKind::Group(inner) => emit(inner, &path.child(0), out, tag),
+        _ => emit(e, path, out, tag),
     }
 }
 
-fn wrap_macro(out: &mut String, macro_name: &str, arg: &Expr) {
+/// Emit a `\sqrt`/`\mathcal`/… macro: `arg` is the Call's child 1 (the head ident is child 0,
+/// elided here — it has no rendered span, so no `data-path`; the char-span side still records it).
+fn wrap_macro(out: &mut String, macro_name: &str, arg: &Expr, path: &StructuralPath, tag: bool) {
     out.push_str(macro_name);
     out.push('{');
-    if let Expr::Group(inner) = arg {
-        emit(inner, out);
-    } else {
-        emit(arg, out);
+    match &arg.kind {
+        ExprKind::Group(inner) => emit(inner, &path.child(1).child(0), out, tag),
+        _ => emit(arg, &path.child(1), out, tag),
     }
     out.push('}');
 }
@@ -197,7 +235,9 @@ fn ident_to_latex(name: &str) -> String {
     if NAMES.contains(&name) || FUNCTIONS.contains(&name) {
         format!("\\{name}")
     } else {
-        name.to_string()
+        // A plain identifier: `[A-Za-z]` + folded combining marks (no LaTeX-special chars), so this is
+        // byte-identical — escaped defensively to keep the no-injection guarantee mechanical, not by-comment.
+        latex_escape(name)
     }
 }
 

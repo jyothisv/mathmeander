@@ -4,9 +4,11 @@
 // MUST be awaited once (in main.tsx, before mount) before any other function here is called.
 import init, {
   katex as wasmKatex,
+  katexDisplay as wasmKatexDisplay,
   mathml as wasmMathml,
   latexImport as wasmLatexImport,
   normalizeFresh as wasmNormalizeFresh,
+  surfacePaths as wasmSurfacePaths,
 } from '../wasm/mathmeander_surface_wasm.js';
 import type { ParseStatus } from '@mathmeander/schema';
 
@@ -46,6 +48,26 @@ export function normalizeFresh(input: string): NormalizedMath {
 /** Transpile a canonical surface to a KaTeX-input (LaTeX-flavored) string. */
 export function toKatex(surfaceText: string): string {
   return wasmKatex(surfaceText);
+}
+
+/** Like `toKatex`, but each sub-term is wrapped in `\htmlData{path=…}` → a `data-path` per node in the
+ *  rendered DOM (precise click, F3). Render this with `katex.render {trust:true}`; pair with `surfacePaths`.
+ *  Used for DISPLAY equations + SYSTEM rows; inline keeps the cheaper untagged `toKatex`. */
+export function toKatexDisplay(surfaceText: string): string {
+  return wasmKatexDisplay(surfaceText);
+}
+
+/** One sub-term's structural path + its char-span in the canonical surface (precise click, F3). */
+export interface SurfacePath {
+  path: number[];
+  charSpan: { start: number; end: number };
+}
+
+/** Every sub-term's `(path, charSpan)` for `surfaceText` (precise click, F3). The spans index the SAME
+ *  canonical string the editor holds, so a clicked `data-path` (from `toKatexDisplay`) maps to its source
+ *  range here. */
+export function surfacePaths(surfaceText: string): SurfacePath[] {
+  return JSON.parse(wasmSurfacePaths(surfaceText)) as SurfacePath[];
 }
 
 /** Transpile a canonical surface to presentation MathML. */

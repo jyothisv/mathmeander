@@ -36,7 +36,7 @@ pub mod syntax;
 
 pub mod migrate;
 
-pub use ast::Expr;
+pub use ast::{Expr, ExprKind};
 pub use normalize::{Normalized, normalize_fresh};
 pub use path::StructuralPath;
 pub use rewrite::{RemapOutcome, SurfaceEdit, rewrite_with_remap};

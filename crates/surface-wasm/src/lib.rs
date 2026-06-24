@@ -10,7 +10,7 @@
 //! recognition, live render, and offline are all on the table, and the parser stays single-source
 //! (the Rust grammar), never reimplemented in TypeScript.
 use mathmeander_surface::{
-    CharSpan, ParseStatus, latex, normalize_fresh, parser, render, serializer,
+    CharSpan, ParseStatus, latex, normalize_fresh, parser, path, render, serializer,
 };
 use wasm_bindgen::prelude::*;
 
@@ -54,6 +54,38 @@ pub fn normalize_fresh_js(input: &str) -> String {
 #[wasm_bindgen]
 pub fn katex(surface_text: &str) -> String {
     render::katex(&parser::parse(surface_text))
+}
+
+/// Like `katex`, but each sub-term is wrapped in `\htmlData{path=…}` so the rendered DOM carries a
+/// `data-path` per node (precise click, F3). The frontend renders this with `katex.render
+/// {trust:true}`; pair with `surfacePaths` to map a clicked `data-path` → its source char-span.
+#[wasm_bindgen(js_name = katexDisplay)]
+pub fn katex_display(surface_text: &str) -> String {
+    render::katex_with_paths(&parser::parse(surface_text))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SurfacePathDto {
+    path: Vec<usize>,
+    char_span: CharSpan,
+}
+
+/// Every sub-term's `StructuralPath` (as a `number[]`) + its `CharSpan` in the VERBATIM
+/// `surface_text` → JSON `[{ path, charSpan }]` (precise click / sub-expression annotation, F3).
+/// The spans index `surface_text` EXACTLY as the editor holds it (each AST node carries the source
+/// range it was parsed from), so the mapping is robust to any input shape — spacing, brackets,
+/// packing. A clicked `data-path` (from `katexDisplay`) looks up its source span here.
+#[wasm_bindgen(js_name = surfacePaths)]
+pub fn surface_paths(surface_text: &str) -> String {
+    let dtos: Vec<SurfacePathDto> = path::verbatim_paths(surface_text)
+        .into_iter()
+        .map(|(p, span)| SurfacePathDto {
+            path: p.0,
+            char_span: span,
+        })
+        .collect();
+    serde_json::to_string(&dtos).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Transpile a canonical surface to presentation MathML.

@@ -6,6 +6,8 @@
 //! reservation, not a feature.
 
 use crate::ast::Expr;
+use crate::parser::parse;
+use crate::span::CharSpan;
 
 /// A stable path from an expression root to a sub-term (child indices, canonical order).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -50,4 +52,18 @@ fn walk<'a>(e: &'a Expr, path: StructuralPath, out: &mut Vec<(StructuralPath, &'
     for (i, c) in children.into_iter().enumerate() {
         walk(c, path.child(i), out);
     }
+}
+
+/// Every sub-term's `StructuralPath` paired with its `CharSpan` in the VERBATIM input `s`
+/// (precise click / sub-expression annotation targeting, §6.3a/§14). Parses `s` and reads each
+/// node's recorded source span (`Expr::span`) in `children()` pre-order — the SAME order the
+/// render-side `\htmlData` tagging (`latex::export_with_paths`) walks, so a clicked `data-path`
+/// resolves here to the exact source range. Robust to ANY input shape (spacing, brackets,
+/// packing): the spans index `s` directly, never a re-serialized canonical form.
+pub fn verbatim_paths(s: &str) -> Vec<(StructuralPath, CharSpan)> {
+    let e = parse(s);
+    enumerate(&e)
+        .into_iter()
+        .map(|(p, n)| (p, n.span))
+        .collect()
 }
