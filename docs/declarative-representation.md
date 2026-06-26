@@ -222,6 +222,73 @@ by-id selector. One addressing substrate under the whole system.
 
 Open: snapshot-vs-live defaults; exact path/predicate surface syntax (harmonize with mathmeander/config).
 
+## Diagrams — the illustration layer (forward-looking, §14)
+
+> Forward-looking; the engine and most primitives are §14 / later. The _frame_ (a diagram is a
+> recognized declarative region rendered by an engine; source canonical; reveal-on-click) is shared with
+> math and notation. Distilled from working through real textbook figures (set-mapping diagrams,
+> projection/equicardinality constructions, ε-neighbourhoods, homeomorphisms, function graphs with
+> qualitative shape).
+
+A diagram is **content × arrangement** in the coordinate/relational paradigms: a declarative **spec**
+(objects + relations, content-space, _never_ coordinates-as-truth) projected by a **pure layout engine**
+into a Figure; the spec is canonical and reveals on click. **Placement (inline vs block) is a render mode
+on the one engine, not two engines** — staged render-only → inline-canonical (`Inline::Diagram`) → block
+(`UnitContent::Diagram`).
+
+**Primitive vocabulary (small, closed — a new figure is a _recipe_ over it; a new geometric operation is
+a deliberate core change):**
+
+- **Frame** — a coordinate system (origin, scale, window).
+- **Point** — the universal anchor: _free_, _on-a-locus-at-a-coordinate_, or _derived_ (intersection,
+  projection-through-a-centre, function value, foot-of-perpendicular).
+- **Locus** — a parameterized 1-D object: line / axis / segment-interval / arc-circle / polygon-polyline
+  / curve. A _connector_ (segment / ray / line-through-two-points, with arrowhead + endpoint
+  decorations) is the degenerate locus between points.
+- **Region** — a 2-D area (blob / disk / ellipse / arbitrary closed shape) with **fill/shading** and
+  **containment** (`range ⊂ target`, `M_s q ⊂ M_r p`). Sometimes metric (a ball of radius r), often
+  purely illustrative (a set blob with no coordinates at all).
+- **Family / pencil** — a parameterized family (rays from a centre through {points}; samples along a
+  locus): the recipe/comprehension tier.
+- **Label** — anchored content (a real surface fragment, optionally boxed) placed near a point/locus.
+- **Style** — line style (solid/dotted/dashed/bold), point style, fill, endpoint decorations, emphasis;
+  presentation, cascaded + per-element override, never truth.
+
+**The engine is ONE constraint substrate spanning a rigid↔soft spectrum — not constructive-vs-optimised.**
+Each element's position is fixed by constraints ranging from:
+
+- **rigid / constructive** (intersection, point-on-locus-at-coordinate, circle-of-radius-r,
+  projection-through-a-centre) → _evaluated_ in dependency order (GeoGebra-style; **deterministic by
+  construction** — the "free determinism" subset); to
+- **soft / qualitative** (`A contains B`, "spread these representatively", "minimise crossings",
+  curve-by-properties) → _solved / fit_ (Penrose-style; needs the **seed + fixed-solver-order**
+  discipline — this is where FP-nondeterminism must be guarded).
+
+Pinned everywhere → pure construction; pinned nowhere → pure optimisation; **most real figures mix the
+two** (a circle + radial projection that is rigid, with representative arrows that are soft). One solver
+with a dial, not a fork.
+
+**Curves are usually specified by _properties_, not formulas — and a property-curve is a first-class
+generated element.** A curve may be given by (a) a formula (plot), (b) a construction (a locus), or
+(c) **declarative properties** ("continuous on [-2, 5], ending value > beginning, two almost-sharp
+corners; passes through these points; monotone here"). Mode (c) is the common one and is the
+conceptual-not-mechanistic ideal for curves. It slots into the existing model:
+
+- the **properties are the canonical truth; the fitted curve is a projection** (recompute from
+  properties + seed; never store the sampled curve);
+- it is a **generated element** — its features (endpoints, the two corners, a local max) are
+  **structurally addressable**, hence annotatable ("circle the first corner"); the property list _is_
+  the curve's addressable schema;
+- it is a **tiny recipe** (parameterise the corner locations, the interval, …).
+
+The fitter (properties → a representative curve) is the soft/optimised end of the engine, over a function
+space rather than point positions — genuinely hard, §14.
+
+**Annotating diagrams** reuses the selector/anchor language via a `DiagramElement` referent (a stable id
+for authored elements; a derived structural address for generated ones — `cell[i]`, `ray[k]`, "the first
+corner"). Internal marks (part of the figure, participate in layout) vs annotations (about the figure,
+overlay) split by belonging + layout-participation.
+
 ## Near-term vs far-future
 
 - **Near (build on this discipline):** snippet / notation / convention machinery; leading-cue config;
