@@ -28,6 +28,16 @@ interface FoldMeta {
 }
 const KEY = new PluginKey<FoldState>('headingFold');
 
+/** The set of currently-folded heading unitIds (view state); empty if the plugin isn't active. Exported so
+ *  `moveBlock` can decide whether a heading moves as a single line (unfolded) or with its whole subtree
+ *  (folded). */
+export function foldedSet(state: EditorState): Set<string> {
+  return KEY.getState(state)?.folded ?? new Set();
+}
+
+/** The fold plugin key — exported so a test can fold a heading (`tr.setMeta(foldPluginKey, { toggle: id })`). */
+export const foldPluginKey = KEY;
+
 /** The descendant blocks (pos + size) of a heading — its body + subsections — by the `parentId` chain. */
 export function descendantBlocks(
   doc: PMNode,
@@ -78,7 +88,9 @@ export function foldedHiddenPositions(doc: PMNode, folded: Set<string>): number[
 function foldChevron(id: string, isFolded: boolean): (view: EditorView) => HTMLElement {
   return (view) => {
     const el = document.createElement('span');
-    el.className = 'mm-fold-toggle';
+    // `is-folded` lets CSS keep a FOLDED section's chevron always visible, while an unfolded one's chevron
+    // shows only on hover (a quiet-at-rest affordance).
+    el.className = isFolded ? 'mm-fold-toggle is-folded' : 'mm-fold-toggle';
     el.textContent = isFolded ? '▸' : '▾';
     el.setAttribute('contenteditable', 'false');
     el.setAttribute('aria-label', isFolded ? 'expand section' : 'collapse section');

@@ -53,15 +53,18 @@ import {
 } from './cues';
 import { idStamper } from './idStamper';
 import { activeUnit } from './activeUnit';
+import { blockHandle } from './blockHandle';
 import { mathRecognize } from './mathRecognize';
 import { markRecognize } from './markRecognize';
 import { markLivePreview } from './markLivePreview';
 import { headingRecognize } from './headingRecognize';
+import { headingResection } from './headingResection';
 import { headingLivePreview } from './headingLivePreview';
-import { headingIndent } from './headingIndent';
 import { headingFold } from './headingFold';
 import { formattingKeymap } from './markKeys';
 import { changeHeadingDepth } from './headingDepth';
+import { moveBlock } from './moveBlock';
+import { verticalNav } from './verticalNav';
 import { wrapSelectionAsMath } from './mathWrap';
 import { transformPastedSlice, guardAtomicPaste, guardAtomicDrop } from './paste';
 import { mathLivePreview } from './mathLivePreview';
@@ -81,6 +84,14 @@ import type { SaveState } from './saveStatus';
 
 const FLUSH_IDLE_MS = 800; // network sync debounce (the draft, not this, is durability)
 const DRAFT_IDLE_MS = 200; // IndexedDB draft debounce — a draft exists within 200ms of typing
+
+// Drop prosemirror-commands' macOS `Ctrl-a`/`Ctrl-e` bindings (selectTextblockStart / selectTextblockEnd =
+// whole-BLOCK start/end). Removing them lets the browser's native macOS Ctrl-a/e move to the VISUAL LINE
+// start/end — the right behavior for our multi-line blocks. We REMOVE a remap (the line model is unchanged),
+// not add one. (No-op on platforms whose baseKeymap doesn't bind these.)
+const baseKeymapNoLineKeys: typeof baseKeymap = { ...baseKeymap };
+delete baseKeymapNoLineKeys['Ctrl-a'];
+delete baseKeymapNoLineKeys['Ctrl-e'];
 
 /** Does the restored draft still differ from the server content? (The one PM-touching restore bit.)
  *  An unparseable draft is treated as "equal" so decideRestore DISCARDS it rather than restoring junk. */
@@ -313,22 +324,42 @@ export function DayEditor({
             // rewriting the `#` prefix of the whole subtree; the recognizer + structural drain reparent it.
             // Falls through (no-op) outside a heading, so Tab elsewhere is unaffected.
             keymap({ Tab: changeHeadingDepth(1), 'Shift-Tab': changeHeadingDepth(-1) }),
+            // Alt-↑/↓ moves the current block (or a folded section) up/down; falls through at the boundary.
+            // Mod-Alt-↑/↓ (⌘⌥ on macOS) is an alias: plain ⌥+Arrow is a native macOS caret command (move by
+            // paragraph) the browser can swallow before ProseMirror sees it, so the ⌘⌥ combo is the reliable
+            // keyboard path there (the ⋮⋮ handle menu works regardless).
+            keymap({
+              'Alt-ArrowUp': moveBlock('up'),
+              'Alt-ArrowDown': moveBlock('down'),
+              'Mod-Alt-ArrowUp': moveBlock('up'),
+              'Mod-Alt-ArrowDown': moveBlock('down'),
+            }),
+            // Bare ArrowUp/ArrowDown: native vertical caret nav STALLS when the next/prev block is a rendered
+            // display-math line (source display:none, only a contentEditable=false KaTeX widget → no caret
+            // target, and we have no gapcursor). This escape hatch lands the caret ON such a block (revealing
+            // its source) so motion resumes; it returns false (→ native) in every other case, so it never
+            // shadows real vertical nav (incl. within-block hard_break lines + Shift+Arrow). See verticalNav.ts.
+            keymap({
+              ArrowUp: verticalNav('up'),
+              ArrowDown: verticalNav('down'),
+            }),
             // Input rules (ONE plugin — PM fires only one inputRules plugin's handleTextInput): the type cue
             // (`Thm.` etc.); the `# `/`## ` heading cue and the `$$…$$` display cue, which SPLIT the line onto
             // its own block so the construct is recognized on ANY line, not just a block's first (the rules are
             // disjoint — word vs `#` vs the closing `$$`). Inline `$…$` still needs no rule (mathRecognize scans).
             inputRules({ rules: [cueRule, headingCueRule, displayCueRule] }),
-            keymap(baseKeymap),
+            keymap(baseKeymapNoLineKeys), // Ctrl-a/Ctrl-e dropped → native visual-line nav (see above)
             idStamper,
-            headingRecognize, // scan a block's leading `#`×n → set heading/parentId (depth); demote when gone
+            headingRecognize, // scan a block's leading `#`×n → set the heading flag; demote when gone
+            headingResection, // derive every block's parentId from the `#`-depth sequence (sections nest)
             mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr (skips headings)
             markRecognize, // scan `**…**`/`*…*`/`~~…~~`/`` `…` `` → the styled mark (after math; math wins)
             headingLivePreview, // hide the `#` prefix when the caret is out of the heading; dim it when in
-            headingIndent, // indent each block by its section depth (view-only; from the parentId chain)
             headingFold, // collapse/expand a section (chevron widget hides descendants; view-only)
             mathLivePreview, // render KaTeX over a marked span (inline on caret-out; display always, centered)
             markLivePreview, // hide the markdown delimiters when the caret is out; reveal on touch (like math)
             activeUnit,
+            blockHandle, // a ⋮⋮ hover handle in the left gutter; click → Move up / Move down menu
           ],
         }),
         // Type `$` over a SELECTION → wrap it in `$…$` (a 2nd `$` over an inline equation → `$$…$$` display).

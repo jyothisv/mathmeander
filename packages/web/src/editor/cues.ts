@@ -570,19 +570,36 @@ export const mergeIntoPrevious: Command = (state, dispatch) => {
   if (!$cursor || $cursor.parent.type.name !== 'prose') return false;
   if ($cursor.parentOffset !== 0 || $cursor.parent.attrs.unitType != null) return false;
   // §B: a heading is ATOMIC for a backward block-join — never merge a section TITLE into the previous block
-  // (offset 0 is reachable via Home, past the hidden `# ` prefix). Swallow: the caret stays at the title
-  // start, no merge. (Demote first — delete the `#` — to then merge it as plain prose.)
-  if ($cursor.parent.attrs.heading) return true;
+  // (offset 0 is reachable via Home, past the hidden `# ` prefix). BUT if the PREVIOUS block is EMPTY, delete
+  // it so the heading moves up (the mirror of the empty-body case below). DELETE the empty prev — NOT a join,
+  // which would merge the heading INTO the prose block and DEMOTE it. Non-empty prev (or none) → swallow (no
+  // merge; demote the heading first — delete its `#` — to merge it as plain prose).
+  if ($cursor.parent.attrs.heading) {
+    const hPos = $cursor.before(); // the heading's start (= the previous block's end boundary)
+    const prevBlock = state.doc.resolve(hPos).nodeBefore;
+    if (prevBlock && prevBlock.type.name === 'prose' && prevBlock.content.size === 0) {
+      if (dispatch) {
+        const hStart = hPos - prevBlock.nodeSize; // the empty prev's start; the heading shifts here
+        const tr = state.tr.delete(hStart, hPos);
+        dispatch(tr.setSelection(TextSelection.create(tr.doc, hStart + 1)).scrollIntoView());
+      }
+    }
+    return true;
+  }
   const bPos = $cursor.before(); // boundary just before this block (= previous block's end)
   const prev = state.doc.resolve(bPos).nodeBefore;
   if (!prev || prev.type.name !== 'prose') return false;
-  // §B: never merge body text INTO a section TITLE (a heading owns its body as children, not as title text).
-  // Like the display-block guard, refuse the join non-destructively — land the caret at the title's end.
+  // §B: the body block sits under a section TITLE. An EMPTY body block is DELETED (the normal
+  // empty-block-Backspace behavior — same as for a non-heading prev, where an empty block merges away);
+  // a NON-empty block is protected (never merge body TEXT into a title). Empty → join it into the heading
+  // (dissolves the empty block; the title content is unchanged), caret at the title end. Non-empty → refuse
+  // non-destructively, caret at the title end. (Demote the heading — delete its `#` — to merge as plain prose.)
   if (prev.attrs.heading) {
-    if (dispatch)
-      dispatch(
-        state.tr.setSelection(Selection.near(state.doc.resolve(bPos - 1), -1)).scrollIntoView(),
-      );
+    if (dispatch) {
+      const tr = state.tr;
+      if ($cursor.parent.content.size === 0) tr.join(bPos); // empty → remove this block
+      dispatch(tr.setSelection(Selection.near(tr.doc.resolve(bPos - 1), -1)).scrollIntoView());
+    }
     return true;
   }
   if (dispatch) {

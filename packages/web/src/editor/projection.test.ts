@@ -1147,6 +1147,18 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
     ]);
   });
 
+  it('structuralIntents IGNORES an EMPTY not-on-server block (no phantom intent that wedges autosave)', () => {
+    // An empty line under a heading (Enter under a heading; the trailing placeholder after a config) is
+    // stamped but NEVER sent by the flush — counting its parent as a pending intent latches 'Unsaved' forever
+    // ("couldn't save"). A NON-empty new block (above) is still tracked.
+    const baseline = content([prose('u1', 0, 'A')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [editorSchema.text('A')]),
+      editorSchema.nodes.prose.create({ unitId: 'empty1', parentId: 'u1' }), // empty + not on server → skipped
+    ]);
+    expect(structuralIntents(doc, baseline)).toEqual([]);
+  });
+
   // A minimal Equations container unit (no rows needed for the isEditable negative).
   function mathSystemContainer(id: string, position: number): Unit {
     return {

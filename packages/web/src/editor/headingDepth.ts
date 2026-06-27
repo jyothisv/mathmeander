@@ -28,8 +28,8 @@ export function isDescendantOf(
 
 /** The doc positions of the HEADING blocks in a heading's subtree (the heading itself + every descendant
  *  heading — the blocks that carry a `#` prefix to shift). Body (non-heading) descendants need no text
- *  change: their `parentId` is unchanged and `reparent_unit` moves them with the section canonically; their
- *  visual depth (headingIndent) recomputes from the chain. Returned in DESCENDING position order so editing
+ *  change: their `parentId` is unchanged and `reparent_unit` moves them with the section canonically.
+ *  Returned in DESCENDING position order so editing
  *  the `#` runs left-to-untouched stays position-stable. */
 export function subtreeHeadingPositions(
   doc: PMNode,
@@ -91,14 +91,11 @@ export function changeHeadingDepth(delta: 1 | -1): Command {
         if (delta === 1) tr.insertText('#', at);
         else tr.delete(at, at + 1);
       }
-      // Set the moved heading's parentId DIRECTLY so the recognizer's single post-pass sees a consistent
-      // doc (headingRecognize's appendTransaction runs ONCE, not to a fixpoint — a stale ancestor would
-      // otherwise mis-reparent descendants). `headingPos` is unmoved (all `#` edits are at ≥ headingPos+1).
-      // INVARIANT (shared with headingRecognize + projection.flushToContent): a heading's parentId must stay
-      // DERIVABLE from its live `#` count via `parentForHeadingDepth` (the recognizer recomputes it that way,
-      // and reload re-derives it). So depth changes by shifting the `#` PREFIX (above) — never parentId alone;
-      // `newParent` here equals what `parentForHeadingDepth` yields for the new `#` count, so they agree.
-      tr.setNodeAttribute(headingPos, 'parentId', newParent);
+      // We DON'T set parentId here: `headingResection` (the appendTransaction that OWNS parentId, run to a
+      // fixpoint after this dispatch) re-derives every block's parentId from the new `#`-depth sequence — a
+      // direct set would only recompute the same value. INVARIANT (shared with projection.flushToContent): a
+      // heading's parentId stays DERIVABLE from its live `#` count, so a depth change shifts the `#` PREFIX
+      // (above), never parentId alone. (`newParent` above is still used for the indent clamp guard.)
       dispatch(tr.scrollIntoView());
     }
     return true;

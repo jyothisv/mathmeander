@@ -77,6 +77,19 @@ function mathUnit(
   };
 }
 
+/** A rough `config` (notation home) unit — the family-tagged declarative source block. */
+function configUnit(objectId: string, position: number, source: string, id = uuidv7()): Unit {
+  return {
+    id,
+    object_id: objectId,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'config', family: 'notation', source },
+    provenance_id: uuidv7(),
+  };
+}
+
 function save(
   objectId: string,
   body: { expected_revision: number; upserts: Unit[]; deletes: string[] },
@@ -282,6 +295,109 @@ describe('save_content: prose authoring', () => {
     expect(res.statusCode).toBe(422);
     expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
     expect(await unitCount(dayId)).toBe(1);
+  });
+});
+
+// Regression (migration 0008): moving the notation `config` block to the top shifts a sibling HEADING's
+// position, so the editor's coarse delta carries that heading (touched → deleted+reinserted) but NOT its
+// body child (position WITHIN the heading unchanged). The partial delete then transiently dangles the
+// child's self-parent FK (and the position cascade can collide) — which 422'd ("couldn't save") until 0008
+// made the self-parent FK + position UNIQUE DEFERRABLE so persistContentDelta's existing `SET CONSTRAINTS
+// ALL DEFERRED` defers them to a valid COMMIT. (save_content can't mint a heading — that's toggle_heading's
+// job — so the heading-with-child is set up via the real §B structural ops, exactly as the editor does.)
+describe('save_content: reorder shifting a heading whose child is untouched', () => {
+  const toggleHeading = (objectId: string, unitId: string, expectedRevision: number) =>
+    stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${objectId}/ops/toggle-heading`,
+      headers: bearer(token),
+      payload: { expected_revision: expectedRevision, unit_id: unitId },
+    });
+  const reparentUnit = (
+    objectId: string,
+    unitId: string,
+    newParentUnitId: string | null,
+    newPosition: number,
+    expectedRevision: number,
+  ) =>
+    stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${objectId}/ops/reparent-unit`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: expectedRevision,
+        unit_id: unitId,
+        new_parent_unit_id: newParentUnitId,
+        new_position: newPosition,
+      },
+    });
+  async function rowsOf(objectId: string) {
+    const r = await stack.db.query<{
+      id: string;
+      position: number;
+      content_kind: string;
+      parent_unit_id: string | null;
+    }>(
+      `SELECT id, position, content_kind, parent_unit_id FROM content_units
+       WHERE object_id = $1 ORDER BY parent_unit_id NULLS FIRST, position`,
+      [objectId],
+    );
+    return r.rows;
+  }
+
+  it('moves the notation config to the top — a shifted heading keeps its untouched child (no 422)', async () => {
+    const dayId = await newDay();
+    const xId = uuidv7(); // future heading
+    const yId = uuidv7(); // future child of that heading
+    const cId = uuidv7(); // the notation config block
+
+    // Author three top-level units (save_content can't mint a heading — that's toggle_heading's job).
+    const r1 = await save(dayId, {
+      expected_revision: 1,
+      upserts: [
+        proseUnit(dayId, 0, 'Section', xId),
+        proseUnit(dayId, 1, 'body of the section', yId),
+        configUnit(dayId, 2, 'Z := ZZ', cId),
+      ],
+      deletes: [],
+    });
+    expect(r1.statusCode).toBe(200);
+
+    // Promote X to a §B heading, then move Y UNDER it → a heading with a child (top-level: X@0, config@1).
+    expect((await toggleHeading(dayId, xId, 2)).statusCode).toBe(200);
+    const r3 = await reparentUnit(dayId, yId, xId, 0, 3);
+    expect(r3.statusCode).toBe(200);
+    const canonical = (r3.json() as { outcome: { content: { revision: number; units: Unit[] } } })
+      .outcome.content;
+    const cfg = canonical.units.find((u) => u.id === cId)!;
+    const heading = canonical.units.find((u) => u.id === xId)!;
+    expect(heading.content.kind).toBe('heading');
+
+    // The reproducer: move config to the top (config→0, heading→1). Re-emit ONLY those two top-level units;
+    // OMIT the child Y (its within-heading position is unchanged) — exactly what the editor flushes. The
+    // partial delete drops the position-shifted heading while Y still references it: pre-0008 a pg 23503 →
+    // 422 "couldn't save"; post-0008 the deferred self-parent FK holds to a valid COMMIT.
+    const res = await save(dayId, {
+      expected_revision: canonical.revision,
+      upserts: [
+        { ...cfg, position: 0 },
+        { ...heading, position: 1 },
+      ],
+      deletes: [],
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { error?: { code: string } }).error?.code).not.toBe(
+      'content_save_invalid',
+    );
+
+    // config now first; the heading's child survived under it — no orphan loss.
+    expect(await unitCount(dayId)).toBe(3);
+    const rows = await rowsOf(dayId);
+    const top = rows
+      .filter((r) => r.parent_unit_id === null)
+      .sort((a, b) => a.position - b.position);
+    expect(top.map((r) => r.content_kind)).toEqual(['config', 'heading']);
+    expect(rows.find((r) => r.parent_unit_id === xId)?.content_kind).toBe('prose'); // child Y kept
   });
 });
 

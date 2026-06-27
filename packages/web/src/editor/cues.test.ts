@@ -526,6 +526,69 @@ describe('§B section attrs on split / merge', () => {
     expect(captured!.doc.child(0).textContent).toBe('Title');
     expect(captured!.doc.child(1).textContent).toBe('body');
   });
+
+  it('Backspace in an EMPTY body block after a heading DELETES it — #4b', () => {
+    // Unlike a NON-empty body (refused above), an EMPTY body block is removed on Backspace (the normal
+    // empty-block behavior), the caret landing at the title's end. The heading itself is untouched.
+    const headingBlock = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('Title'),
+    ]);
+    const bodyBlock = editorSchema.nodes.prose.create({ unitId: 'b1', parentId: 'h1' }); // EMPTY
+    const doc = editorSchema.nodes.doc.create(null, [headingBlock, bodyBlock]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, headingBlock.nodeSize + 1)),
+    );
+    let captured: Transaction | null = null;
+    const handled = mergeIntoPrevious(state, (tr) => {
+      captured = tr;
+    });
+    expect(handled).toBe(true);
+    expect(captured!.doc.childCount).toBe(1); // the empty body is gone
+    expect(captured!.doc.child(0).textContent).toBe('Title'); // heading intact
+    expect(captured!.doc.child(0).attrs.heading as boolean).toBe(true);
+  });
+
+  it('Backspace at a heading START with an EMPTY previous block deletes it (heading moves up) — #5', () => {
+    const emptyPrev = editorSchema.nodes.prose.create({ unitId: 'b0' }); // EMPTY block above the heading
+    const headingBlock = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('Title'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [emptyPrev, headingBlock]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    // caret at the heading start (offset 0): just inside the heading's open token
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, emptyPrev.nodeSize + 1)),
+    );
+    let captured: Transaction | null = null;
+    const handled = mergeIntoPrevious(state, (tr) => {
+      captured = tr;
+    });
+    expect(handled).toBe(true);
+    expect(captured!.doc.childCount).toBe(1); // the empty prev is gone — heading moved up
+    expect(captured!.doc.child(0).attrs.heading as boolean).toBe(true); // heading PRESERVED (not demoted)
+    expect(captured!.doc.child(0).textContent).toBe('Title');
+  });
+
+  it('Backspace at a heading START with a NON-empty previous block is swallowed (no merge/delete) — #5', () => {
+    const prevBlock = editorSchema.nodes.prose.create({ unitId: 'b0' }, [
+      editorSchema.text('prev'),
+    ]);
+    const headingBlock = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('Title'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [prevBlock, headingBlock]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, prevBlock.nodeSize + 1)),
+    );
+    let captured: Transaction | null = null;
+    const handled = mergeIntoPrevious(state, (tr) => {
+      captured = tr;
+    });
+    expect(handled).toBe(true); // swallowed
+    expect(captured).toBeNull(); // nothing deleted, title not merged into the prev
+  });
 });
 
 describe('§B headingEnter (Enter in a heading flows body under it)', () => {

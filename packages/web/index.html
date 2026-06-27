@@ -56,7 +56,9 @@
       .day-editor .ProseMirror {
         outline: none;
         min-height: 8rem;
-        padding: 0.75rem;
+        /* Extra LEFT padding = a gutter for margin affordances (the fold chevron; the hover block handle),
+           so they sit to the LEFT of the text instead of eating into it. */
+        padding: 0.75rem 0.75rem 0.75rem 2.2rem;
         border: 1px solid rgba(127, 127, 127, 0.25);
         border-radius: 6px;
         /* ProseMirror requires this — without it the browser collapses trailing spaces, which breaks
@@ -67,6 +69,8 @@
         margin: 0 0 0.6rem;
         border-radius: 4px;
         transition: box-shadow 0.12s ease;
+        /* Positioning context for the margin affordances (fold chevron, block handle) that sit in the gutter. */
+        position: relative;
       }
       /* Reveal a unit's boundary only when you're working in it (hover, or the caret is inside — the
          `unit-active` decoration): a quiet left gutter, so plain prose reads clean at rest while the
@@ -150,37 +154,79 @@
         opacity: 0.35;
         font-weight: 400;
       }
-      /* §B outline indentation (slice 3c): the headingIndent plugin tags each block `.mm-depth-N` by its
-         section nesting depth (a top-level heading is flush-left = no class; its body is one step in; a
-         subsection one more, etc.). margin-left (not padding) so the hover/active left gutter still reads.
-         Capped at 6 levels. View-only — depth lives in the parentId chain, never in the canonical content. */
-      .day-editor .ProseMirror p.mm-depth-1 {
-        margin-left: 1.25rem;
-      }
-      .day-editor .ProseMirror p.mm-depth-2 {
-        margin-left: 2.5rem;
-      }
-      .day-editor .ProseMirror p.mm-depth-3 {
-        margin-left: 3.75rem;
-      }
-      .day-editor .ProseMirror p.mm-depth-4 {
-        margin-left: 5rem;
-      }
-      .day-editor .ProseMirror p.mm-depth-5 {
-        margin-left: 6.25rem;
-      }
-      .day-editor .ProseMirror p.mm-depth-6 {
-        margin-left: 7.5rem;
-      }
       /* §B section folding (slice 3c): a chevron widget (▸ folded / ▾ expanded) sits before each foldable
          heading; folding hides the heading's descendant blocks. View-only — fold state never touches the
          canonical content. */
       .day-editor .mm-fold-toggle {
+        /* Strictly in the LEFT GUTTER (absolute, into the editor's left padding) — never eats title width. */
+        position: absolute;
+        left: -1rem;
         cursor: pointer;
         user-select: none;
         color: rgba(110, 110, 150, 0.7);
-        margin-right: 0.25rem;
         font-size: 0.8em;
+        /* Quiet at rest: an UNFOLDED section's chevron appears only on hover (rule below); a FOLDED one is
+           always shown (.is-folded below) so the collapsed state is discoverable without hovering. */
+        opacity: 0;
+        transition: opacity 0.1s ease;
+      }
+      .day-editor .ProseMirror p:hover .mm-fold-toggle {
+        opacity: 1;
+      }
+      .day-editor .mm-fold-toggle.is-folded {
+        opacity: 1;
+      }
+      /* Notion-style per-block handle: a ⋮⋮ grip in the gutter (farther left than the fold chevron), shown on
+         hover / when the block is active. Click → the Move up / Move down menu. */
+      .day-editor .mm-block-handle {
+        position: absolute;
+        left: -1.8rem;
+        top: 50%;
+        transform: translateY(-50%); /* vertically centered on the block */
+        cursor: grab;
+        user-select: none;
+        color: rgba(110, 110, 150, 0.45);
+        font-size: 0.85em;
+        opacity: 0;
+        transition: opacity 0.1s ease;
+      }
+      .day-editor .ProseMirror p:hover .mm-block-handle,
+      .day-editor .ProseMirror p.unit-active .mm-block-handle {
+        opacity: 1;
+      }
+      /* The config (notation) block renders as div.mm-config, NOT a <p> — the reveal rules above (scoped to
+         `p`) miss it, and without a positioning context the absolute handle lands in the wrong place. Give the
+         config block the same gutter affordance: a relative context + reveal the ⋮⋮ handle on hover. */
+      .day-editor .ProseMirror .mm-config {
+        position: relative;
+      }
+      .day-editor .ProseMirror .mm-config:hover .mm-block-handle {
+        opacity: 1;
+      }
+      .mm-block-menu {
+        position: absolute;
+        z-index: 50;
+        background: #fff;
+        border: 1px solid rgba(127, 127, 127, 0.3);
+        border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+        padding: 0.25rem;
+        display: flex;
+        flex-direction: column;
+        min-width: 8rem;
+      }
+      .mm-block-menu button {
+        text-align: left;
+        background: none;
+        border: none;
+        padding: 0.35rem 0.6rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+      }
+      .mm-block-menu button:hover {
+        background: rgba(125, 125, 165, 0.15);
       }
       .day-editor .ProseMirror p.mm-folded-hidden {
         display: none;

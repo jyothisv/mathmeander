@@ -1,7 +1,8 @@
-// headingRecognize: the `#` markers are KEPT as text; this appendTransaction reconciles the
-// `heading`/`parentId` attrs from the live `#` count (promote on gaining a prefix, re-depth on a count
-// change, demote on losing it). EditorState.apply runs the plugin's appendTransaction, so the asserted
-// state reflects the recognizer.
+// headingRecognize: the `#` markers are KEPT as text; this appendTransaction reconciles the `heading` FLAG
+// from the live `#` count (promote on gaining a prefix, demote on losing it). `parentId` is NOT its job —
+// the holistic re-section (headingResection) derives parentId from the `#`-depth sequence (see
+// headingResection.test.ts). EditorState.apply runs the plugin's appendTransaction, so the asserted state
+// reflects the recognizer.
 import { describe, expect, it } from 'vitest';
 import { EditorState } from 'prosemirror-state';
 import type { Node } from 'prosemirror-model';
@@ -17,42 +18,21 @@ const docOf = (...blocks: Node[]): Node => editorSchema.nodes.doc.create(null, b
 const withReco = (doc: Node): EditorState =>
   EditorState.create({ schema: editorSchema, doc, plugins: [headingRecognize] });
 
-describe('headingRecognize — `#` recognition (kept, not consumed)', () => {
-  it('PROMOTES a plain block to a top-level heading when it gains a leading "# "', () => {
+describe('headingRecognize — `#` flag recognition (kept, not consumed)', () => {
+  it('PROMOTES a plain block to a heading when it gains a leading "# "', () => {
     const s = withReco(docOf(prose('b1', 'x')));
     const next = s.apply(s.tr.insertText('# ', 1)); // "x" → "# x"
     expect(next.doc.firstChild!.attrs.heading).toBe(true);
-    expect(next.doc.firstChild!.attrs.parentId ?? null).toBe(null);
     expect(next.doc.firstChild!.textContent).toBe('# x'); // the hashes are KEPT
   });
 
-  it('"## " nests under the preceding top-level heading (depth 2)', () => {
+  it('a deeper "## " also promotes to a heading (the flag; depth/parentId is re-section’s job)', () => {
     const h1 = prose('h1', '# Sec', { heading: true });
     const b2 = prose('b2', 'x');
     const s = withReco(docOf(h1, b2));
     const start = h1.nodeSize + 1; // b2 content start
     const next = s.apply(s.tr.insertText('## ', start)); // b2 → "## x"
     expect(next.doc.child(1).attrs.heading).toBe(true);
-    expect(next.doc.child(1).attrs.parentId).toBe('h1');
-  });
-
-  it('clamps a skipped level ("### " with only a "#" above → child of the "#", depth 2)', () => {
-    const h1 = prose('h1', '# Sec', { heading: true });
-    const b2 = prose('b2', 'x');
-    const s = withReco(docOf(h1, b2));
-    const start = h1.nodeSize + 1;
-    const next = s.apply(s.tr.insertText('### ', start)); // b2 → "### x"
-    expect(next.doc.child(1).attrs.parentId).toBe('h1'); // clamped (can't jump depth 1 → 3)
-  });
-
-  it('re-derives depth when the "#" count changes (## → #)', () => {
-    const h1 = prose('h1', '# Sec', { heading: true });
-    const h2 = prose('h2', '## Sub', { heading: true, parentId: 'h1' });
-    const s = withReco(docOf(h1, h2));
-    const h2start = h1.nodeSize + 1;
-    const next = s.apply(s.tr.delete(h2start, h2start + 1)); // "## Sub" → "# Sub"
-    expect(next.doc.child(1).attrs.heading).toBe(true);
-    expect(next.doc.child(1).attrs.parentId ?? null).toBe(null); // now depth 1 → top-level
   });
 
   it('DEMOTES a heading when its "#" prefix is deleted', () => {

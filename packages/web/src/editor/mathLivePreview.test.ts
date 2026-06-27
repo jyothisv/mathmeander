@@ -13,7 +13,7 @@ vi.mock('./mathRuntime', () => ({ isMathRuntimeReady: () => true, toKatex: (s: s
 
 import type { MathExpression } from '@mathmeander/schema';
 import { editorSchema } from './schema';
-import { mathLivePreview } from './mathLivePreview';
+import { hiddenMathLineAt, mathLivePreview } from './mathLivePreview';
 
 const MARK = editorSchema.marks.mathExpr;
 
@@ -108,5 +108,67 @@ describe('mathLivePreview — open-region coloring', () => {
   it('does not color when the caret is before the $', () => {
     const d = doc({ text: 'a $x' });
     expect(decosIn(d, 2, 1, 5)).toHaveLength(0); // caret at the space before "$x"
+  });
+});
+
+describe('hiddenMathLineAt — the verticalNav bridge predicate (no-native-caret math lines)', () => {
+  const br = (): Node => editorSchema.nodes.hard_break.create();
+  const sysMark = MARK.create({ expr: expr('sys', '$$\na=b\nc=d\n$$'), display: true });
+  const d = editorSchema.nodes.doc.create(null, [
+    editorSchema.nodes.prose.create({ unitId: 'a' }, editorSchema.text('plain')),
+    editorSchema.nodes.prose.create({ unitId: 'd1' }, [
+      editorSchema.text('$$x$$', [MARK.create({ expr: expr('m1', 'x'), display: true })]),
+    ]),
+    editorSchema.nodes.prose.create({ unitId: 'sys' }, [
+      editorSchema.text('$$', [sysMark]),
+      br(),
+      editorSchema.text('a=b', [sysMark]),
+      br(),
+      editorSchema.text('c=d', [sysMark]),
+      br(),
+      editorSchema.text('$$', [sysMark]),
+    ]),
+    editorSchema.nodes.prose.create({ unitId: 'mix' }, [
+      editorSchema.text('see '),
+      editorSchema.text('$y$', [MARK.create({ expr: expr('m3', 'y') })]),
+      editorSchema.text(' ok'),
+    ]),
+    editorSchema.nodes.prose.create({ unitId: 'sole' }, [
+      editorSchema.text('$z$', [MARK.create({ expr: expr('m4', 'z') })]),
+    ]),
+  ]);
+  const posOf = (id: string): number => {
+    let p = -1;
+    d.forEach((n, off) => {
+      if (n.attrs.unitId === id) p = off;
+    });
+    return p;
+  };
+  const blockOf = (id: string): Node => d.nodeAt(posOf(id))!;
+  const caretIn = (id: string): EditorState =>
+    EditorState.create({
+      schema: editorSchema,
+      doc: d,
+      plugins: [mathLivePreview],
+      selection: TextSelection.create(d, posOf(id) + 1),
+    });
+
+  it('a single $$…$$ display block has no caret line when the caret is away', () => {
+    expect(hiddenMathLineAt(caretIn('a'), posOf('d1'), blockOf('d1'))).toBe(true);
+  });
+  it('a MULTI-LINE system $$…$$ block has no caret line when away (the multi-line must-fix)', () => {
+    expect(hiddenMathLineAt(caretIn('a'), posOf('sys'), blockOf('sys'))).toBe(true);
+  });
+  it('a block whose SOLE content is inline $…$ has no caret line when away', () => {
+    expect(hiddenMathLineAt(caretIn('a'), posOf('sole'), blockOf('sole'))).toBe(true);
+  });
+  it('a MIXED text+math block keeps a caret line (not a trap)', () => {
+    expect(hiddenMathLineAt(caretIn('a'), posOf('mix'), blockOf('mix'))).toBe(false);
+  });
+  it('a display block is navigable once the caret is INSIDE it (source revealed)', () => {
+    expect(hiddenMathLineAt(caretIn('d1'), posOf('d1'), blockOf('d1'))).toBe(false);
+  });
+  it('a plain prose block is never a hidden math line', () => {
+    expect(hiddenMathLineAt(caretIn('a'), posOf('a'), blockOf('a'))).toBe(false);
   });
 });

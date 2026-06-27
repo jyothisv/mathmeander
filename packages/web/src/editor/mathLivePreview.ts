@@ -411,3 +411,36 @@ export const mathLivePreview = new Plugin<PluginState>({
     },
   },
 });
+
+/** Is the top-level block at doc position `blockPos` currently a HIDDEN math line — one whose ENTIRE on-screen
+ *  content is a rendered math region right now (source `display:none`, only a contentEditable=false widget),
+ *  so it has NO native text caret target? True for a whole-block `$$…$$` equation OR multi-line SYSTEM (one
+ *  display span over the block — multi-line is handled by computeSpans, not re-derived here), AND the
+ *  degenerate case of a block whose sole content is inline `$…$` spans — in BOTH only while the selection is
+ *  AWAY (so mathLivePreview applies `math-hidden`). Reuses the plugin's CACHED spans + the SAME `touches` test
+ *  as decorations(), so the two can't drift. `verticalNav` uses this to bridge the caret across such a block,
+ *  which the browser's geometry-based vertical nav cannot land on (the intermittent Up/Down stall). */
+export function hiddenMathLineAt(state: EditorState, blockPos: number, block: PMNode): boolean {
+  if (block.type.name !== 'prose' || block.content.size === 0) return false;
+  const ps = KEY.getState(state);
+  if (!ps) return false;
+  const contentStart = blockPos + 1;
+  const contentEnd = contentStart + block.content.size;
+  const { from: selFrom, to: selTo } = state.selection;
+  const touches = (from: number, to: number): boolean => selFrom <= to && selTo >= from;
+  // A display equation / system is ONE span over the whole block content.
+  const display = ps.spans.find((s) => s.display && s.from === contentStart && s.to === contentEnd);
+  if (display) return !touches(display.from, display.to);
+  // Degenerate: a block whose ENTIRE content is inline math spans (a sole `$x$` line), all currently hidden.
+  // A gap (plain text) or any touched span ⇒ a real caret line exists ⇒ NOT a trap.
+  const inline = ps.spans
+    .filter((s) => !s.display && s.from >= contentStart && s.to <= contentEnd)
+    .sort((a, b) => a.from - b.from);
+  if (inline.length === 0) return false;
+  let cursor = contentStart;
+  for (const s of inline) {
+    if (s.from !== cursor || touches(s.from, s.to)) return false;
+    cursor = s.to;
+  }
+  return cursor === contentEnd;
+}

@@ -281,7 +281,7 @@ ALTER TABLE ONLY public.content_units
 --
 
 ALTER TABLE ONLY public.content_units
-    ADD CONSTRAINT content_units_object_id_parent_unit_id_position_key UNIQUE NULLS NOT DISTINCT (object_id, parent_unit_id, "position");
+    ADD CONSTRAINT content_units_object_id_parent_unit_id_position_key UNIQUE NULLS NOT DISTINCT (object_id, parent_unit_id, "position") DEFERRABLE;
 
 
 --
@@ -537,7 +537,7 @@ ALTER TABLE ONLY public.content_units
 --
 
 ALTER TABLE ONLY public.content_units
-    ADD CONSTRAINT content_units_parent_unit_id_object_id_fkey FOREIGN KEY (parent_unit_id, object_id) REFERENCES public.content_units(id, object_id);
+    ADD CONSTRAINT content_units_parent_unit_id_object_id_fkey FOREIGN KEY (parent_unit_id, object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
 
 
 --
@@ -774,4 +774,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0004'),
     ('0005'),
     ('0006'),
-    ('0007');
+    ('0007'),
+    ('0008');

@@ -887,7 +887,11 @@ export function structuralNeeds(doc: Node, server: MathContent): StructuralNeed[
   const reparents: StructuralNeed[] = [];
   const posByParent = new Map<string | null, number>();
   doc.forEach((block) => {
-    if (block.type.name !== 'prose') return;
+    const name = block.type.name;
+    // Count BOTH prose and config blocks in the per-parent position counter so these indices match
+    // flushToContent's `nextPos` (which counts the config block too); a mismatch would hand reparent_unit a
+    // wrong absolute index. Only prose blocks ever toggle/reparent, though — config is positioned, not moved.
+    if (name !== 'prose' && name !== 'config') return;
     const wantParent = (block.attrs.parentId as string | null) ?? null;
     // Target index among the block's intended siblings (all doc blocks sharing this parent, in order) —
     // reparent_unit places at this index then renumbers gap-free, so an approximate index self-corrects.
@@ -899,6 +903,7 @@ export function structuralNeeds(doc: Node, server: MathContent): StructuralNeed[
     // server baseline (recompute per drained op) instead of this one-shot doc scan.
     const newPosition = posByParent.get(wantParent) ?? 0;
     posByParent.set(wantParent, newPosition + 1);
+    if (name !== 'prose') return; // config: counted for position parity, but never toggled/reparented
     const unitId = block.attrs.unitId as string | null;
     if (!unitId) return; // brand-new — created prose-first by save_content; structure on a later drain
     const srv = serverById.get(unitId);
@@ -928,6 +933,12 @@ export function structuralIntents(doc: Node, baseline: MathContent): StructuralI
     const wantHeading = (block.attrs.heading as boolean) ?? false;
     const wantParent = (block.attrs.parentId as string | null) ?? null;
     const base = baseById.get(unitId);
+    // An EMPTY block not yet on the server is NEVER sent by the flush (it drops empty, not-on-server blocks),
+    // so a parent/heading "intent" on it can never be satisfied — counting it would wedge autosave in the
+    // 'Unsaved' state forever (an empty line under a heading; the trailing placeholder after a config block).
+    // A real empty unit that IS on the server, and any non-empty new block, stay tracked. (An empty TYPED cue
+    // keeps its draft via typeIntents, the type axis — not this structural one.)
+    if (block.content.size === 0 && !base) return;
     const baseHeading = base ? base.content.kind === 'heading' : false;
     const baseParent = base ? (base.parent_unit_id ?? null) : null; // not in baseline → null
     if (wantHeading !== baseHeading || wantParent !== baseParent)

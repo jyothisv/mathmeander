@@ -11,6 +11,7 @@ import type { MathContent, Unit } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { changeHeadingDepth } from './headingDepth';
 import { headingRecognize } from './headingRecognize';
+import { headingResection } from './headingResection';
 import { structuralNeeds } from './projection';
 
 const prose = (unitId: string, text: string, attrs: Record<string, unknown> = {}): Node =>
@@ -20,9 +21,14 @@ const prose = (unitId: string, text: string, attrs: Record<string, unknown> = {}
   );
 const docOf = (...blocks: Node[]): Node => editorSchema.nodes.doc.create(null, blocks);
 
-/** A state with headingRecognize; caret at content offset `o` of block `i`. */
+/** A state with the real heading pair (recognize sets the flag, resection derives parentId); caret at
+ *  content offset `o` of block `i`. */
 function stateAt(doc: Node, i: number, o: number): EditorState {
-  const base = EditorState.create({ schema: editorSchema, doc, plugins: [headingRecognize] });
+  const base = EditorState.create({
+    schema: editorSchema,
+    doc,
+    plugins: [headingRecognize, headingResection],
+  });
   let pos = 0;
   for (let k = 0; k < i; k++) pos += doc.child(k).nodeSize;
   return base.apply(base.tr.setSelection(TextSelection.create(base.doc, pos + 1 + o)));
