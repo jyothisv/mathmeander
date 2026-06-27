@@ -13,6 +13,7 @@ import type {
   Link,
   MathContent,
   MathpackGraph,
+  NotebookDetail,
   ObjectVersion,
   OpOutcome,
   Provenance,
@@ -243,6 +244,7 @@ function mergeSubgraph(into: MathpackGraph, sub: MathpackGraph): void {
   into.object_versions.push(...sub.object_versions);
   into.definition_details.push(...sub.definition_details);
   into.journal_day_details.push(...sub.journal_day_details);
+  into.notebook_details.push(...sub.notebook_details);
   const tagIds = new Set(into.tags.map((t) => t.id));
   for (const t of sub.tags) if (!tagIds.has(t.id)) into.tags.push(t);
   const taggingIds = new Set(into.taggings.map((t) => t.id));
@@ -323,6 +325,13 @@ async function loadOneSubgraph(
       [objectId],
     )
   ).rows.map((r) => ({ object_id: r.object_id, date: r.date }) satisfies JournalDayDetail);
+  // §B: a notebook's slug travels with its subgraph (symmetry with journal_day_detail).
+  const notebookDetails = (
+    await db.query<{ object_id: string; slug: string }>(
+      `SELECT object_id, slug FROM notebook_detail WHERE object_id = $1`,
+      [objectId],
+    )
+  ).rows.map((r) => ({ object_id: r.object_id, slug: r.slug }) satisfies NotebookDetail);
 
   // The trust spine: every provenance row the subgraph references travels too.
   const provenanceIds = new Set<string>([object.provenance_id]);
@@ -359,6 +368,7 @@ async function loadOneSubgraph(
     object_versions: objectVersions,
     definition_details: definitionDetails,
     journal_day_details: journalDayDetails,
+    notebook_details: notebookDetails,
   };
 }
 
@@ -457,11 +467,14 @@ export async function persistObjectGraph(
   return { won: true };
 }
 
-/** Every `ExpressionId` inside one unit's content (a math unit's expr, or prose inline math). */
+/** Every `ExpressionId` inside one unit's content — a math unit's expr, or inline math in a prose unit
+ *  OR a §B section heading's title (lockstep with the core's `expr_ids_of`; both Prose and Heading are
+ *  prose-shaped, so re-home re-anchors links into a heading-title expression too). */
 function expressionIdsOfUnit(unit: Unit): string[] {
   const c = unit.content;
   if (c.kind === 'math') return [c.expr.id];
-  if (c.kind === 'prose') return c.inline.flatMap((el) => (el.kind === 'math' ? [el.expr.id] : []));
+  if (c.kind === 'prose' || c.kind === 'heading')
+    return c.inline.flatMap((el) => (el.kind === 'math' ? [el.expr.id] : []));
   return [];
 }
 

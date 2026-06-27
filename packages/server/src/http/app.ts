@@ -17,6 +17,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerGraphRoutes } from './routes/graph.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerJournalRoutes } from './routes/journal.js';
+import { registerNotebookRoutes } from './routes/notebook.js';
 import { registerObjectRoutes } from './routes/objects.js';
 
 export interface AppDeps {
@@ -75,6 +76,7 @@ export function buildApp(deps: AppDeps): App {
   app.register(registerObjectRoutes, deps);
   app.register(registerGraphRoutes, deps);
   app.register(registerJournalRoutes, deps);
+  app.register(registerNotebookRoutes, deps);
 
   return app;
 }

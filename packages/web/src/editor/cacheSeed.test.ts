@@ -41,6 +41,7 @@ const graph = (content: MathContent[]): MathpackGraph => ({
   object_versions: [],
   definition_details: [],
   journal_day_details: [],
+  notebook_details: [],
 });
 
 const eager = (content: MathContent[]): JournalDayEager => ({

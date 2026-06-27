@@ -12,15 +12,24 @@ import {
   CUE_MAP,
   CUE_RE,
   applyCue,
+  applyHeadingCue,
+  applyDisplayCue,
+  splitLineOut,
+  HEADING_CUE_RE,
+  DISPLAY_CUE_RE,
   clearTypeAtStart,
   displayEnter,
+  headingEnter,
   enterParagraph,
   exitTypedUnit,
   guardDisplayMerge,
   guardDisplayMergeForward,
+  guardHeadingMergeForward,
   insertHardBreak,
   mergeIntoPrevious,
 } from './cues';
+import { headingRecognize } from './headingRecognize';
+import { mathRecognize } from './mathRecognize';
 
 /** A single-prose-block doc; `cursor` is a code-point offset within the block (doc pos = 1 + cursor). */
 function stateWith(text: string, opts: { type?: string; cursor?: number } = {}): EditorState {
@@ -463,5 +472,286 @@ describe('guardDisplayMerge — a display equation is atomic for block joins (Ba
       0,
     );
     expect(guardDisplayMergeForward(s)).toBe(false);
+  });
+});
+
+describe('§B section attrs on split / merge', () => {
+  it('a body split inherits the section parentId (Enter in a section stays in it) — #1', () => {
+    // A body block in section h1 with an empty trailing line; Enter there must spawn a unit that STAYS in
+    // the section (parentId = h1), not escape to top-level (the pre-fix default).
+    const block = editorSchema.nodes.prose.create({ unitId: 'b1', parentId: 'h1' }, [
+      editorSchema.text('hello'),
+      editorSchema.nodes.hard_break.create(),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, block.nodeSize - 1)), // end (empty line)
+    );
+    let captured: Transaction | null = null;
+    enterParagraph(state, (tr) => {
+      captured = tr;
+    });
+    expect(captured).not.toBeNull();
+    const newDoc = captured!.doc;
+    expect(newDoc.childCount).toBe(2);
+    expect(newDoc.child(1).attrs.parentId).toBe('h1'); // stayed in the section
+    expect(newDoc.child(1).attrs.heading).toBe(false); // a split never makes a heading
+  });
+
+  it('Backspace at a body start does NOT merge into a heading title — #4', () => {
+    // h1 is a section heading; b1 is its first body unit. Backspace at b1's start must NOT join b1's text
+    // into the title — it lands the caret at the title's end, non-destructively (no merge).
+    const headingBlock = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('Title'),
+    ]);
+    const bodyBlock = editorSchema.nodes.prose.create({ unitId: 'b1', parentId: 'h1' }, [
+      editorSchema.text('body'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [headingBlock, bodyBlock]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    // cursor at the start of b1 (just inside its open token)
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, headingBlock.nodeSize + 1)),
+    );
+    let captured: Transaction | null = null;
+    const handled = mergeIntoPrevious(state, (tr) => {
+      captured = tr;
+    });
+    expect(handled).toBe(true); // guarded (not a fall-through to a default join)
+    // the doc is unchanged structurally — still two blocks, the title intact (no body text merged in)
+    expect(captured!.doc.childCount).toBe(2);
+    expect(captured!.doc.child(0).textContent).toBe('Title');
+    expect(captured!.doc.child(1).textContent).toBe('body');
+  });
+});
+
+describe('§B headingEnter (Enter in a heading flows body under it)', () => {
+  it('headingEnter spawns a body unit flowing UNDER the heading', () => {
+    const block = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('Title'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, block.nodeSize - 1)),
+    );
+    let captured: Transaction | null = null;
+    expect(headingEnter(state, (tr) => (captured = tr))).toBe(true);
+    const newDoc = captured!.doc;
+    expect(newDoc.childCount).toBe(2);
+    expect(newDoc.child(0).attrs.heading).toBe(true);
+    expect(newDoc.child(1).attrs.parentId).toBe('h1'); // body flows under the heading
+    expect(newDoc.child(1).attrs.heading).toBe(false);
+  });
+
+  it('headingEnter returns false for a non-heading block (normal Enter runs)', () => {
+    const s = stateWith('plain', { cursor: 5 });
+    expect(headingEnter(s, () => {})).toBe(false);
+  });
+});
+
+/** Fire an input-rule handler the way prosemirror-inputrules does: build `textBefore` (the parent's text up
+ *  to the caret, leaf nodes as `￼`) + the just-typed char, run the regex, derive `start`/`end`, apply. */
+function fireCue(
+  state: EditorState,
+  apply: (s: EditorState, m: RegExpMatchArray, start: number, end: number) => Transaction | null,
+  re: RegExp,
+  typed: string,
+): { matched: boolean; next: EditorState | null } {
+  const from = state.selection.from;
+  const $from = state.doc.resolve(from);
+  const textBefore =
+    $from.parent.textBetween(
+      Math.max(0, $from.parentOffset - 500),
+      $from.parentOffset,
+      undefined,
+      '￼',
+    ) + typed;
+  const match = re.exec(textBefore);
+  if (!match) return { matched: false, next: null };
+  const start = from - (match[0].length - typed.length);
+  const tr = apply(state, match, start, from);
+  return { matched: true, next: tr ? state.apply(tr) : null };
+}
+
+/** A block source with `\n` per hard_break (text nodes ignore breaks in `textContent`). */
+const blockSrc = (block: Node): string => {
+  let s = '';
+  block.forEach((c) => {
+    if (c.isText) s += c.text ?? '';
+    else if (c.type.name === 'hard_break') s += '\n';
+  });
+  return s;
+};
+
+describe('headingCueRule (`# ` on any line splits the line into its own block, keeps the `#`)', () => {
+  it('at a BLOCK START it just keeps `# ` (no split) — headingRecognize promotes the whole block', () => {
+    const { next } = fireCue(stateWith('#', { cursor: 1 }), applyHeadingCue, HEADING_CUE_RE, ' ');
+    expect(next!.doc.childCount).toBe(1);
+    expect(next!.doc.firstChild!.textContent).toBe('# '); // the `#` is KEPT (Obsidian)
+  });
+
+  it('on a SOFT-LINE it splits the `# ` line off as its own block (anti-merge), keeping the head', () => {
+    const { next } = fireCue(
+      stateAtEnd([{ id: 'orig', lines: ['intro', '#'] }], 0),
+      applyHeadingCue,
+      HEADING_CUE_RE,
+      ' ',
+    );
+    expect(next!.doc.childCount).toBe(2);
+    expect(next!.doc.child(0).attrs.unitId).toBe('orig'); // head keeps the original id
+    expect(next!.doc.child(0).textContent).toBe('intro');
+    expect(next!.doc.child(1).textContent).toBe('# '); // the heading line, on its own block, `#` kept
+    expect(next!.doc.child(1).attrs.unitId).toBeNull(); // fresh (idStamper mints at runtime)
+  });
+
+  it('ANTI-ABSORPTION: a heading typed mid-block does NOT swallow the trailing line (3 blocks)', () => {
+    // one block `line⏎#heading⏎after`, caret right after the `#` on line 2; typing the space must yield
+    // [line][# heading][after] — the title NEVER absorbs `after`.
+    const { next } = fireCue(
+      stateAt([{ lines: ['line', '#heading', 'after'] }], 0, /* after the `#` on line 2 */ 6),
+      applyHeadingCue,
+      HEADING_CUE_RE,
+      ' ',
+    );
+    expect(next!.doc.childCount).toBe(3);
+    expect(next!.doc.child(0).textContent).toBe('line');
+    expect(next!.doc.child(1).textContent).toBe('# heading');
+    expect(next!.doc.child(2).textContent).toBe('after'); // peeled into its own block, not absorbed
+  });
+
+  it('a typed unit does NOT fire (its leading `#` is literal text)', () => {
+    const { next } = fireCue(
+      stateAtEnd([{ type: 'theorem', lines: ['x', '#'] }], 0),
+      applyHeadingCue,
+      HEADING_CUE_RE,
+      ' ',
+    );
+    expect(next).toBeNull(); // handler returned null → default insertion (the `#` stays literal)
+  });
+
+  it('end-to-end with headingRecognize: a `# ` soft-line becomes a recognized top-level heading', () => {
+    const doc = docOf([{ id: 'orig', lines: ['intro', '#'] }]);
+    const base = EditorState.create({ schema: editorSchema, doc, plugins: [headingRecognize] });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, base.doc.child(0).content.size + 1)),
+    );
+    const { next } = fireCue(state, applyHeadingCue, HEADING_CUE_RE, ' ');
+    expect(next!.doc.childCount).toBe(2);
+    expect(next!.doc.child(1).attrs.heading).toBe(true); // recognizer promoted the split-off line
+    expect(next!.doc.child(1).attrs.parentId ?? null).toBeNull(); // a single `#` → top-level
+  });
+});
+
+describe('displayCueRule (`$$…$$` on any line splits onto its own block)', () => {
+  it('at a BLOCK START it just completes `$$x$$` (no split)', () => {
+    const { next } = fireCue(stateWith('$$x$', { cursor: 4 }), applyDisplayCue, DISPLAY_CUE_RE, '$');
+    expect(next!.doc.childCount).toBe(1);
+    expect(next!.doc.firstChild!.textContent).toBe('$$x$$');
+  });
+
+  it('on a SOFT-LINE it splits the `$$x$$` onto its own block', () => {
+    const { next } = fireCue(
+      stateAtEnd([{ id: 'orig', lines: ['intro', '$$x$'] }], 0),
+      applyDisplayCue,
+      DISPLAY_CUE_RE,
+      '$',
+    );
+    expect(next!.doc.childCount).toBe(2);
+    expect(next!.doc.child(0).textContent).toBe('intro');
+    expect(next!.doc.child(1).textContent).toBe('$$x$$');
+  });
+
+  it('end-to-end with mathRecognize: the split-off `$$x$$` is marked a display equation', () => {
+    const doc = docOf([{ id: 'orig', lines: ['intro', '$$x$'] }]);
+    const base = EditorState.create({ schema: editorSchema, doc, plugins: [mathRecognize] });
+    const state = base.apply(
+      base.tr.setSelection(TextSelection.create(base.doc, base.doc.child(0).content.size + 1)),
+    );
+    const { next } = fireCue(state, applyDisplayCue, DISPLAY_CUE_RE, '$');
+    const eq = next!.doc.child(1);
+    const mark = eq.firstChild!.marks.find((m) => m.type.name === 'mathExpr');
+    expect(mark).toBeDefined();
+    expect(mark!.attrs.display).toBe(true);
+  });
+
+  it('does NOT fire on `$$$$` (empty inner)', () => {
+    expect(DISPLAY_CUE_RE.test('$$$$')).toBe(false);
+  });
+
+  it('does NOT fire on a whitespace-only inner `$$  $$`', () => {
+    const m = DISPLAY_CUE_RE.exec('$$  $$')!;
+    expect(applyDisplayCue(stateWith('$$  $', { cursor: 5 }), m, 1, 6)).toBeNull();
+  });
+
+  it('does NOT fire in a heading title (the `$$` stays literal)', () => {
+    const block = editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+      editorSchema.text('$$x$'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const state = base.apply(base.tr.setSelection(TextSelection.create(base.doc, 5)));
+    const { next } = fireCue(state, applyDisplayCue, DISPLAY_CUE_RE, '$');
+    expect(next).toBeNull();
+  });
+});
+
+describe('§B heading is atomic for block joins (M3 backward / M4 forward)', () => {
+  const heading = (id: string, text: string): Node =>
+    editorSchema.nodes.prose.create({ unitId: id, heading: true }, [editorSchema.text(text)]);
+  const body = (id: string, text: string): Node =>
+    editorSchema.nodes.prose.create({ unitId: id }, [editorSchema.text(text)]);
+  const stateAtDoc = (blocks: Node[], pos: number): EditorState => {
+    const doc = editorSchema.nodes.doc.create(null, blocks);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    return base.apply(base.tr.setSelection(TextSelection.create(base.doc, pos)));
+  };
+
+  it('M3: Backspace at a heading START does NOT merge its title into the previous body block', () => {
+    const b = body('b', 'body');
+    const state = stateAtDoc([b, heading('h', '# Title')], b.nodeSize + 1); // caret at heading offset 0
+    let tr: Transaction | null = null;
+    const handled = mergeIntoPrevious(state, (t) => {
+      tr = t;
+    });
+    expect(handled).toBe(true); // swallowed (heading is atomic) — caret stays, no merge
+    expect(tr).toBeNull();
+  });
+
+  it('M4: Delete at a heading END does NOT pull the next block into the title', () => {
+    const h = heading('h', '# Title');
+    const state = stateAtDoc([h, body('b', 'body')], 1 + h.content.size); // caret at heading end
+    const { ran, next } = capture(guardHeadingMergeForward, state);
+    expect(ran).toBe(true);
+    expect(next!.doc.childCount).toBe(2); // both blocks intact (no forward merge)
+    expect(next!.doc.child(0).textContent).toBe('# Title');
+    expect(next!.doc.child(1).textContent).toBe('body');
+  });
+
+  it('M4: guardHeadingMergeForward does NOT fire between two plain paragraphs (negative)', () => {
+    const a = body('a', 'aaa');
+    const state = stateAtDoc([a, body('b', 'bbb')], 1 + a.content.size);
+    expect(guardHeadingMergeForward(state)).toBe(false);
+  });
+});
+
+describe('splitLineOut helper (the shared two-way line peel)', () => {
+  it('returns false when the line is already the whole block (nothing to peel)', () => {
+    const s = stateWith('only one line', { cursor: 3 });
+    const tr = s.tr;
+    expect(splitLineOut(tr, s.selection.from)).toBe(false);
+    expect(tr.steps.length).toBe(0);
+  });
+
+  it('peels both a head and a tail around the cursor line (3 blocks)', () => {
+    const s = stateAt([{ lines: ['aa', 'bb', 'cc'] }], 0, 4); // caret inside "bb"
+    const tr = s.tr;
+    expect(splitLineOut(tr, s.selection.from)).toBe(true);
+    const next = s.apply(tr);
+    expect(next.doc.childCount).toBe(3);
+    expect(blockSrc(next.doc.child(0))).toBe('aa');
+    expect(blockSrc(next.doc.child(1))).toBe('bb');
+    expect(blockSrc(next.doc.child(2))).toBe('cc');
   });
 });

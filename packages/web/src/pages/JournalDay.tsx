@@ -3,12 +3,12 @@
 // observable. The leaf rendering is deliberately minimal (prose text, math surface_text in <code>);
 // 2c's ProseMirror replaces it. `MathContentView` stays a pure fn of (content, subgraph) so the
 // embed resolution survives that swap.
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import type { MathContent, MathExpression, RowRelation, Unit } from '@mathmeander/schema';
+import type { Inline, MathContent, MathExpression, RowRelation, Unit } from '@mathmeander/schema';
 import { getJournalDay } from '../api/client';
-import { DayEditor } from '../editor/DayEditor';
+import { DayEditor, type EditorSurface } from '../editor/DayEditor';
 import { isEditable } from '../editor/projection';
 import { renderMathInto } from '../editor/renderMath';
 
@@ -58,6 +58,7 @@ function renderLevel(
   parentMap: Map<string | null, Unit[]>,
   contentById: ContentById,
   seen: Set<string>,
+  depth = 0,
 ): ReactNode[] {
   return (parentMap.get(parentId) ?? []).map((unit) => (
     <UnitView
@@ -66,8 +67,21 @@ function renderLevel(
       parentMap={parentMap}
       contentById={contentById}
       seen={seen}
+      depth={depth}
     />
   ));
+}
+
+/** Render an inline-bearing run (prose text + inline `Math` as code) — shared by prose + heading titles. */
+function inlineRun(text: string, inline: Inline[]): ReactNode[] {
+  return [
+    text,
+    ...inline.flatMap((i, n) =>
+      i.kind === 'math'
+        ? [<code key={n} className="math">{` ${i.expr.surface_text} `}</code>]
+        : [],
+    ),
+  ];
 }
 
 function UnitView({
@@ -75,25 +89,42 @@ function UnitView({
   parentMap,
   contentById,
   seen,
+  depth,
 }: {
   unit: Unit;
   parentMap: Map<string | null, Unit[]>;
   contentById: ContentById;
   seen: Set<string>;
+  depth: number;
 }): ReactNode {
   const c = unit.content;
   switch (c.kind) {
     case 'prose':
+      return <p>{inlineRun(c.text, c.inline)}</p>;
+    case 'heading': {
+      // §B section: the title (its own inline-bearing content) at a depth-derived level, then its body +
+      // subsections recurse one level deeper. Read-only mirror of the editor's flat projection.
+      const title = inlineRun(c.text, c.inline);
+      const level = Math.min(depth + 1, 6);
       return (
-        <p>
-          {c.text}
-          {c.inline.flatMap((i, n) =>
-            i.kind === 'math'
-              ? [<code key={n} className="math">{` ${i.expr.surface_text} `}</code>]
-              : [],
+        <section className="mm-section" data-section={unit.id}>
+          {level === 1 ? (
+            <h1>{title}</h1>
+          ) : level === 2 ? (
+            <h2>{title}</h2>
+          ) : level === 3 ? (
+            <h3>{title}</h3>
+          ) : level === 4 ? (
+            <h4>{title}</h4>
+          ) : level === 5 ? (
+            <h5>{title}</h5>
+          ) : (
+            <h6>{title}</h6>
           )}
-        </p>
+          {renderLevel(unit.id, parentMap, contentById, seen, depth + 1)}
+        </section>
       );
+    }
     case 'math':
       return <MathView expr={c.expr} display />;
     case 'equations':
@@ -109,7 +140,13 @@ function UnitView({
                 {row.row_relation ? ROW_RELATION_SYMBOL[row.row_relation] : ''}
               </span>
               <div className="row-body">
-                <UnitView unit={row} parentMap={parentMap} contentById={contentById} seen={seen} />
+                <UnitView
+                  unit={row}
+                  parentMap={parentMap}
+                  contentById={contentById}
+                  seen={seen}
+                  depth={depth}
+                />
               </div>
             </div>
           ))}
@@ -124,7 +161,13 @@ function UnitView({
               className={child.slot === 'assumption' ? 'case-assumption' : 'case-body'}
             >
               {child.slot === 'assumption' ? <span className="case-label">assume </span> : null}
-              <UnitView unit={child} parentMap={parentMap} contentById={contentById} seen={seen} />
+              <UnitView
+                unit={child}
+                parentMap={parentMap}
+                contentById={contentById}
+                seen={seen}
+                depth={depth}
+              />
             </div>
           ))}
         </section>
@@ -133,7 +176,7 @@ function UnitView({
       return (
         <section className="group">
           {unit.type ? <h2>{unit.type}</h2> : null}
-          {renderLevel(unit.id, parentMap, contentById, seen)}
+          {renderLevel(unit.id, parentMap, contentById, seen, depth)}
         </section>
       );
     case 'embed': {
@@ -147,7 +190,7 @@ function UnitView({
       // The embedded object's units render INLINE here — that is the observable §9.y contract.
       return (
         <div className="embed" data-embed-object={id}>
-          {renderLevel(null, byParent(target.units), contentById, childSeen)}
+          {renderLevel(null, byParent(target.units), contentById, childSeen, depth)}
         </div>
       );
     }
@@ -156,7 +199,7 @@ function UnitView({
   }
 }
 
-function MathContentView({
+export function MathContentView({
   content,
   contentById,
 }: {
@@ -171,6 +214,10 @@ function MathContentView({
 export function JournalDayPage() {
   const { date } = useParams({ from: '/journal/$date' });
   const query = useQuery({ queryKey: ['journal', date], queryFn: () => getJournalDay(date) });
+  const surface = useMemo<EditorSurface>(
+    () => ({ key: date, cacheKey: ['journal', date], fetchEager: () => getJournalDay(date) }),
+    [date],
+  );
 
   if (query.isPending) return <p>Loading…</p>;
   if (query.isError) return <p className="error">{(query.error as Error).message}</p>;
@@ -188,7 +235,7 @@ export function JournalDayPage() {
       {dayContent && isEditable(dayContent) ? (
         // Flat prose + top-level display-math days are EDITABLE (slice 2c-1 + structured-math increment 1).
         // Keyed by object id so a new day remounts the editor cleanly.
-        <DayEditor key={object.id} objectId={object.id} content={dayContent} date={date} />
+        <DayEditor key={object.id} objectId={object.id} content={dayContent} surface={surface} />
       ) : dayContent ? (
         // Days with nested structure / embeds / groups still render read-only until later increments.
         <MathContentView content={dayContent} contentById={contentById} />

@@ -13,9 +13,11 @@ import {
   CoreErrorSchema,
   CreateContextSchema,
   CreateJournalDayResultSchema,
+  CreateNotebookResultSchema,
   CreateObjectInputSchema,
   CreateObjectResultSchema,
   CreatedJournalDaySchema,
+  CreatedNotebookSchema,
   CreatedObjectSchema,
   DeclaredBySchema,
   DefinitionDetailSchema,
@@ -50,6 +52,7 @@ import {
   MathpackMetaSchema,
   MathpackResultSchema,
   MergeUnitsInputSchema,
+  NotebookDetailSchema,
   NumberingPolicySchema,
   NumberingResultSchema,
   ObjectPatchSchema,
@@ -68,6 +71,7 @@ import {
   ProvenanceDerivationSchema,
   ReferenceTargetSchema,
   RehomeSubtreeInputSchema,
+  ReparentUnitInputSchema,
   ResolveOccurrenceInputSchema,
   ResolveTargetSchema,
   RewriteSurfaceInputSchema,
@@ -79,6 +83,7 @@ import {
   TaggingSchema,
   TargetSelectorSchema,
   ToggleExpressionPlacementInputSchema,
+  ToggleHeadingInputSchema,
   UnitSchema,
   UnitContentSchema,
   UnitIdRemapSchema,
@@ -98,9 +103,11 @@ export type ContentLocator = z.infer<typeof ContentLocatorSchema>;
 export type CoreError = z.infer<typeof CoreErrorSchema>;
 export type CreateContext = z.infer<typeof CreateContextSchema>;
 export type CreateJournalDayResult = z.infer<typeof CreateJournalDayResultSchema>;
+export type CreateNotebookResult = z.infer<typeof CreateNotebookResultSchema>;
 export type CreateObjectInput = z.infer<typeof CreateObjectInputSchema>;
 export type CreateObjectResult = z.infer<typeof CreateObjectResultSchema>;
 export type CreatedJournalDay = z.infer<typeof CreatedJournalDaySchema>;
+export type CreatedNotebook = z.infer<typeof CreatedNotebookSchema>;
 export type CreatedObject = z.infer<typeof CreatedObjectSchema>;
 export type DeclaredBy = z.infer<typeof DeclaredBySchema>;
 export type DefinitionDetail = z.infer<typeof DefinitionDetailSchema>;
@@ -135,6 +142,7 @@ export type MathpackManifest = z.infer<typeof MathpackManifestSchema>;
 export type MathpackMeta = z.infer<typeof MathpackMetaSchema>;
 export type MathpackResult = z.infer<typeof MathpackResultSchema>;
 export type MergeUnitsInput = z.infer<typeof MergeUnitsInputSchema>;
+export type NotebookDetail = z.infer<typeof NotebookDetailSchema>;
 export type NumberingPolicy = z.infer<typeof NumberingPolicySchema>;
 export type NumberingResult = z.infer<typeof NumberingResultSchema>;
 export type ObjectPatch = z.infer<typeof ObjectPatchSchema>;
@@ -153,6 +161,7 @@ export type Provenance = z.infer<typeof ProvenanceSchema>;
 export type ProvenanceDerivation = z.infer<typeof ProvenanceDerivationSchema>;
 export type ReferenceTarget = z.infer<typeof ReferenceTargetSchema>;
 export type RehomeSubtreeInput = z.infer<typeof RehomeSubtreeInputSchema>;
+export type ReparentUnitInput = z.infer<typeof ReparentUnitInputSchema>;
 export type ResolveOccurrenceInput = z.infer<typeof ResolveOccurrenceInputSchema>;
 export type ResolveTarget = z.infer<typeof ResolveTargetSchema>;
 export type RewriteSurfaceInput = z.infer<typeof RewriteSurfaceInputSchema>;
@@ -164,6 +173,7 @@ export type Tag = z.infer<typeof TagSchema>;
 export type Tagging = z.infer<typeof TaggingSchema>;
 export type TargetSelector = z.infer<typeof TargetSelectorSchema>;
 export type ToggleExpressionPlacementInput = z.infer<typeof ToggleExpressionPlacementInputSchema>;
+export type ToggleHeadingInput = z.infer<typeof ToggleHeadingInputSchema>;
 export type Unit = z.infer<typeof UnitSchema>;
 export type UnitContent = z.infer<typeof UnitContentSchema>;
 export type UnitIdRemap = z.infer<typeof UnitIdRemapSchema>;

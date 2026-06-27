@@ -56,6 +56,19 @@ pub fn create_journal_day(
     )
 }
 
+/// Create a `notebook` surface (the slug is derived from the title, normalized in the core) →
+/// `CreateNotebookResult` JSON.
+#[napi]
+pub fn create_notebook(
+    input_json: String,
+    ctx_json: String,
+    space_id: String,
+    slug_raw: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::create_notebook(&input_json, &ctx_json, &space_id, &slug_raw, &now_iso)
+}
+
 /// Patch object metadata (pure) → `ObjectResult` JSON.
 #[napi]
 pub fn apply_title_patch(current_json: String, patch_json: String, now_iso: String) -> String {
@@ -80,6 +93,30 @@ pub fn set_unit_type(
     now_iso: String,
 ) -> String {
     mathmeander_core::api::set_unit_type(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Move a unit (+ its subtree) to a new parent/position — the §B intra-object section move →
+/// `OpOutcomeResult` JSON.
+#[napi]
+pub fn reparent_unit(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::reparent_unit(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
+/// Toggle a unit between plain prose and a section heading — the §B `# `/un-heading op →
+/// `OpOutcomeResult` JSON.
+#[napi]
+pub fn toggle_heading(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::toggle_heading(&content_json, &input_json, &ctx_json, &now_iso)
 }
 
 /// Split a prose unit → `OpOutcomeResult` JSON.

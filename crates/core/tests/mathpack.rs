@@ -152,6 +152,7 @@ fn sample_graph() -> MathpackGraph {
         object_versions: vec![an_object_version(0xa6, object.id)],
         definition_details: Vec::new(),
         journal_day_details: Vec::new(),
+        notebook_details: Vec::new(),
     }
 }
 
@@ -206,6 +207,7 @@ fn journal_day_detail_round_trips() {
         object_versions: Vec::new(),
         definition_details: Vec::new(),
         journal_day_details: vec![detail.clone()],
+        notebook_details: Vec::new(),
     };
 
     let pack = serialize_mathpack(&meta(), graph.clone(), dt()).expect("serialize");
@@ -291,6 +293,7 @@ fn graph_with(objects: Vec<CanonicalObject>, content: Vec<MathContent>) -> Mathp
         object_versions: Vec::new(),
         definition_details: Vec::new(),
         journal_day_details: Vec::new(),
+        notebook_details: Vec::new(),
     }
 }
 
@@ -534,6 +537,34 @@ fn import_rejects_out_of_bounds_mark() {
     assert_eq!(err_code(&err), "inline_span_out_of_bounds");
 }
 
+/// §B lockstep: a section `Heading` title is prose-shaped and may carry inline (incl. math/refs), so
+/// import must validate it identically to `save_content`. Before the fix `validate_graph` dropped
+/// `Heading` into its `_ => {}` arm, so an out-of-bounds heading title imported cleanly and then wedged
+/// the very first edit (load-but-can't-edit). Import must refuse it up front.
+#[test]
+fn import_rejects_out_of_bounds_mark_in_a_heading_title() {
+    let object = an_object(0xa1);
+    let mut unit = a_prose_unit(0xb1, object.id, 0, "xy");
+    unit.content = UnitContent::Heading {
+        text: "xy".into(),
+        inline: vec![Inline::Mark {
+            span: CharSpan {
+                start: 100,
+                end: 200,
+            },
+            style: "emph".into(),
+        }],
+    };
+    let content = MathContent {
+        object_id: object.id,
+        revision: object.revision,
+        units: vec![unit],
+    };
+    let value = pack_value(graph_with(vec![object], vec![content]));
+    let err = import_mathpack(value).expect_err("out-of-bounds heading title rejected on import");
+    assert_eq!(err_code(&err), "inline_span_out_of_bounds");
+}
+
 /// An out-of-bounds occurrence SELECTOR inside an INLINE math expression — the inner expr, one
 /// level below the inline span — must be caught (the slice-2 resolution substrate stays sound).
 #[test]
@@ -670,6 +701,7 @@ proptest! {
             object_versions: Vec::new(),
             definition_details: Vec::new(),
             journal_day_details: Vec::new(),
+            notebook_details: Vec::new(),
         };
         let pack = serialize_mathpack(&meta(), graph, dt()).expect("serialize");
         let value = serde_json::to_value(&pack).expect("pack serializes to value");

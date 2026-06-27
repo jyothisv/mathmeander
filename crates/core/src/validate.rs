@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::error::ValidationError;
 use crate::ids::{ObjectId, ProvenanceId, SpaceId};
 use crate::model::{
-    CanonicalObject, Inline, JournalDayDetail, Link, LinkType, MathExpression, ObjectStatus,
-    ObjectType, Origin, Provenance, Tagging,
+    CanonicalObject, Inline, JournalDayDetail, Link, LinkType, MathExpression, NotebookDetail,
+    ObjectStatus, ObjectType, Origin, Provenance, Tagging,
 };
 use crate::patch::Patch;
 
@@ -243,6 +243,87 @@ pub fn create_journal_day(
     let detail = JournalDayDetail {
         object_id: id,
         date,
+    };
+
+    Ok((object, provenance, detail))
+}
+
+/// Max length of a notebook `slug` (after normalization) — generous; the human title (`MAX_TITLE_CHARS`)
+/// is separate and patchable.
+pub const MAX_SLUG_CHARS: usize = 200;
+
+/// Create a `notebook` surface (§6.5 / §B) — the non-date analogue of `create_journal_day`. Mints the
+/// object + provenance + a `notebook_detail` carrying the per-space `slug` (identity). The slug arrives
+/// already normalized at the FFI boundary; here it must be non-empty and within `MAX_SLUG_CHARS`. A wrong
+/// type is a glue bug (the route always supplies `notebook`), surfaced as the same `DetailTypeMismatch`.
+pub fn create_notebook(
+    input: &CreateObjectInput,
+    ctx: &CreateContext,
+    space_id: &str,
+    slug: &str,
+    now: DateTime<Utc>,
+) -> Result<(CanonicalObject, Provenance, NotebookDetail), ValidationError> {
+    let id = ObjectId(parse_uuid_v7("id", &input.id)?);
+    let object_type = parse_object_type(&input.object_type)?;
+    if object_type != ObjectType::Notebook {
+        return Err(ValidationError::DetailTypeMismatch {
+            expected: ObjectType::Notebook,
+            given: object_type,
+        });
+    }
+    // The slug is identity; a normalization that collapsed to empty (e.g. a title of only punctuation),
+    // or an over-long slug, is rejected rather than minting an unaddressable surface.
+    let slug_len = slug.chars().count();
+    if slug_len == 0 || slug_len > MAX_SLUG_CHARS {
+        return Err(ValidationError::ContentSaveInvalid {
+            reason: format!("notebook slug must be 1..={MAX_SLUG_CHARS} chars after normalization"),
+        });
+    }
+    if let Some(title) = &input.title {
+        check_title(title)?;
+    }
+    if let Some(raw_source) = &input.raw_source {
+        check_raw_source(raw_source)?;
+    }
+
+    let provenance_id = ProvenanceId(parse_uuid_v7("provenance_id", &ctx.provenance_id)?);
+    let space = SpaceId(parse_uuid("space_id", space_id)?);
+
+    match ctx.origin {
+        Origin::User if ctx.created_by.is_none() => {
+            return Err(ValidationError::MissingCreatedBy { origin: ctx.origin });
+        }
+        Origin::Ai | Origin::Imported => {
+            return Err(ValidationError::OriginNotProducible { origin: ctx.origin });
+        }
+        _ => {}
+    }
+
+    let provenance = Provenance {
+        id: provenance_id,
+        origin: ctx.origin,
+        created_by: ctx.created_by.clone(),
+        occurred_at: now,
+    };
+
+    let object = CanonicalObject {
+        id,
+        object_type,
+        title: input.title.clone(), // tri-state preserved
+        raw_source: input.raw_source.clone(),
+        status: ObjectStatus::Draft,
+        schema_version: crate::CURRENT_SCHEMA_VERSION,
+        revision: 1,
+        provenance_id,
+        space_id: space,
+        created_at: now,
+        updated_at: now,
+        extra: serde_json::Map::new(),
+    };
+
+    let detail = NotebookDetail {
+        object_id: id,
+        slug: slug.to_string(),
     };
 
     Ok((object, provenance, detail))

@@ -1088,6 +1088,16 @@
   {
     "type": "UnitContent",
     "value": {
+      "kind": "heading",
+      "text": "Compactness",
+      "inline": []
+    },
+    "valid": true,
+    "note": "§B section title — prose-shaped (text + inline), distinct kind"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
       "kind": "embed",
       "target": {
         "kind": "object",
@@ -1104,6 +1114,15 @@
     },
     "valid": false,
     "note": "inline required (always present, [] when none)"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "heading",
+      "text": "hi"
+    },
+    "valid": false,
+    "note": "heading inline required, same as prose"
   },
   {
     "type": "UnitContent",
@@ -1506,6 +1525,22 @@
     },
     "valid": false,
     "note": "date missing (the §6.5 day's identity); ISO YYYY-MM-DD validity is core-strict"
+  },
+  {
+    "type": "NotebookDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "slug": "linear-algebra"
+    },
+    "valid": true
+  },
+  {
+    "type": "NotebookDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": false,
+    "note": "slug missing (the §6.5 notebook's per-space identity)"
   },
   {
     "type": "ProvenanceDerivation",
@@ -2489,6 +2524,52 @@
     "note": "subtree_root missing"
   },
   {
+    "type": "ReparentUnitInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "new_parent_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+      "new_position": 0
+    },
+    "valid": true
+  },
+  {
+    "type": "ReparentUnitInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "new_parent_unit_id": null,
+      "new_position": 3
+    },
+    "valid": true,
+    "note": "null new_parent = move to top-level"
+  },
+  {
+    "type": "ReparentUnitInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": false,
+    "note": "new_position missing"
+  },
+  {
+    "type": "ToggleHeadingInput",
+    "value": {
+      "expected_revision": 2,
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+    },
+    "valid": true
+  },
+  {
+    "type": "ToggleHeadingInput",
+    "value": {
+      "expected_revision": 2
+    },
+    "valid": false,
+    "note": "unit_id missing"
+  },
+  {
     "type": "DissolveObjectInput",
     "value": {
       "expected_revision": 2,
@@ -2992,6 +3073,7 @@
       "object_versions": 1,
       "definition_details": 0,
       "journal_day_details": 0,
+      "notebook_details": 0,
       "provenance": 1,
       "provenance_derivations": 0
     },
@@ -3010,6 +3092,7 @@
       "object_versions": 1,
       "definition_details": 0,
       "journal_day_details": 0,
+      "notebook_details": 0,
       "provenance": 1
     },
     "valid": false,
@@ -3034,6 +3117,7 @@
         "object_versions": 1,
         "definition_details": 0,
         "journal_day_details": 0,
+        "notebook_details": 0,
         "provenance": 1,
         "provenance_derivations": 0
       },
@@ -3137,7 +3221,8 @@
         }
       ],
       "definition_details": [],
-      "journal_day_details": []
+      "journal_day_details": [],
+      "notebook_details": []
     },
     "valid": true
   },
@@ -3154,7 +3239,8 @@
       "taggings": [],
       "object_versions": [],
       "definition_details": [],
-      "journal_day_details": []
+      "journal_day_details": [],
+      "notebook_details": []
     },
     "valid": false,
     "note": "objects section missing"
@@ -3179,6 +3265,7 @@
           "object_versions": 1,
           "definition_details": 0,
           "journal_day_details": 0,
+          "notebook_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3265,7 +3352,8 @@
           }
         ],
         "definition_details": [],
-        "journal_day_details": []
+        "journal_day_details": [],
+        "notebook_details": []
       }
     },
     "valid": true
@@ -3290,6 +3378,7 @@
           "object_versions": 1,
           "definition_details": 0,
           "journal_day_details": 0,
+          "notebook_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3319,6 +3408,7 @@
           "object_versions": 1,
           "definition_details": 0,
           "journal_day_details": 0,
+          "notebook_details": 0,
           "provenance": 1,
           "provenance_derivations": 0
         },
@@ -3405,7 +3495,8 @@
           }
         ],
         "definition_details": [],
-        "journal_day_details": []
+        "journal_day_details": [],
+        "notebook_details": []
       }
     },
     "valid": true
@@ -3494,7 +3585,8 @@
           }
         ],
         "definition_details": [],
-        "journal_day_details": []
+        "journal_day_details": [],
+        "notebook_details": []
       }
     },
     "valid": false,
@@ -3641,6 +3733,7 @@
             "object_versions": 1,
             "definition_details": 0,
             "journal_day_details": 0,
+            "notebook_details": 0,
             "provenance": 1,
             "provenance_derivations": 0
           },
@@ -3727,7 +3820,8 @@
             }
           ],
           "definition_details": [],
-          "journal_day_details": []
+          "journal_day_details": [],
+          "notebook_details": []
         }
       }
     },
@@ -3763,6 +3857,7 @@
             "object_versions": 1,
             "definition_details": 0,
             "journal_day_details": 0,
+            "notebook_details": 0,
             "provenance": 1,
             "provenance_derivations": 0
           },
@@ -3849,7 +3944,8 @@
             }
           ],
           "definition_details": [],
-          "journal_day_details": []
+          "journal_day_details": [],
+          "notebook_details": []
         }
       }
     },

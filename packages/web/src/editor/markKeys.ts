@@ -9,7 +9,7 @@ import { type Command, type EditorState, TextSelection } from 'prosemirror-state
  *  atom / line break? In any of those the inserted `**` can't pair (math/atoms break the recognizer's text run),
  *  so it would leave stray literal delimiters. We no-op instead. (Wrapping each plain sub-run is a possible
  *  future nicety; the common single-run case is unaffected.) */
-function crossesMathOrAtom(state: EditorState): boolean {
+export function crossesMathOrAtom(state: EditorState): boolean {
   const { from, to, empty } = state.selection;
   const isMath = (n: import('prosemirror-model').Node | null | undefined): boolean =>
     !!n && n.isText && n.marks.some((m) => m.type.name === 'mathExpr');
@@ -30,7 +30,7 @@ function crossesMathOrAtom(state: EditorState): boolean {
 }
 
 /** True when the text immediately around the selection is already `delim…delim` (so a toggle should UNWRAP). */
-function alreadyWrapped(
+export function alreadyWrapped(
   doc: import('prosemirror-model').Node,
   from: number,
   to: number,

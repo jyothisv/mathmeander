@@ -89,6 +89,7 @@ export const CORE_CODE_STATUS: Record<string, number> = {
   detail_object_type_mismatch: 422, // imported pack: a *_detail.object_id references the wrong object type (arch §827) — untrusted, client-attributable
   content_save_invalid: 422, // editor's save_content delta would change a semantic facet (use the unit ops) or has a bad position/non-prose change (slice 2c)
   equations_row_not_permitted: 422, // insert_equations / import: an Equations container's row is not Math/Prose (one level only, §F2)
+  invalid_slot_for_parent_kind: 422, // reserved vocabulary: the old heading-slot section model was replaced by `UnitContent::Heading`, so no core path emits this today; a parent-capability break now surfaces as content_save_invalid. Kept (mapped 422) since the variant stays in the error vocabulary.
 
   // ── Glue id-bookkeeping the client cannot cause via a well-formed request → 500 ──
   id_count_mismatch: 500,
@@ -99,7 +100,6 @@ export const CORE_CODE_STATUS: Record<string, number> = {
   // ── §6.1a invariants no slice-1d endpoint can currently trip (fail-closed until their
   //    endpoints land in later slices) → 500 ──
   content_kind_mismatch: 500,
-  invalid_slot_for_parent_kind: 500,
   example_kind_without_example_type: 500,
   detail_type_mismatch: 500,
   alias_scope_ref_mismatch: 500,

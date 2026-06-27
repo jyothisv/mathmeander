@@ -467,7 +467,11 @@ impl Parser {
     fn parse_atom(&mut self) -> Expr {
         let start = self.mark();
         match self.peek().cloned() {
-            None => Expr::new(ExprKind::Empty, self.zero_at(start)),
+            // A non-consuming recovery node (missing operand at EOF) sits at `last_end()` — the end of
+            // CONSUMED input — not at `start` (the next token's byte): with whitespace skipped, `start`
+            // can fall PAST the enclosing node's end (which is also `last_end()`), so a zero-width Empty
+            // there would escape its parent's span (breaking the child⊆parent nesting click/anchoring rely on).
+            None => Expr::new(ExprKind::Empty, self.zero_at(self.last_end())),
             Some(Tok::LParen) => {
                 self.bump();
                 let inner = if matches!(self.peek(), Some(Tok::RParen)) {
@@ -537,7 +541,12 @@ impl Parser {
             // Terminators belong to an enclosing group/call/arg-list: yield Empty WITHOUT
             // consuming (e.g. a missing operator RHS), so the enclosing `)` is not stolen.
             // A genuinely top-level stray terminator is consumed by the leftover loop.
-            Some(Tok::RParen | Tok::Comma) => Expr::new(ExprKind::Empty, self.zero_at(start)),
+            // Anchor at `last_end()` (not the terminator's byte): skipped whitespace before the
+            // terminator would otherwise place this zero-width Empty past the parent's end (e.g.
+            // `a+ )`), escaping the parent span — see the EOF arm above.
+            Some(Tok::RParen | Tok::Comma) => {
+                Expr::new(ExprKind::Empty, self.zero_at(self.last_end()))
+            }
             // A stray prefix operator where a value was expected → recover (consume it).
             Some(other) => {
                 let span = self.peek_span();

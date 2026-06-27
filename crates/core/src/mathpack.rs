@@ -21,7 +21,8 @@ use crate::error::{CoreError, ValidationError};
 use crate::ids::SpaceId;
 use crate::model::{
     Alias, CanonicalObject, DefinitionDetail, EmbedTarget, Handle, JournalDayDetail, Link,
-    ObjectType, ObjectVersion, Provenance, ProvenanceDerivation, Tag, Tagging, UnitContent,
+    NotebookDetail, ObjectType, ObjectVersion, Provenance, ProvenanceDerivation, Tag, Tagging,
+    UnitContent,
 };
 use crate::ops::{MathContent, content_kind_tag};
 use crate::validate::{
@@ -66,6 +67,7 @@ pub struct MathpackCounts {
     pub object_versions: u32,
     pub definition_details: u32,
     pub journal_day_details: u32,
+    pub notebook_details: u32,
     /// The trust-spine rows travel with the graph (`MathpackGraph.provenance`), so they are
     /// counted too — every graph vec has a count (a complete self-describing manifest).
     pub provenance: u32,
@@ -108,6 +110,7 @@ pub struct MathpackGraph {
     pub object_versions: Vec<ObjectVersion>,
     pub definition_details: Vec<DefinitionDetail>,
     pub journal_day_details: Vec<JournalDayDetail>,
+    pub notebook_details: Vec<NotebookDetail>,
 }
 
 /// What export produces: a deterministic manifest + the canonical graph. The glue writes this
@@ -212,6 +215,7 @@ pub fn import_mathpack(bundle: Value) -> Result<MathpackImport, CoreError> {
         object_versions: Vec<ObjectVersion>,
         definition_details: Vec<DefinitionDetail>,
         journal_day_details: Vec<JournalDayDetail>,
+        notebook_details: Vec<NotebookDetail>,
     }
 
     let raw: RawBundle = serde_json::from_value(bundle).map_err(|e| CoreError::MalformedInput {
@@ -238,6 +242,7 @@ pub fn import_mathpack(bundle: Value) -> Result<MathpackImport, CoreError> {
         object_versions: raw.graph.object_versions,
         definition_details: raw.graph.definition_details,
         journal_day_details: raw.graph.journal_day_details,
+        notebook_details: raw.graph.notebook_details,
     };
     // The §6.1a invariants the DB can't FK-check — import is the only gate (refuse loudly, §2.2).
     validate_graph(&graph)?;
@@ -274,6 +279,7 @@ fn derive_counts(graph: &MathpackGraph) -> MathpackCounts {
         object_versions: graph.object_versions.len() as u32,
         definition_details: graph.definition_details.len() as u32,
         journal_day_details: graph.journal_day_details.len() as u32,
+        notebook_details: graph.notebook_details.len() as u32,
         provenance: graph.provenance.len() as u32,
         provenance_derivations: graph.provenance_derivations.len() as u32,
     }
@@ -337,6 +343,10 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
             match &unit.content {
                 // Prose: outer inline spans + zero-width atoms + each inline math's occurrences.
                 UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
+                // A §B section heading's title is prose-shaped (it may carry inline math/refs) — validate
+                // it identically to save_content (ops.rs validate_content_well_formed), in lockstep, so an
+                // imported pack can't smuggle an out-of-bounds heading title that only fails on first edit.
+                UnitContent::Heading { text, inline } => validate_prose_inline(text, inline)?,
                 // Display math: the placed expression's occurrence selectors.
                 UnitContent::Math { expr } => validate_expression(expr)?,
                 // Embed: its object target must be present in the pack (no SQL FK for it, §9.y).
@@ -351,6 +361,10 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
                 _ => {}
             }
         }
+        // §B section invariant — enforced here in LOCKSTEP with save_content/reparent_unit/toggle_heading,
+        // so an imported pack can't carry a malformed tree (a leaf owning children) that would then wedge
+        // every later edit.
+        crate::ops::validate_section_structure(content)?;
     }
     for link in &graph.links {
         validate_link(link)?;
@@ -377,6 +391,9 @@ pub fn validate_graph(graph: &MathpackGraph) -> Result<(), CoreError> {
     }
     for detail in &graph.journal_day_details {
         check_detail(detail.object_id, ObjectType::JournalDay)?;
+    }
+    for detail in &graph.notebook_details {
+        check_detail(detail.object_id, ObjectType::Notebook)?;
     }
     Ok(())
 }

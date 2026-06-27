@@ -7,7 +7,7 @@
 // is the behaviour-preservation safety net.
 import type { MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { planMerge, type Delta } from './merge';
-import type { TypeNeed } from './projection';
+import type { StructuralIntent, StructuralNeed, TypeNeed } from './projection';
 import { classifyFlushError } from './errorClass';
 import type { SaveState } from './saveStatus';
 
@@ -28,9 +28,10 @@ export interface AutosavePorts {
   /** A stable signature of the live doc (drives the semantic latch). */
   signature(): string;
   /** Replace the live doc with `content` WITHOUT a dispatch (no spurious dirty/flush). `keepTypes`
-   *  overlays my still-pending optimistic type cues onto the reprojected doc so a prose merge (which
-   *  carries only server types) never silently drops a type the user just declared (§2c-2). */
-  reproject(content: MathContent, keepTypes: TypeNeed[]): void;
+   *  overlays my still-pending optimistic type cues, and `keepStruct` my pending §B section gestures
+   *  (heading-ness + parent), onto the reprojected doc — so a prose merge (which carries only server
+   *  types/structure) never silently drops a type OR a section move the user just made (§2c-2 / §B). */
+  reproject(content: MathContent, keepTypes: TypeNeed[], keepStruct: StructuralIntent[]): void;
   /** Persist the local draft (token-guarded; reads shared `prior` + the doc). */
   persistDraft(): void;
   clearDraft(): void;
@@ -44,6 +45,16 @@ export interface AutosavePorts {
   /** My pending type INTENTS vs `baseline` (= `typeIntents` over the live doc): includes brand-new cued
    *  blocks not yet persisted. Used for the keepTypes reproject overlay and the dirty/draft decision. */
   docTypeIntents(baseline: MathContent): TypeNeed[];
+  /** Issue a §B STRUCTURAL op at `expectedRevision`: a `toggle_heading` (the op infers promote/dissolve)
+   *  or a `reparent_unit`; resolves to the canonical echo; throws ApiError (409 stale revision / 422 the
+   *  target or new parent was concurrently changed). The third op-axis, after content + type. */
+  applyStructural(need: StructuralNeed, expectedRevision: number): Promise<MathContent>;
+  /** The SENDABLE structural delta vs `server` (= `structuralNeeds` over the live doc): toggle_heading /
+   *  reparent ops for persisted units whose heading-ness or parent diverges. What `drainStructure` sends. */
+  docStructuralNeeds(server: MathContent): StructuralNeed[];
+  /** My pending structural INTENTS vs `baseline` (= `structuralIntents`): incl. brand-new blocks. The
+   *  keepStruct reproject overlay + the dirty/draft decision (a pending section gesture keeps the draft). */
+  docStructuralIntents(baseline: MathContent): StructuralIntent[];
   /** Set the React save status; already cancellation-guarded by the caller (DayEditor's `setIf`). */
   setStatus(next: (s: SaveState) => SaveState): void;
   /** Clear the pending network-flush debounce timer (DayEditor owns the handle). */
@@ -55,6 +66,8 @@ export interface AutosavePorts {
   maxMergeRetries?: number;
   /** Bounded retries for a type-set racing another writer before giving up to a conflict (default 3). */
   maxTypeRetries?: number;
+  /** Bounded retries for a structural op racing another writer before giving up to a conflict (default 3). */
+  maxStructRetries?: number;
 }
 
 export interface AutosaveController {
@@ -78,6 +91,7 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   const { prior } = ports;
   const MAX_MERGE_RETRIES = ports.maxMergeRetries ?? 3;
   const MAX_TYPE_RETRIES = ports.maxTypeRetries ?? 3;
+  const MAX_STRUCT_RETRIES = ports.maxStructRetries ?? 3;
   const setStatus = ports.setStatus;
 
   let busy = false; // single in-progress guard across the whole flush → merge / resolve chain
@@ -102,7 +116,8 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     const proseLeft = d.upserts.length > 0 || d.deletes.length > 0;
     // INTENTS, not just sendable needs: an empty cued block (un-persistable) stays dirty/drafted, not lost.
     const typesLeft = ports.docTypeIntents(prior.current).length > 0;
-    const stillDirty = proseLeft || typesLeft;
+    const structLeft = ports.docStructuralIntents(prior.current).length > 0;
+    const stillDirty = proseLeft || typesLeft || structLeft;
     if (!proseLeft) semanticLatch = null; // prose is synced → any prose latch is now stale
     if (stillDirty) ports.persistDraft();
     else ports.clearDraft();
@@ -176,9 +191,10 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
           return 'conflict';
         }
         const keep = ports.docTypeIntents(baseline); // my pending cues (incl. unpersisted), preserved
+        const keepStruct = ports.docStructuralIntents(baseline); // my pending §B section gestures, preserved
         prior.current = fresh;
         ports.seedCache(fresh);
-        ports.reproject(plan.content, keep);
+        ports.reproject(plan.content, keep, keepStruct);
         if (plan.rebasedDelta.upserts.length > 0 || plan.rebasedDelta.deletes.length > 0) {
           try {
             await clearTypesForDeletes(plan.rebasedDelta.deletes); // typed-delete → clear first
@@ -202,13 +218,111 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     return 'conflict';
   };
 
-  /** Shared success tail of flush + runMerge: drain pending types, then settle the status (unless the
-   *  drain ended in a conflict, which already set the status). `proseLatched` keeps `error:true` while a
-   *  known-bad prose delta is still pending (we drained types past it but the prose remains rejected). */
-  const finishWithTypes = async (proseLatched = false): Promise<void> => {
-    const outcome = await drainTypes();
-    if (outcome === 'conflict') return; // enterConflict already set the status
-    settleAfterFlush(proseLatched ? true : outcome === 'deferred' ? ports.isOnline() : false);
+  /** Apply pending STRUCTURAL changes (3b §B) via `toggle_heading` / `reparent_unit`, AFTER the prose part
+   *  of a sync. Stateless + idempotent: recompute `docStructuralNeeds` each pass (toggles ordered before
+   *  reparents — a body reparents UNDER a heading only once that unit IS one, §B parent-capability), apply
+   *  each sequentially at the current revision (each op bumps it). On a 409/422 → re-anchor by MERGING fresh
+   *  (preserving my unflushed prose AND my pending type + structural intents), then loop to retry at the new
+   *  revision; bounded retries → conflict. A transient failure DEFERS (draft kept, retried next flush).
+   *  Structure NEVER rides the prose delta (§6.0a freezes parent/kind). The CALLER owns `busy`. The
+   *  structure-axis twin of `drainTypes`. */
+  const drainStructure = async (): Promise<'done' | 'deferred' | 'conflict'> => {
+    for (let attempt = 0; attempt <= MAX_STRUCT_RETRIES; attempt += 1) {
+      const needs = ports.docStructuralNeeds(prior.current);
+      if (needs.length === 0) return 'done';
+      try {
+        for (const need of needs) {
+          const content = await ports.applyStructural(need, prior.current.revision);
+          if (disposed) return 'done';
+          prior.current = content;
+          ports.seedCache(content);
+        }
+        return 'done';
+      } catch (err) {
+        if (disposed) return 'done';
+        if (classifyFlushError(err) === 'transient') return 'deferred'; // retried next flush/reconnect
+        // 409/422: another writer advanced the revision (or changed the target/parent). Re-anchor by merging
+        // fresh — preserving my unflushed prose AND my pending type + structural intents — then loop to retry
+        // at the new revision. (Self-contained; mirrors drainTypes' merge step.)
+        const baseline = prior.current;
+        let fresh: MathContent;
+        try {
+          const found = await ports.fetchFresh();
+          if (disposed) return 'done';
+          if (!found) {
+            enterConflict();
+            return 'conflict';
+          }
+          fresh = found;
+        } catch {
+          return 'deferred'; // GET failed (transient) — retry on the next flush
+        }
+        if (fresh.revision <= baseline.revision) {
+          // The server did NOT advance → a deterministic structural reject (e.g. a reparent the current tree
+          // can't accept), not a race. Surface (don't loop to the retry cap → conflict); retried on the next
+          // real edit. (Mirrors the prose latch / the type-axis deterministic-reject branch.)
+          return 'deferred';
+        }
+        const plan = planMerge({ baseline, server: fresh, mine: ports.delta(baseline) });
+        if (plan.kind === 'conflict') {
+          enterConflict();
+          return 'conflict';
+        }
+        const keepTypes = ports.docTypeIntents(baseline);
+        const keepStruct = ports.docStructuralIntents(baseline); // my pending §B gestures, preserved
+        prior.current = fresh;
+        ports.seedCache(fresh);
+        ports.reproject(plan.content, keepTypes, keepStruct);
+        if (plan.rebasedDelta.upserts.length > 0 || plan.rebasedDelta.deletes.length > 0) {
+          try {
+            await clearTypesForDeletes(plan.rebasedDelta.deletes); // typed-delete → clear first
+            if (disposed) return 'done';
+            const content = await ports.save({
+              expected_revision: prior.current.revision,
+              upserts: plan.rebasedDelta.upserts,
+              deletes: plan.rebasedDelta.deletes,
+            });
+            if (disposed) return 'done';
+            prior.current = content;
+            ports.seedCache(content);
+          } catch {
+            return 'deferred'; // prose re-save raced again — defer; the next flush retries
+          }
+        }
+        // loop: recompute docStructuralNeeds(prior.current) and retry at the advanced revision
+      }
+    }
+    enterConflict(); // exhausted the structural-retry budget under repeated races
+    return 'conflict';
+  };
+
+  /** Shared success tail of flush + runMerge: drain pending STRUCTURE, then TYPES, then settle the status
+   *  (unless a drain ended in a conflict, which already set it). Structure FIRST: a unit must become a
+   *  heading before a child reparents under it (§B parent-capability), and a reparent's target only exists
+   *  once the prose flush created it. `proseLatched` keeps `error:true` while a known-bad prose delta is
+   *  still pending (we drained the secondary axes past it but the prose remains rejected). */
+  const finishWithSecondaryOps = async (proseLatched = false): Promise<void> => {
+    const structBaseline = prior.current; // the server state the doc's pending §B gestures are relative to
+    const structOutcome = await drainStructure();
+    if (structOutcome === 'conflict') return; // enterConflict already set the status
+    // A structural op can have SIDE EFFECTS on units the user did NOT gesture on: toggle_heading DISSOLVE
+    // lifts the former heading's children to its parent server-side. The doc still shows those children
+    // under the (now-prose) former heading, so the next pass would re-POST a phantom reparent UNDER a prose
+    // unit → a deterministic 422 every flush (an autosave WEDGE). When the drain fully succeeded yet leaves
+    // RESIDUAL needs, reproject to ADOPT those server-side moves — preserving the user's OWN pending gestures
+    // (intents vs the PRE-drain baseline), so a non-gestured lifted child is taken from the server, not
+    // re-sent. A pure promote/reparent has no such residual → no reproject → the cursor is undisturbed.
+    if (structOutcome === 'done' && ports.docStructuralNeeds(prior.current).length > 0) {
+      ports.reproject(
+        prior.current,
+        ports.docTypeIntents(structBaseline),
+        ports.docStructuralIntents(structBaseline),
+      );
+    }
+    const typeOutcome = await drainTypes();
+    if (typeOutcome === 'conflict') return;
+    const deferred = structOutcome === 'deferred' || typeOutcome === 'deferred';
+    settleAfterFlush(proseLatched ? true : deferred ? ports.isOnline() : false);
   };
 
   /** A 409 (or a stale-write 422), and the "Keep mine" resolution (`force`) → safe additive merge. We
@@ -256,17 +370,18 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     // merge never silently drops a type the user just declared (§2c-2 blocker), while a concurrent foreign
     // retype on a unit I didn't touch is preserved (intents-vs-baseline, not snapshot-all).
     const keepTypes = ports.docTypeIntents(baseline);
+    const keepStruct = ports.docStructuralIntents(baseline); // my pending §B section gestures, preserved
     prior.current = fresh;
     ports.seedCache(fresh);
-    ports.reproject(plan.content, keepTypes);
+    ports.reproject(plan.content, keepTypes, keepStruct);
 
     if (plan.rebasedDelta.upserts.length === 0 && plan.rebasedDelta.deletes.length === 0) {
       // nothing PROSE of mine to persist (e.g. my only change was a dropped reorder) — already in sync;
-      // any pending type still drains via finishWithTypes.
+      // any pending structure/type still drains via finishWithSecondaryOps.
       ports.seedCache(plan.content);
       prior.current = plan.content;
       mergeRetries = 0;
-      return await finishWithTypes();
+      return await finishWithSecondaryOps();
     }
 
     setStatus((s) => ({ ...s, saving: true, conflict: false }));
@@ -283,8 +398,8 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       ports.seedCache(content);
       mergeRetries = 0;
       // The reprojected doc has the foreign units, so any typed-during-PUT edit is a normal delta; pending
-      // types then drain + settle.
-      await finishWithTypes();
+      // structure + types then drain + settle.
+      await finishWithSecondaryOps();
     } catch (err) {
       if (classifyFlushError(err) === 'conflict') {
         if (mergeRetries >= MAX_MERGE_RETRIES) return enterConflict();
@@ -301,13 +416,17 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     const { upserts, deletes } = ports.delta(prior.current);
     const hasProse = upserts.length > 0 || deletes.length > 0;
     const hasTypeOps = ports.docTypeNeeds(prior.current).length > 0; // sendable set_unit_type now
+    const hasStructOps = ports.docStructuralNeeds(prior.current).length > 0; // sendable toggle/reparent now
 
-    if (!hasProse && !hasTypeOps) {
-      // No NETWORK work this cycle. But a pending unpersisted type INTENT (a cued-but-empty block — the
-      // model can't persist it until it has content) must keep its draft so the cue survives a reload;
-      // else fully clean → clear. A clean doc never flips `saving` either way.
+    if (!hasProse && !hasTypeOps && !hasStructOps) {
+      // No NETWORK work this cycle. But a pending unpersisted INTENT (a cued-but-empty block, or a section
+      // gesture on a not-yet-persisted unit) must keep its draft so it survives a reload; else fully clean →
+      // clear. A clean doc never flips `saving` either way.
       semanticLatch = null; // doc returned to the server state
-      if (ports.docTypeIntents(prior.current).length > 0) {
+      const intentsPending =
+        ports.docTypeIntents(prior.current).length > 0 ||
+        ports.docStructuralIntents(prior.current).length > 0;
+      if (intentsPending) {
         ports.persistDraft();
         dirtyMirror = true;
         setStatus((s) => ({ ...s, dirty: true, error: false }));
@@ -318,13 +437,13 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       }
       return;
     }
-    // The latch is a PROSE concept and gates only the prose SAVE: a type-only edit never lifts it, and a
-    // latch hit still drains pending types (they're an independent axis).
+    // The latch is a PROSE concept and gates only the prose SAVE: a type/section-only edit never lifts it,
+    // and a latch hit still drains the secondary axes (structure + types are independent).
     let proseLatched = false;
     if (hasProse && semanticLatch !== null) {
       if (ports.signature() === semanticLatch) {
-        if (!hasTypeOps) return; // known-bad prose, unchanged, nothing else to do → don't re-send
-        proseLatched = true; // skip the prose save, but still drain pending types
+        if (!hasTypeOps && !hasStructOps) return; // known-bad prose, unchanged, nothing else → don't re-send
+        proseLatched = true; // skip the prose save, but still drain pending structure + types
       } else {
         semanticLatch = null; // prose changed → worth another try
       }
@@ -346,9 +465,10 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
         prior.current = content; // ids are client-minted, so the doc stays anchored
         ports.seedCache(content);
       }
-      // Reached by the saved-prose, the latched-prose, AND the type-only branches (a pure type change has
-      // no prose delta and must NOT early-return before the drain). Drains pending types, then settles.
-      await finishWithTypes(proseLatched);
+      // Reached by the saved-prose, the latched-prose, AND the secondary-only branches (a pure type/section
+      // change has no prose delta and must NOT early-return before the drain). Drains structure + types,
+      // then settles.
+      await finishWithSecondaryOps(proseLatched);
     } catch (err) {
       // The prose `save` (or a clear-then-delete `setType`) can throw here; drainTypes/runMerge own theirs.
       if (classifyFlushError(err) === 'transient') {
@@ -382,7 +502,7 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
       }
       prior.current = found;
       ports.seedCache(found);
-      ports.reproject(found, []); // discard my unsaved changes AND pending type cues — show the server
+      ports.reproject(found, [], []); // discard my unsaved changes AND pending type/section cues — show server
       ports.clearDraft();
       conflict = false;
       mergeRetries = 0;

@@ -7,6 +7,8 @@ import {
   isEditable,
   isFlatProse,
   projectToDoc,
+  structuralIntents,
+  structuralNeeds,
   typeNeeds,
   typeIntents,
 } from './projection';
@@ -33,6 +35,20 @@ function prose(
   };
 }
 const content = (units: Unit[]): MathContent => ({ object_id: OBJ, revision: 3, units });
+
+/** A §B section heading unit. */
+function headingUnit(id: string, position: number, text: string, parentUnitId?: string): Unit {
+  return {
+    id,
+    object_id: OBJ,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'heading', text, inline: [] },
+    provenance_id: '0197675f-71f4-7000-8000-0000000000d3',
+    ...(parentUnitId ? { parent_unit_id: parentUnitId } : {}),
+  };
+}
 
 /** A top-level display-math (`UnitContent::Math`) unit. */
 function mathUnit(id: string, position: number, surface: string): Unit {
@@ -801,4 +817,311 @@ describe('systems (structured-math 2-B) — multi-line $$…$$ ⇄ Equations con
       ]),
     ]);
   }
+});
+
+describe('§B sections (Heading kind, flat parentId projection)', () => {
+  const HD = '0197675f-71f4-7000-8000-0000000000d3';
+  function heading(id: string, position: number, text: string, parent?: string): Unit {
+    return {
+      id,
+      object_id: OBJ,
+      position,
+      status: 'rough',
+      declared_by: 'user',
+      ...(parent ? { parent_unit_id: parent } : {}),
+      content: { kind: 'heading', text, inline: [] },
+      provenance_id: HD,
+    };
+  }
+  const body = (id: string, position: number, text: string, parent: string): Unit => ({
+    ...prose(id, position, text),
+    parent_unit_id: parent,
+  });
+
+  // A section tree: H1 "Intro" [ body p1 · subsection H2 "Deep" [ body p2 ] ] · H3 "Other".
+  const sectionTree = (): MathContent =>
+    content([
+      heading('h1', 0, 'Intro'),
+      body('p1', 0, 'Body of intro.', 'h1'),
+      heading('h2', 1, 'Deep', 'h1'),
+      body('p2', 0, 'Body of deep.', 'h2'),
+      heading('h3', 1, 'Other'),
+    ]);
+
+  it('a section tree round-trips with no delta', () => {
+    expect(roundTripIsClean(sectionTree())).toBe(true);
+  });
+
+  it('a heading TITLE with inline math + a mark round-trips (the `#`-prefix offset shift is exact)', () => {
+    // The rendered title gets a `# ` prefix that shifts every inline span by 2; the flush must unshift by
+    // exactly 2 to recover the canonical spans. If the shift/unshift were off, this delta would be non-empty.
+    const expr: MathExpression = {
+      id: '0197675f-71f4-7000-8000-0000000000ef',
+      surface_text: 'x',
+      surface_format: 'mathmeander',
+      original_input: 'x',
+      parse_status: 'renderable',
+      occurrences: [],
+    };
+    const h: Unit = {
+      id: 'h1',
+      object_id: OBJ,
+      position: 0,
+      status: 'rough',
+      declared_by: 'user',
+      content: {
+        kind: 'heading',
+        text: 'Props of ', // a `strong` mark over "Props", an inline-math atom at the end
+        inline: [
+          { kind: 'mark', span: { start: 0, end: 5 }, style: 'strong' },
+          { kind: 'math', span: { start: 9, end: 9 }, expr },
+        ],
+      },
+      provenance_id: '0197675f-71f4-7000-8000-0000000000d1',
+    };
+    expect(roundTripIsClean(content([h]))).toBe(true);
+    // And the projected block text actually carries the `# ` source prefix (depth 1).
+    const doc = projectToDoc(content([h]));
+    expect(doc.child(0).textContent.startsWith('# Props of ')).toBe(true);
+  });
+
+  it('a subsection renders `## ` (depth from nesting), round-trips clean', () => {
+    const doc = projectToDoc(sectionTree());
+    const texts: string[] = [];
+    doc.forEach((b) => texts.push(b.textContent));
+    expect(texts[0]).toBe('# Intro'); // h1 top-level
+    expect(texts[2]).toBe('## Deep'); // h2 nested under h1
+    expect(texts[4]).toBe('# Other'); // h3 top-level
+  });
+
+  it('projects the tree to FLAT blocks in document order, carrying parentId + heading attrs', () => {
+    const doc = projectToDoc(sectionTree());
+    const got: Array<[string | null, string | null, boolean]> = [];
+    doc.forEach((b) =>
+      got.push([
+        b.attrs.unitId as string | null,
+        b.attrs.parentId as string | null,
+        b.attrs.heading as boolean,
+      ]),
+    );
+    // Pre-order DFS: h1, p1, h2, p2, h3 — flat, each tagged with its parent + heading-ness.
+    expect(got).toEqual([
+      ['h1', null, true],
+      ['p1', 'h1', false],
+      ['h2', 'h1', true],
+      ['p2', 'h2', false],
+      ['h3', null, true], // h3 is a heading with no body → its block is the last
+    ]);
+  });
+
+  it('marks every heading block (not just the first)', () => {
+    const doc = projectToDoc(sectionTree());
+    const headings: string[] = [];
+    doc.forEach((b) => {
+      if (b.attrs.heading) headings.push(b.attrs.unitId as string);
+    });
+    expect(headings).toEqual(['h1', 'h2', 'h3']);
+  });
+
+  it('assigns PER-PARENT positions (each sibling group is gap-free 0..n in document order)', () => {
+    // Reorder: move p1 after h2 within h1 (positions swapped). Flush must renumber h1's children 0,1.
+    const reordered = content([
+      heading('h1', 0, 'Intro'),
+      heading('h2', 0, 'Deep', 'h1'), // now first child of h1
+      body('p1', 1, 'Body of intro.', 'h1'), // now second
+      body('p2', 0, 'Body of deep.', 'h2'),
+    ]);
+    const { upserts } = flushToContent(projectToDoc(reordered), sectionTree());
+    const byId = new Map(upserts.map((u) => [u.id, u]));
+    // h2 (pos 0 under h1) and p1 (pos 1 under h1) both moved → both re-emitted with the new positions.
+    expect(byId.get('h2')?.position).toBe(0);
+    expect(byId.get('p1')?.position).toBe(1);
+    // p2 unchanged (pos 0 under h2) → not in the delta.
+    expect(byId.has('p2')).toBe(false);
+  });
+
+  it('flushes a heading TITLE edit as heading content (kind preserved, not flipped to prose)', () => {
+    const prior = sectionTree();
+    const edited = content([
+      heading('h1', 0, 'Introduction'), // title changed
+      body('p1', 0, 'Body of intro.', 'h1'),
+      heading('h2', 1, 'Deep', 'h1'),
+      body('p2', 0, 'Body of deep.', 'h2'),
+      heading('h3', 1, 'Other'),
+    ]);
+    const { upserts, deletes } = flushToContent(projectToDoc(edited), prior);
+    expect(deletes).toEqual([]);
+    expect(upserts).toHaveLength(1);
+    const u = upserts[0]!;
+    expect(u.id).toBe('h1');
+    expect(u.content.kind).toBe('heading');
+    expect((u.content as { text: string }).text).toBe('Introduction');
+  });
+
+  it('creates a new body paragraph under a heading with its parent_unit_id set', () => {
+    const prior = content([heading('h1', 0, 'Sec')]);
+    const withBody = content([heading('h1', 0, 'Sec'), body('pnew', 0, 'new body', 'h1')]);
+    const { upserts } = flushToContent(projectToDoc(withBody), prior);
+    expect(upserts).toHaveLength(1);
+    const u = upserts[0]!;
+    expect(u.id).toBe('pnew');
+    expect(u.parent_unit_id).toBe('h1');
+    expect(u.position).toBe(0);
+    expect(u.content.kind).toBe('prose');
+  });
+
+  it('a heading-attr block over a PROSE unit flushes as PROSE (promotion deferred to drainStructure)', () => {
+    // The block claims heading=true, but the prior unit is still prose (toggle_heading hasn't run) → the
+    // flush must NOT emit a heading kind (save_content forbids the flip); it emits prose. The promotion
+    // settles on the next structural drain once the unit is a persisted heading.
+    const prior = content([prose('u1', 0, 'x')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('xx')]),
+    ]);
+    const { upserts } = flushToContent(doc, prior);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.content.kind).toBe('prose');
+  });
+
+  it('isEditable accepts a section tree but rejects a heading nested under a system', () => {
+    expect(isEditable(sectionTree())).toBe(true);
+    // A heading whose parent is an equations container is not round-trippable → read-only.
+    const bad = content([
+      mathSystemContainer('eq', 0),
+      heading('hbad', 0, 'nope', 'eq'),
+    ]);
+    expect(isEditable(bad)).toBe(false);
+  });
+
+  // ── structural axis (drainStructure's pure inputs) ──
+  it('structuralNeeds emits toggle_heading when a block claims heading over a prose server unit', () => {
+    const server = content([prose('u1', 0, 'x')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('x')]),
+    ]);
+    expect(structuralNeeds(doc, server)).toEqual([{ op: 'toggle_heading', unitId: 'u1' }]);
+  });
+
+  it('structuralNeeds emits a reparent when a block claims a new parent', () => {
+    const server = content([heading('h1', 0, 'Sec'), prose('p1', 1, 'body')]); // p1 top-level
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [editorSchema.text('Sec')]),
+      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'h1' }, [editorSchema.text('body')]),
+    ]);
+    expect(structuralNeeds(doc, server)).toEqual([
+      { op: 'reparent', unitId: 'p1', newParentId: 'h1', newPosition: 0 },
+    ]);
+  });
+
+  it('structuralNeeds orders toggles BEFORE reparents (parent-capability)', () => {
+    const server = content([prose('u1', 0, 'Sec'), prose('p1', 1, 'body')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('Sec')]),
+      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'u1' }, [editorSchema.text('body')]),
+    ]);
+    const needs = structuralNeeds(doc, server);
+    expect(needs[0]).toEqual({ op: 'toggle_heading', unitId: 'u1' });
+    expect(needs[1]).toEqual({ op: 'reparent', unitId: 'p1', newParentId: 'u1', newPosition: 0 });
+  });
+
+  it('structuralNeeds skips a brand-new block (applied after save_content creates it)', () => {
+    const server = content([prose('u1', 0, 'x')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1' }, [editorSchema.text('x')]),
+      editorSchema.nodes.prose.create({ unitId: 'new1', heading: true }, [editorSchema.text('New')]),
+    ]);
+    expect(structuralNeeds(doc, server)).toEqual([]);
+  });
+
+  it('an in-sync section tree has NO structural needs', () => {
+    const c = sectionTree();
+    expect(structuralNeeds(projectToDoc(c), c)).toEqual([]);
+  });
+
+  it('a heading whose title reads "$$x$$" flushes as a HEADING, never a Math unit (#2 guard)', () => {
+    const prior = content([heading('h1', 0, 'Intro')]);
+    // Simulate a stale/pasted display-math mark on a HEADING block (mathRecognize now skips headings, but
+    // the flush must also fail safe): without the guard, pureDisplayExpr would flip h1 to a Math unit
+    // (delete h1 + create math) — corrupting the section. The guard keeps it a heading.
+    const exprMark = editorSchema.marks.mathExpr.create({
+      expr: {
+        id: '0197675f-71f4-7000-8000-0000000000ee',
+        surface_text: 'x',
+        surface_format: 'mathmeander',
+        original_input: 'x',
+        parse_status: 'renderable',
+        occurrences: [],
+      },
+      display: true,
+    });
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [
+        editorSchema.text('$$x$$', [exprMark]),
+      ]),
+    ]);
+    const { upserts, deletes } = flushToContent(doc, prior);
+    expect(deletes).toEqual([]); // NOT a heading→math kind-flip delete
+    expect(upserts.every((u) => u.content.kind !== 'math')).toBe(true); // never a Math unit
+    if (upserts.length > 0) expect(upserts[0]!.content.kind).toBe('heading');
+  });
+
+  it('structuralIntents captures pending heading + parent (incl. a new block), vs baseline', () => {
+    const baseline = content([prose('u1', 0, 'x')]);
+    const doc = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('x')]),
+      editorSchema.nodes.prose.create({ unitId: 'p2', parentId: 'u1' }, [editorSchema.text('body')]),
+    ]);
+    expect(structuralIntents(doc, baseline)).toEqual([
+      { unitId: 'u1', heading: true, parentId: null },
+      { unitId: 'p2', heading: false, parentId: 'u1' },
+    ]);
+  });
+
+  // A minimal Equations container unit (no rows needed for the isEditable negative).
+  function mathSystemContainer(id: string, position: number): Unit {
+    return {
+      id,
+      object_id: OBJ,
+      position,
+      status: 'rough',
+      declared_by: 'user',
+      content: { kind: 'equations' },
+      provenance_id: HD,
+    };
+  }
+});
+
+describe('§B heading kind-flip flush (demote / system-in-section)', () => {
+  it('demote: a heading block turned back to prose (heading:false) over a SERVER heading emits HEADING content — id preserved, no 422 collision', () => {
+    // The "Couldn't save" demote bug: deleting a heading's `#` set heading:false, and the flush emitted
+    // PROSE over a server heading → a kind-flip minted a FRESH id at the heading's occupied position →
+    // 422. The fix keys content on the SERVER kind, so the flush is a clean id-preserving HEADING update;
+    // the kind flip is deferred to toggle_heading.
+    const server = content([headingUnit('X', 0, 'old title')]);
+    const block = editorSchema.nodes.prose.create({ unitId: 'X', heading: false }, [
+      editorSchema.text('new title'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const { upserts, deletes } = flushToContent(doc, server);
+    expect(deletes).toEqual([]); // X is NOT deleted (no kind-flip delete/collision)
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.id).toBe('X'); // SAME id (not a fresh uuid)
+    expect(upserts[0]!.content.kind).toBe('heading'); // emitted as heading content (kind flip is toggle_heading's job)
+    expect((upserts[0]!.content as { text: string }).text).toBe('new title');
+  });
+
+  it('M5: a multi-row $$…$$ authored UNDER a heading degrades to a single Math unit (not an Equations container)', () => {
+    // The core's save_content §B relaxation accepts prose/Math under a heading but NOT a new Equations
+    // container → a system on a body line inside a section would 422-wedge / silently escape. So it degrades
+    // to one multi-line display Math unit, parented under the heading (accepted + round-trips).
+    const sys = mathUnit('s', 0, 'a\nb'); // a 2-line display equation
+    const full = content([headingUnit('h', 0, 'H'), { ...sys, parent_unit_id: 'h' }]);
+    const doc = projectToDoc(full); // a 2-row display block under the heading
+    const server = content([headingUnit('h', 0, 'H')]); // s is brand-new (authored this flush)
+    const { upserts } = flushToContent(doc, server);
+    const sUnit = upserts.find((u) => u.id === 's');
+    expect(sUnit?.content.kind).toBe('math'); // single multi-line Math, NOT a system
+    expect(sUnit?.parent_unit_id).toBe('h'); // parented under the heading (core accepts Math-under-heading)
+    expect(upserts.some((u) => u.content.kind === 'equations')).toBe(false); // no Equations container minted
+  });
 });

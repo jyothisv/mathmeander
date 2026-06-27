@@ -17,6 +17,8 @@ import { JournalDayPage } from './pages/JournalDay';
 import { LoginPage } from './pages/Login';
 import { NewNotePage } from './pages/NewNote';
 import { NoteDetailPage } from './pages/NoteDetail';
+import { NotebooksPage } from './pages/Notebooks';
+import { NotebookDetailPage } from './pages/NotebookDetail';
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -24,6 +26,7 @@ const rootRoute = createRootRoute({
       <nav>
         <Link to="/">Desk</Link>
         <Link to="/journal">Journal</Link>
+        <Link to="/notebooks">Notebooks</Link>
         <Link to="/objects/new">New note</Link>
         <LogoutLink />
       </nav>
@@ -101,6 +104,20 @@ const journalDayRoute = createRoute({
   component: JournalDayPage,
 });
 
+const notebooksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/notebooks',
+  beforeLoad: requireAuth,
+  component: NotebooksPage,
+});
+
+const notebookDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/notebooks/$slug',
+  beforeLoad: requireAuth,
+  component: NotebookDetailPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   deskRoute,
@@ -108,6 +125,8 @@ const routeTree = rootRoute.addChildren([
   noteDetailRoute,
   journalRoute,
   journalDayRoute,
+  notebooksRoute,
+  notebookDetailRoute,
 ]);
 
 export const router = createRouter({ routeTree });

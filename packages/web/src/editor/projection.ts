@@ -9,6 +9,7 @@ import { Node } from 'prosemirror-model';
 import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { splitSystemRows, wholeDisplaySource } from './mathSyntax';
+import { HEADING_PREFIX_RE, headingPrefix } from './headingSyntax';
 import { isMathRuntimeReady, normalizeFresh } from './mathRuntime';
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
@@ -16,6 +17,18 @@ const cps = (s: string): string[] => Array.from(s);
 const cpLen = (s: string): number => cps(s).length;
 const cpSlice = (s: string, start: number, end: number): string =>
   cps(s).slice(start, end).join('');
+
+// §B Obsidian-style headings: a heading block's title is rendered with a leading `#`×depth + space SOURCE
+// prefix that is KEPT as editable text (hidden/dimmed by headingLivePreview), and STRIPPED at the flush
+// seam — exactly like `$…$` strips its dollars. Canonical `Heading.text` stays clean (no `#`). The prefix
+// (`headingPrefix`/`HEADING_PREFIX_RE`, the shared single-source defs in headingSyntax.ts) shifts every
+// inline span, so project (shift +N) and flush (unshift −N) must be exact inverses.
+/** Shift every inline span by `by` code points (clamped ≥0 — an unshift can't push a span negative). */
+const shiftInline = (inline: Inline[], by: number): Inline[] =>
+  inline.map((i) => ({
+    ...i,
+    span: { start: Math.max(0, i.span.start + by), end: Math.max(0, i.span.end + by) },
+  }));
 
 /** 2c-1 handles a day whose content is entirely TOP-LEVEL PROSE (or empty) with only inline kinds the
  *  projection can represent losslessly (mark / math / reference). Anything else — display math,
@@ -49,16 +62,26 @@ export function isEditable(content: MathContent): boolean {
   return content.units.every((u) => {
     const parent = u.parent_unit_id;
     if (parent === undefined || parent === null) {
-      // Top level: prose, display math, or a system container.
-      if (u.content.kind === 'equations' || u.content.kind === 'math') return true;
+      // Top level: prose, display math, a system container, or a §B section heading.
+      if (u.content.kind === 'equations' || u.content.kind === 'math' || u.content.kind === 'heading')
+        return true;
       return isRepresentableProse(u.content);
     }
-    // Nested: a Math row WITHOUT a row_relation, directly under a TOP-LEVEL `equations` container (one level
-    // only). Fail CLOSED for shapes the editor's flush can't round-trip — a Prose row or a `row_relation`
-    // (both produced only by `insert_equations`/import, never the editor) would be re-emitted as a plain Math
-    // row and 422 on flush — so such a system renders read-only (§6.0a never-admit-an-unround-trippable-shape).
     const p = byId.get(parent);
-    if (!p || p.content.kind !== 'equations') return false;
+    if (!p) return false;
+    // §B: a section HEADING's children are its body + subsections — representable prose, a display `math`
+    // equation, or a nested `heading` (a subsection; depth is unbounded). The heading IS the parent (the
+    // title lives on it), so every section unit is one block — the flat flush handles it with no special
+    // case. (A system inside a section is deferred — an `equations` under a heading fails closed below.)
+    if (p.content.kind === 'heading') {
+      if (u.content.kind === 'heading' || u.content.kind === 'math') return true;
+      return isRepresentableProse(u.content);
+    }
+    // A Math row WITHOUT a row_relation, directly under a TOP-LEVEL `equations` container (one level only).
+    // Fail CLOSED for shapes the editor's flush can't round-trip — a Prose row or a `row_relation` (both
+    // produced only by `insert_equations`/import, never the editor) would be re-emitted as a plain Math row
+    // and 422 on flush — so such a system renders read-only (§6.0a never-admit-an-unround-trippable-shape).
+    if (p.content.kind !== 'equations') return false;
     if (p.parent_unit_id !== undefined && p.parent_unit_id !== null) return false;
     return u.content.kind === 'math' && u.row_relation == null;
   });
@@ -209,43 +232,76 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
  *  centered; the seam maps it back to a `Math` unit). An empty day yields a single empty prose block (a cursor
  *  home) whose null `unitId` flush skips. */
 export function projectToDoc(content: MathContent): Node {
-  const units = content.units
-    .filter(
-      (u) =>
-        (u.parent_unit_id === undefined || u.parent_unit_id === null) &&
-        (u.content.kind === 'prose' || u.content.kind === 'math' || u.content.kind === 'equations'),
-    )
-    .slice()
-    .sort((a, b) => a.position - b.position);
-  const blocks = units.map((u) => {
-    if (u.content.kind === 'equations') {
-      // A co-equal SYSTEM (2-B): the container's child rows render as ONE multi-line `$$…$$` block (one
-      // equation per line). `rowIds` carries each row's stable id so an edit is a content-only upsert.
-      const rows = content.units
-        .filter((r) => r.parent_unit_id === u.id)
-        .slice()
-        .sort((a, b) => a.position - b.position);
-      return editorSchema.nodes.prose.create(
-        { unitId: u.id, unitType: null, rowIds: rows.map((r) => r.id) },
-        systemDisplayNodes(u, rows),
-      );
+  // Children indexed by parent, each sorted by position. The doc is a FLAT list of blocks in DOCUMENT
+  // ORDER — a pre-order DFS over the section tree (§B): a heading is emitted, then its body + subsections
+  // recurse. Every unit is ONE block (the title lives on the heading), so the flat consumers are unchanged
+  // for the no-section base case (top-level units, nothing recurses → identical to the old flat projection).
+  const kids = new Map<string | null, Unit[]>();
+  for (const u of content.units) {
+    const key = u.parent_unit_id ?? null;
+    let arr = kids.get(key);
+    if (!arr) {
+      arr = [];
+      kids.set(key, arr);
     }
-    if (u.content.kind === 'math') {
-      // Display math is a prose block whose content is the `$$…$$` display source (NOT a separate atom node):
-      // editable text (multi-line → text + hard_breaks), live-preview renders it centered, the seam maps it back.
-      return editorSchema.nodes.prose.create(
-        { unitId: u.id, unitType: null, rowIds: [] },
-        mathDisplayNodes((u.content as { kind: 'math'; expr: MathExpression }).expr),
-      );
+    arr.push(u);
+  }
+  for (const arr of kids.values()) arr.sort((a, b) => a.position - b.position);
+
+  const blocks: Node[] = [];
+  // `depth` = the nesting depth of the ENCLOSING heading (0 at the top level); a heading child of this
+  // context is at `depth + 1` and renders that many `#`s. Body units don't recurse, so they don't change it.
+  const walk = (parentId: string | null, depth: number): void => {
+    for (const u of kids.get(parentId) ?? []) {
+      if (u.content.kind === 'equations') {
+        // A co-equal SYSTEM (2-B): the container's child rows render as ONE multi-line `$$…$$` block (one
+        // equation per line). `rowIds` carries each row's stable id so an edit is a content-only upsert. Rows
+        // are rendered INTO this block, so we do NOT recurse into them.
+        const rows = kids.get(u.id) ?? [];
+        blocks.push(
+          editorSchema.nodes.prose.create(
+            { unitId: u.id, unitType: null, rowIds: rows.map((r) => r.id), parentId },
+            systemDisplayNodes(u, rows),
+          ),
+        );
+      } else if (u.content.kind === 'math') {
+        // Display math: a prose block whose content is the `$$…$$` source (editable text; multi-line → text +
+        // hard_breaks); live-preview renders it centered, the seam maps it back to a `Math` unit.
+        blocks.push(
+          editorSchema.nodes.prose.create(
+            { unitId: u.id, unitType: null, rowIds: [], parentId },
+            mathDisplayNodes((u.content as { kind: 'math'; expr: MathExpression }).expr),
+          ),
+        );
+      } else if (u.content.kind === 'heading') {
+        // A §B section heading: render its TITLE with a `#`×depth + space SOURCE prefix (kept editable),
+        // shifting the title's inline spans past the prefix. Same inline pipeline as prose (marks/inline
+        // math in a title work). Then recurse one level deeper for its body + subsections.
+        const c = u.content as { kind: 'heading'; text: string; inline: Inline[] };
+        const hd = depth + 1; // this heading's nesting depth (top-level = 1)
+        const prefix = headingPrefix(hd);
+        blocks.push(
+          editorSchema.nodes.prose.create(
+            { unitId: u.id, unitType: u.type ?? null, rowIds: [], parentId, heading: true },
+            inlineToNodes(prefix + c.text, shiftInline(c.inline, cpLen(prefix))),
+          ),
+        );
+        walk(u.id, hd);
+      } else {
+        // Plain prose. `unitType` mirrors the unit's §6.0 type for display + as the source for the
+        // set_unit_type delta (typeNeeds); it never rides the prose `save_content` delta (the flush ignores it).
+        const c = u.content as { kind: 'prose'; text: string; inline: Inline[] };
+        blocks.push(
+          editorSchema.nodes.prose.create(
+            { unitId: u.id, unitType: u.type ?? null, rowIds: [], parentId },
+            inlineToNodes(c.text, c.inline),
+          ),
+        );
+      }
     }
-    const c = u.content as { kind: 'prose'; text: string; inline: Inline[] };
-    // `unitType` mirrors the unit's §6.0 type for display + as the source for the set_unit_type delta
-    // (typeNeeds); it never rides the prose `save_content` delta (flushToContent ignores it).
-    return editorSchema.nodes.prose.create(
-      { unitId: u.id, unitType: u.type ?? null, rowIds: [] },
-      inlineToNodes(c.text, c.inline),
-    );
-  });
+  };
+  walk(null, 0);
+
   // Always leave a PLAIN prose block to home the caret: an empty day, OR a day ENDING in a display equation
   // (whose source is hidden when blurred — so without this there'd be no plain line to click/type below it).
   // The trailing placeholder has a null unitId, so the flush skips it until the user types.
@@ -315,6 +371,20 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
     }
   });
   closeExcept(new Set());
+  // §B: a heading block's text carries the `#`×depth + space SOURCE prefix — strip it to recover the
+  // canonical title, unshifting every inline span back (the exact inverse of the projection's shift). Only
+  // when the block is a heading AND the prefix is actually present (a pending-promotion or prefix-deleted
+  // block falls through unchanged; headingRecognize reconciles the `heading` attr from the live `#` count).
+  if ((block.attrs.heading as boolean) ?? false) {
+    const m = HEADING_PREFIX_RE.exec(text);
+    if (m) {
+      const prefixLen = cpLen(m[0]);
+      return {
+        text: cpSlice(text, prefixLen, cpLen(text)),
+        inline: canonicalInline(shiftInline(inline, -prefixLen)),
+      };
+    }
+  }
   return { text, inline: canonicalInline(inline) };
 }
 
@@ -324,6 +394,7 @@ function newProseUnit(
   position: number,
   text: string,
   inline: Inline[],
+  parentUnitId?: string,
 ): Unit {
   return {
     id, // the block's idStamper-minted UUIDv7 (§6.3) — so the block stays ANCHORED to the persisted
@@ -335,6 +406,9 @@ function newProseUnit(
     declared_by: 'user',
     content: { kind: 'prose', text, inline },
     provenance_id: uuidv7(), // placeholder; overwritten server-side for new units
+    // A §B section-body row carries its parent heading; a top-level paragraph omits it (None). save_content's
+    // new-unit relaxation accepts a new prose/math child under a Heading (mirrors the Equations-row path).
+    ...(parentUnitId ? { parent_unit_id: parentUnitId } : {}),
   };
 }
 
@@ -400,8 +474,12 @@ function stableStringify(v: unknown): string {
  *  normalized so wire-vs-local key ordering can't masquerade as a change. Exported so the merge
  *  (merge.ts) detects "did the same unit change?" with the SAME comparison the flush uses. */
 export function contentKeyOf(c: Unit['content']): string {
+  // Prose AND a §B heading title are inline-bearing — canonicalize both so a non-canonical inline order
+  // (e.g. from import) can't masquerade as a change and churn an upsert every idle cycle (load-no-churn).
   return stableStringify(
-    c.kind === 'prose' ? { ...c, inline: canonicalInline((c as { inline: Inline[] }).inline) } : c,
+    c.kind === 'prose' || c.kind === 'heading'
+      ? { ...c, inline: canonicalInline((c as { inline: Inline[] }).inline) }
+      : c,
   );
 }
 
@@ -425,16 +503,35 @@ export function flushToContent(
   const priorById = new Map(prior.units.map((u) => [u.id, u]));
   const seen = new Set<string>();
   const upserts: Unit[] = [];
-  let position = 0;
+
+  // §B PER-PARENT positions: a unit's `position` is its index among its siblings (same `parent_unit_id`) in
+  // DOCUMENT order. Because EVERY unit is one block (a heading's title rides on the heading unit), this is a
+  // plain per-parent counter over the flat doc — NO interleaving of position-only container units. For the
+  // no-section base case all blocks are top-level (key `null`), so this reduces to the old single counter →
+  // byte-identical. `nextPos(parent)` returns then bumps the gap-free 0..n index for that parent.
+  const posByParent = new Map<string | null, number>();
+  const nextPos = (parentKey: string | null): number => {
+    const n = posByParent.get(parentKey) ?? 0;
+    posByParent.set(parentKey, n + 1);
+    return n;
+  };
 
   // Emit one block as a unit. When the prior unit's KIND matches → edit/reposition it; otherwise CREATE: a
   // brand-new block keeps its idStamper-stamped id, while a KIND-FLIP (the prior unit was a different kind)
   // mints a FRESH id and leaves the prior unit OUT of `seen` so it falls into `deletes` — i.e. the core does
   // a prose↔math flip as delete+create (it forbids changing an existing unit's kind in place).
+  //
+  // PARENT is never changed by the flush (save_content freezes `parent_unit_id` — §6.0a): an EXISTING unit
+  // keeps `prev`'s parent (and is positioned in that parent's namespace); a NEW unit takes the block's
+  // `parentId` attr (a section-body row under a heading; null = top-level). A pending REPARENT settles via
+  // the structural op (reparent_unit) + reproject, never here. `content.kind === 'heading'` only ever reaches
+  // the EDIT branch (the caller passes heading content solely when `prev` is already a heading — new/flip
+  // headings are toggle_heading's job, never save_content), so the CREATE branch only mints prose/math.
   const emit = (block: Node, prev: Unit | undefined, content: Unit['content']) => {
     const unitId = block.attrs.unitId as string | null;
     if (prev && prev.content.kind === content.kind) {
       seen.add(prev.id);
+      const position = nextPos(prev.parent_unit_id ?? null);
       const next: Unit = { ...prev, position, content };
       if (
         next.position !== prev.position ||
@@ -442,20 +539,36 @@ export function flushToContent(
       )
         upserts.push(next);
     } else {
+      // A NEW body unit may only be created UNDER a PERSISTED heading (save_content's §B relaxation). If its
+      // claimed parent isn't a heading in `prior` yet — typically a heading being PROMOTED this same flush
+      // (created prose-first) — land it TOP-LEVEL; drainStructure reparents it under the heading once the
+      // toggle_heading lands (its `parentId` intent survives in the doc). Avoids a 422 on new-section flow.
+      const wantParent = (block.attrs.parentId as string | null) ?? null;
+      const parentKey =
+        wantParent != null && priorById.get(wantParent)?.content.kind === 'heading'
+          ? wantParent
+          : null;
+      const position = nextPos(parentKey);
       const id = prev ? uuidv7() : (unitId ?? uuidv7());
       upserts.push(
         content.kind === 'math'
-          ? newMathUnit(id, prior.object_id, position, (content as { expr: MathExpression }).expr)
+          ? newMathUnit(
+              id,
+              prior.object_id,
+              position,
+              (content as { expr: MathExpression }).expr,
+              parentKey ?? undefined,
+            )
           : newProseUnit(
               id,
               prior.object_id,
               position,
               (content as { text: string }).text,
               (content as { inline: Inline[] }).inline,
+              parentKey ?? undefined,
             ),
       );
     }
-    position += 1;
   };
 
   // Emit a multi-line `$$…$$` SYSTEM block as an `Equations` container + one Math ROW per line (2-B). Each
@@ -488,7 +601,10 @@ export function flushToContent(
       : blockUnitId && !priorAtBlockId
         ? blockUnitId
         : uuidv7();
-    const containerPos = position;
+    // A system occupies ONE doc block at its parent's level (top-level today — `isEditable` doesn't admit a
+    // system inside a section); its rows are 0..n in the container's OWN namespace (below). Position the
+    // container in its parent's per-parent counter, like any other block.
+    const containerPos = nextPos((block.attrs.parentId as string | null) ?? null);
 
     if (containerExists) {
       seen.add(containerId);
@@ -538,7 +654,6 @@ export function flushToContent(
         );
       }
     });
-    position += 1;
   };
 
   doc.forEach((block) => {
@@ -549,13 +664,21 @@ export function flushToContent(
     // A whole-block `$$…$$` (display) → a `Math` unit. The surface is rebuilt from the displayed source —
     // text + `\n` per hard_break, then strip the two leading/trailing `$` (so a MULTI-LINE source round-trips
     // with its newlines) — for a FRESH expr; an ANCHORED expr's surface is frozen (keystone §6.3a).
-    const dispExpr = pureDisplayExpr(block);
+    // §B: a HEADING block is NEVER display math — a title that happens to read `$$x$$` stays a heading title
+    // (its `$$` is literal/inline text), so we skip the display-math branch and emit it as heading/prose
+    // content below. (mathRecognize likewise skips heading blocks, so no display mark is ever applied there.)
+    const dispExpr = (block.attrs.heading as boolean) ? null : pureDisplayExpr(block);
     if (dispExpr) {
       // Inner source via the single source-of-truth recognizer (tolerates trailing whitespace + multi-line).
       const inner = wholeDisplaySource(displaySource(block) ?? '');
       const rows = inner != null ? splitSystemRows(inner) : [];
-      if (rows.length >= 2) {
-        // ≥2 non-empty lines → a co-equal SYSTEM (an Equations container + Math rows). Blank lines are skipped.
+      // ≥2 non-empty lines → a co-equal SYSTEM — but ONLY at TOP LEVEL. The core's `save_content` §B
+      // relaxation accepts a new prose/Math child under a heading, NOT a new Equations CONTAINER
+      // (ops.rs: "section-body row … must be prose or display math"), so a system authored on a body line
+      // inside a section would 422-wedge. Degrade it to a single multi-line display `Math` unit under the
+      // heading (accepted + round-trips; it just loses per-row identity). Full systems-in-sections need a
+      // core relaxation (future).
+      if (rows.length >= 2 && ((block.attrs.parentId as string | null) ?? null) === null) {
         emitSystem(block, rows);
         return;
       }
@@ -571,23 +694,49 @@ export function flushToContent(
 
     const { text, inline } = blockToProse(block);
     if (cpLen(text) === 0 && inline.length === 0) {
-      // Empty block: a brand-new placeholder is dropped; an emptied EXISTING prose unit stays empty; an
-      // emptied unit of another kind (a display equation cleared out) is removed (falls into `deletes`).
-      if (prev && prev.content.kind === 'prose') {
+      // Empty block: a brand-new placeholder is dropped; an emptied EXISTING prose OR heading unit stays
+      // (empty, its kind preserved — a heading title can be momentarily blank); an emptied unit of another
+      // kind (a display equation cleared out) is removed (falls into `deletes`).
+      if (prev && (prev.content.kind === 'prose' || prev.content.kind === 'heading')) {
         seen.add(prev.id);
-        const next: Unit = { ...prev, position, content: { kind: 'prose', text, inline } };
+        const position = nextPos(prev.parent_unit_id ?? null);
+        const content: Unit['content'] =
+          prev.content.kind === 'heading'
+            ? { kind: 'heading', text, inline }
+            : { kind: 'prose', text, inline };
+        const next: Unit = { ...prev, position, content };
         if (!proseUnchanged(next, prev)) upserts.push(next);
-        position += 1;
       }
       return;
     }
-    emit(block, prev, { kind: 'prose', text, inline });
+    // §B: the content axis ALWAYS matches the SERVER unit's current kind; the kind flip is solely
+    // toggle_heading's job (the structural axis) — the content-axis mirror of headingDepth.ts's "depth/
+    // parentId stays derivable from the `#` count" invariant (structural facets flow through the structural
+    // ops, never save_content; the core 422s a content-level kind flip in BOTH directions). So a unit the
+    // server holds as a heading is emitted as
+    // HEADING content even while a promote/demote is pending — keeping save_content a clean, id-preserving
+    // content update. Keying on `block.attrs.heading` here was the demote bug: deleting a heading's `#`
+    // (heading:false over a server heading) emitted PROSE → a kind-flip minted a fresh id at the heading's
+    // occupied position → 422 "Couldn't save" before toggle_heading could demote. A brand-new heading (no
+    // prev) is created PROSE-first then promoted, exactly as before (prev undefined → not heading).
+    const asHeading = prev?.content.kind === 'heading';
+    emit(
+      block,
+      prev,
+      asHeading ? { kind: 'heading', text, inline } : { kind: 'prose', text, inline },
+    );
   });
 
   // `save_content` deletes a zero-anchor PROSE / MATH unit, plus (2-B) an `Equations` container + its Math
   // ROWS — so a removed equation/system is dropped here like a removed paragraph. A whole-system delete (or a
   // system→single-equation kind-flip) drops the container + every row not re-emitted into `seen`. A CITED Math
   // unit can't be silently dropped (the core 422s — moot today, no citations); it would need a reviewable op.
+  //
+  // §B: a `Heading` is DELIBERATELY excluded — the core REFUSES to delete a heading via `save_content` (it
+  // would 422; cf. the `save_content_rejects_deleting_a_heading` core test), because removing a section is a
+  // STRUCTURAL change (dissolve via `toggle_heading`, or a delete-section op that decides the body cascade),
+  // never the coarse content delta (§6.0a). So a heading dropped from the doc fails SAFE — it is not deleted
+  // here (it would reappear on the next reproject) until the structural gesture lands; nothing 422s/corrupts.
   const deletes = prior.units
     .filter(
       (u) =>
@@ -642,6 +791,76 @@ export function typeIntents(doc: Node, baseline: MathContent): TypeNeed[] {
     const base = baseById.get(unitId);
     const had = base ? (base.type ?? null) : null; // not in baseline → treat as null (a pending set)
     if (want !== had) out.push({ unitId, type: want });
+  });
+  return out;
+}
+
+// ── §B structural axis (3b): the third op-axis, after content (save_content) and type (set_unit_type) ──
+
+/** A pending STRUCTURAL change (3b). A kind flip rides `toggle_heading` (the op infers promote vs
+ *  dissolve from the unit's current kind); a parent change rides `reparent_unit`. A same-parent REORDER
+ *  is deliberately NOT here — that rides `save_content`'s `position` (parent unchanged, §6.0a-allowed). */
+export type StructuralNeed =
+  | { op: 'toggle_heading'; unitId: string }
+  | { op: 'reparent'; unitId: string; newParentId: string | null; newPosition: number };
+
+/** The SENDABLE structural delta vs `server` — the structural-axis analog of `typeNeeds`. For each block
+ *  whose unit EXISTS on `server`: a `toggle_heading` when the block's `heading` attr disagrees with the
+ *  server unit's kind, and a `reparent` when its `parentId` disagrees with the server's `parent_unit_id`.
+ *  TOGGLES come FIRST: a body can only reparent UNDER a heading once that unit IS a heading
+ *  (parent-capability, §B), and `toggle_heading` on the parent must therefore precede the child move.
+ *  A brand-new block (no server unit) is skipped — its structure applies on a later drain once
+ *  `save_content` has created it prose-first, exactly like `typeNeeds`. */
+export function structuralNeeds(doc: Node, server: MathContent): StructuralNeed[] {
+  const serverById = new Map(server.units.map((u) => [u.id, u]));
+  const toggles: StructuralNeed[] = [];
+  const reparents: StructuralNeed[] = [];
+  const posByParent = new Map<string | null, number>();
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const wantParent = (block.attrs.parentId as string | null) ?? null;
+    // Target index among the block's intended siblings (all doc blocks sharing this parent, in order) —
+    // reparent_unit places at this index then renumbers gap-free, so an approximate index self-corrects.
+    // INVARIANT (pinned): these absolute indices are computed ONCE against the doc, but the drain applies the
+    // reparents ONE AT A TIME (autosaveController). That is sound ONLY because `reparent_unit` renumbers BOTH
+    // the old and new parent's children to canonical 0..n on EVERY call (crates/core/src/ops.rs) — so each
+    // step lands a gap-free family and the next absolute index still addresses the right slot. If that core
+    // renumber is ever relaxed, or ops are batched/reordered, switch to indices computed against the EVOLVING
+    // server baseline (recompute per drained op) instead of this one-shot doc scan.
+    const newPosition = posByParent.get(wantParent) ?? 0;
+    posByParent.set(wantParent, newPosition + 1);
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return; // brand-new — created prose-first by save_content; structure on a later drain
+    const srv = serverById.get(unitId);
+    if (!srv) return; // not on the server yet
+    const wantHeading = (block.attrs.heading as boolean) ?? false;
+    if (wantHeading !== (srv.content.kind === 'heading')) toggles.push({ op: 'toggle_heading', unitId });
+    if (wantParent !== (srv.parent_unit_id ?? null))
+      reparents.push({ op: 'reparent', unitId, newParentId: wantParent, newPosition });
+  });
+  return [...toggles, ...reparents];
+}
+
+/** A pending structural INTENT for one block — the structural-axis analog of `typeIntents`, used as the
+ *  `keepStruct` reproject overlay so a merge/reproject never silently drops a section gesture the user
+ *  just made (incl. on a brand-new block). Intents-vs-baseline (not a snapshot) so a concurrent FOREIGN
+ *  reparent on a unit I didn't touch is preserved, not clobbered. */
+export type StructuralIntent = { unitId: string; heading: boolean; parentId: string | null };
+
+export function structuralIntents(doc: Node, baseline: MathContent): StructuralIntent[] {
+  const baseById = new Map(baseline.units.map((u) => [u.id, u]));
+  const out: StructuralIntent[] = [];
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return; // unstamped placeholder — no identity to overlay
+    const wantHeading = (block.attrs.heading as boolean) ?? false;
+    const wantParent = (block.attrs.parentId as string | null) ?? null;
+    const base = baseById.get(unitId);
+    const baseHeading = base ? base.content.kind === 'heading' : false;
+    const baseParent = base ? (base.parent_unit_id ?? null) : null; // not in baseline → null
+    if (wantHeading !== baseHeading || wantParent !== baseParent)
+      out.push({ unitId, heading: wantHeading, parentId: wantParent });
   });
   return out;
 }

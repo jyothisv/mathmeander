@@ -14,8 +14,9 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::api::{
-    CreateJournalDayResult, CreateObjectResult, CreatedJournalDay, CreatedObject,
-    MathpackImportResult, MathpackResult, NumberingResult, ObjectResult, OpOutcomeResult,
+    CreateJournalDayResult, CreateNotebookResult, CreateObjectResult, CreatedJournalDay,
+    CreatedNotebook, CreatedObject, MathpackImportResult, MathpackResult, NumberingResult,
+    ObjectResult, OpOutcomeResult,
 };
 use crate::error::{CoreError, ValidationError};
 use crate::mathpack::{
@@ -26,17 +27,18 @@ use crate::model::{
     Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ContentLocator, DeclaredBy,
     DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle, HandleScope,
     HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
-    MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence, OccurrenceTarget, Origin,
-    ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget, RowRelation, SurfaceFormat,
-    Tag, Tagging, TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
+    MathExpression, NotebookDetail, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
+    OccurrenceTarget, Origin, ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget,
+    RowRelation, SurfaceFormat, Tag, Tagging, TargetSelector, Unit, UnitContent, UnitStatus,
+    UnitType,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
     DissolveObjectInput, EquationRowInput, ExpressionIdRemap, InsertEquationsInput,
     InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent, MergeUnitsInput,
-    OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput, ResolveTarget,
-    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
-    UnitIdRemap,
+    OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput, ResolveOccurrenceInput,
+    ResolveTarget, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ToggleExpressionPlacementInput, ToggleHeadingInput, UnitIdRemap,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
@@ -107,6 +109,7 @@ pub fn artifact_json() -> String {
     defs.insert("ObjectVersion", inline_schema_for::<ObjectVersion>());
     defs.insert("DefinitionDetail", inline_schema_for::<DefinitionDetail>());
     defs.insert("JournalDayDetail", inline_schema_for::<JournalDayDetail>());
+    defs.insert("NotebookDetail", inline_schema_for::<NotebookDetail>());
     defs.insert(
         "ProvenanceDerivation",
         inline_schema_for::<ProvenanceDerivation>(),
@@ -155,6 +158,14 @@ pub fn artifact_json() -> String {
         inline_schema_for::<RehomeSubtreeInput>(),
     );
     defs.insert(
+        "ReparentUnitInput",
+        inline_schema_for::<ReparentUnitInput>(),
+    );
+    defs.insert(
+        "ToggleHeadingInput",
+        inline_schema_for::<ToggleHeadingInput>(),
+    );
+    defs.insert(
         "DissolveObjectInput",
         inline_schema_for::<DissolveObjectInput>(),
     );
@@ -191,6 +202,11 @@ pub fn artifact_json() -> String {
     defs.insert(
         "CreateJournalDayResult",
         inline_schema_for::<CreateJournalDayResult>(),
+    );
+    defs.insert("CreatedNotebook", inline_schema_for::<CreatedNotebook>());
+    defs.insert(
+        "CreateNotebookResult",
+        inline_schema_for::<CreateNotebookResult>(),
     );
     defs.insert("ObjectResult", inline_schema_for::<ObjectResult>());
     // Slice 1d FFI envelopes (ops + projections + packaging)
@@ -300,7 +316,7 @@ fn sample_mathpack_counts() -> Value {
     json!({
         "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
         "taggings": 0, "object_versions": 1, "definition_details": 0, "journal_day_details": 0,
-        "provenance": 1, "provenance_derivations": 0
+        "notebook_details": 0, "provenance": 1, "provenance_derivations": 0
     })
 }
 
@@ -324,7 +340,8 @@ fn sample_mathpack_graph() -> Value {
         "links": [], "aliases": [], "handles": [], "tags": [], "taggings": [],
         "object_versions": [ sample_object_version() ],
         "definition_details": [],
-        "journal_day_details": []
+        "journal_day_details": [],
+        "notebook_details": []
     })
 }
 
@@ -664,10 +681,15 @@ pub fn conformance_json() -> String {
         { "type": "UnitContent", "value": { "kind": "case_split" }, "valid": true },
         { "type": "UnitContent", "value": { "kind": "group" }, "valid": true },
         { "type": "UnitContent",
+          "value": { "kind": "heading", "text": "Compactness", "inline": [] }, "valid": true,
+          "note": "§B section title — prose-shaped (text + inline), distinct kind" },
+        { "type": "UnitContent",
           "value": { "kind": "embed", "target": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a1" } },
           "valid": true },
         { "type": "UnitContent", "value": { "kind": "prose", "text": "hi" }, "valid": false,
           "note": "inline required (always present, [] when none)" },
+        { "type": "UnitContent", "value": { "kind": "heading", "text": "hi" }, "valid": false,
+          "note": "heading inline required, same as prose" },
         { "type": "UnitContent", "value": { "kind": "list" }, "valid": false, "note": "ordered missing" },
         { "type": "UnitContent", "value": { "kind": "matrix" }, "valid": false, "note": "unknown kind" },
 
@@ -840,6 +862,12 @@ pub fn conformance_json() -> String {
         { "type": "JournalDayDetail",
           "value": { "object_id": "0197675f-71f4-7000-8000-0000000000b1" }, "valid": false,
           "note": "date missing (the §6.5 day's identity); ISO YYYY-MM-DD validity is core-strict" },
+        { "type": "NotebookDetail",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000b1", "slug": "linear-algebra" },
+          "valid": true },
+        { "type": "NotebookDetail",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000b1" }, "valid": false,
+          "note": "slug missing (the §6.5 notebook's per-space identity)" },
         { "type": "ProvenanceDerivation",
           "value": { "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
                      "derived_from_provenance_id": "0197675f-71f4-7000-8000-0000000000d2" },
@@ -1064,6 +1092,24 @@ pub fn conformance_json() -> String {
                      "embed_unit_id": "0197675f-71f4-7000-8000-0000000000b9",
                      "new_version_id": "0197675f-71f4-7000-8000-0000000000c9" }, "valid": false,
           "note": "subtree_root missing" },
+        // ── ReparentUnitInput (§B intra-object section move) ──
+        { "type": "ReparentUnitInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "new_parent_unit_id": "0197675f-71f4-7000-8000-0000000000b2",
+                     "new_position": 0 }, "valid": true },
+        { "type": "ReparentUnitInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "new_parent_unit_id": null, "new_position": 3 }, "valid": true,
+          "note": "null new_parent = move to top-level" },
+        { "type": "ReparentUnitInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+          "valid": false, "note": "new_position missing" },
+        // ── ToggleHeadingInput (§B prose↔heading kind flip) ──
+        { "type": "ToggleHeadingInput",
+          "value": { "expected_revision": 2, "unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+          "valid": true },
+        { "type": "ToggleHeadingInput",
+          "value": { "expected_revision": 2 }, "valid": false, "note": "unit_id missing" },
         { "type": "DissolveObjectInput",
           "value": { "expected_revision": 2, "expected_dissolved_revision": 1,
                      "host_content": sample_math_content(),
@@ -1186,7 +1232,7 @@ pub fn conformance_json() -> String {
         { "type": "MathpackCounts",
           "value": { "objects": 1, "units": 1, "links": 0, "aliases": 0, "handles": 0, "tags": 0,
                      "taggings": 0, "object_versions": 1, "definition_details": 0,
-                     "journal_day_details": 0, "provenance": 1 },
+                     "journal_day_details": 0, "notebook_details": 0, "provenance": 1 },
           "valid": false, "note": "provenance_derivations missing" },
 
         // ── MathpackManifest ──
@@ -1202,7 +1248,7 @@ pub fn conformance_json() -> String {
         { "type": "MathpackGraph",
           "value": { "provenance": [], "provenance_derivations": [], "content": [], "links": [],
                      "aliases": [], "handles": [], "tags": [], "taggings": [], "object_versions": [],
-                     "definition_details": [], "journal_day_details": [] },
+                     "definition_details": [], "journal_day_details": [], "notebook_details": [] },
           "valid": false, "note": "objects section missing" },
 
         // ── Mathpack / MathpackImport ──
@@ -1339,6 +1385,7 @@ mod tests {
                 "JournalDayDetail" => {
                     serde_json::from_value::<JournalDayDetail>(value.clone()).is_ok()
                 }
+                "NotebookDetail" => serde_json::from_value::<NotebookDetail>(value.clone()).is_ok(),
                 "ProvenanceDerivation" => {
                     serde_json::from_value::<ProvenanceDerivation>(value.clone()).is_ok()
                 }
@@ -1382,6 +1429,12 @@ mod tests {
                 }
                 "RehomeSubtreeInput" => {
                     serde_json::from_value::<RehomeSubtreeInput>(value.clone()).is_ok()
+                }
+                "ReparentUnitInput" => {
+                    serde_json::from_value::<ReparentUnitInput>(value.clone()).is_ok()
+                }
+                "ToggleHeadingInput" => {
+                    serde_json::from_value::<ToggleHeadingInput>(value.clone()).is_ok()
                 }
                 "DissolveObjectInput" => {
                     serde_json::from_value::<DissolveObjectInput>(value.clone()).is_ok()

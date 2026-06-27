@@ -309,8 +309,13 @@ export const mathRecognize = new Plugin({
       const contentStart = offset + 1; // top-level block at `offset`; its content begins one position in
       const current = blockMarked(block, contentStart);
 
+      // §B: a section HEADING is a title, never a standalone display equation — skip the whole-block `$$…$$`
+      // display recognition for it (a `$$` in a title stays inline/literal). Inline `$x$` math in a title is
+      // still recognized below (the projection + flush carry a heading title's inline math like prose's).
+      const isHeading = block.attrs.heading as boolean;
+
       // DISPLAY first (line-only): a whole-block `$$…$$` is one display span; skip the inline scan for it.
-      const disp = displaySpan(block, contentStart, current, seen);
+      const disp = isHeading ? null : displaySpan(block, contentStart, current, seen);
       if (disp) {
         if (displayInSync(block, disp)) return;
         tr = tr ?? newState.tr;

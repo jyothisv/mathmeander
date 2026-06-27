@@ -132,6 +132,47 @@
       .day-editor .mark-delim-hidden {
         display: none;
       }
+      /* §B section headings (Obsidian-style): the title block renders bold/larger (.mm-heading), and its
+         leading `#`×n + space SOURCE prefix is KEPT as editable text — HIDDEN when the caret is away from the
+         heading (.heading-prefix-hidden) and shown DIMMED when the caret is in the heading line
+         (.heading-prefix-dimmed) — the same kept-source/hide-reveal model as `$…$` and `**…**`, so the `#`s
+         are never consumed yet stay out of the way while reading. */
+      .day-editor .mm-heading {
+        font-weight: 650;
+        font-size: 1.25em;
+        line-height: 1.3;
+        margin: 0.4em 0 0.1em;
+      }
+      .day-editor .heading-prefix-hidden {
+        display: none;
+      }
+      .day-editor .heading-prefix-dimmed {
+        opacity: 0.35;
+        font-weight: 400;
+      }
+      /* §B outline indentation (slice 3c): the headingIndent plugin tags each block `.mm-depth-N` by its
+         section nesting depth (a top-level heading is flush-left = no class; its body is one step in; a
+         subsection one more, etc.). margin-left (not padding) so the hover/active left gutter still reads.
+         Capped at 6 levels. View-only — depth lives in the parentId chain, never in the canonical content. */
+      .day-editor .ProseMirror p.mm-depth-1 { margin-left: 1.25rem; }
+      .day-editor .ProseMirror p.mm-depth-2 { margin-left: 2.5rem; }
+      .day-editor .ProseMirror p.mm-depth-3 { margin-left: 3.75rem; }
+      .day-editor .ProseMirror p.mm-depth-4 { margin-left: 5rem; }
+      .day-editor .ProseMirror p.mm-depth-5 { margin-left: 6.25rem; }
+      .day-editor .ProseMirror p.mm-depth-6 { margin-left: 7.5rem; }
+      /* §B section folding (slice 3c): a chevron widget (▸ folded / ▾ expanded) sits before each foldable
+         heading; folding hides the heading's descendant blocks. View-only — fold state never touches the
+         canonical content. */
+      .day-editor .mm-fold-toggle {
+        cursor: pointer;
+        user-select: none;
+        color: rgba(110, 110, 150, 0.7);
+        margin-right: 0.25rem;
+        font-size: 0.8em;
+      }
+      .day-editor .ProseMirror p.mm-folded-hidden {
+        display: none;
+      }
       .day-editor .math-render {
         cursor: pointer;
         padding: 0 0.05rem;

@@ -151,6 +151,38 @@ export async function getJournalDay(date: string): Promise<JournalDayEager> {
   return request('GET', `/api/journal/days/${date}`, JournalDayEagerEnvelope);
 }
 
+// ── Notebook (§6.5 surface): a writing-surface object identified by a per-space `slug` derived from its
+// title (server-normalized, get-or-create). Same eager-subgraph contract as the journal day. ──
+
+export interface NotebookSummary {
+  object: CanonicalObject;
+  slug: string;
+}
+export interface NotebookEager extends NotebookSummary {
+  graph: MathpackGraph;
+}
+
+const NotebookEnvelope = z.object({ object: CanonicalObjectSchema, slug: z.string() });
+const NotebookListEnvelope = z.object({ items: z.array(NotebookEnvelope) });
+const NotebookEagerEnvelope = z.object({
+  object: CanonicalObjectSchema,
+  slug: z.string(),
+  graph: MathpackGraphSchema,
+});
+
+/** Create (idempotent get-or-create on the title's normalized slug) a notebook. */
+export async function createNotebook(title: string): Promise<NotebookSummary> {
+  return request('POST', '/api/notebooks', NotebookEnvelope, { title });
+}
+
+export async function listNotebooks(): Promise<NotebookSummary[]> {
+  return (await request('GET', '/api/notebooks', NotebookListEnvelope)).items;
+}
+
+export async function getNotebook(slug: string): Promise<NotebookEager> {
+  return request('GET', `/api/notebooks/${slug}`, NotebookEagerEnvelope);
+}
+
 // ── Authoring: the §6.0a coarse prose delta (slice 2c). Unit ids are client-minted (§6.3). ──
 
 const OpOutcomeEnvelope = z.object({ outcome: OpOutcomeSchema });
@@ -191,6 +223,37 @@ export async function togglePlacement(
   };
   return (
     await request('POST', `/api/objects/${objectId}/ops/toggle-placement`, OpOutcomeEnvelope, full)
+  ).outcome;
+}
+
+/** `reparent_unit` (§B section move): move a unit (+ its subtree, which follows) to a new parent +
+ *  position WITHIN the object. `new_parent_unit_id: null` = top-level. Unit + expression ids are
+ *  preserved. Structural, so it never rides `save_content` (which freezes `parent_unit_id`). 409 on a
+ *  stale revision. */
+export async function reparentUnit(
+  objectId: string,
+  body: {
+    expected_revision: number;
+    unit_id: string;
+    new_parent_unit_id: string | null;
+    new_position: number;
+  },
+): Promise<OpOutcome> {
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/reparent-unit`, OpOutcomeEnvelope, body)
+  ).outcome;
+}
+
+/** `toggle_heading` (§B): flip a unit between plain prose and a section heading — the op infers the
+ *  direction from the unit's kind (prose → promote; heading → dissolve, lifting the body into the parent).
+ *  A content-KIND change, so it never rides `save_content`. The unit must already exist (a brand-new
+ *  "# " line is created prose-first, then promoted). 409 on a stale revision. */
+export async function toggleHeading(
+  objectId: string,
+  body: { expected_revision: number; unit_id: string },
+): Promise<OpOutcome> {
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/toggle-heading`, OpOutcomeEnvelope, body)
   ).outcome;
 }
 

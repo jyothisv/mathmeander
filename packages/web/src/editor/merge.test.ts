@@ -134,9 +134,11 @@ describe('planMerge — same-unit clashes are conflicts (never a silent overwrit
     });
   });
 
-  it('NESTED (not-yet-editable) content fails safe to conflict', () => {
-    // A child unit (parent_unit_id set) is not admitted by `isEditable` — the merge construction only reasons
-    // about TOP-LEVEL units, so it bails to a manual conflict in lockstep with the editor's read-only gate.
+  it('NESTED content fails safe to conflict (merge reasons only about top-level units)', () => {
+    // A child unit (parent_unit_id set) makes the content non-flat. Even though `isEditable` now admits
+    // §B section trees, the 3-way MERGE construction only reasons about TOP-LEVEL units, so it bails to a
+    // manual conflict for any nesting (sections/systems) — server-authoritative last-write-wins, never a
+    // silent auto-merge of structured content.
     const child: Unit = {
       id: 'c',
       object_id: OBJ,

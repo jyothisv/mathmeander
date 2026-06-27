@@ -111,7 +111,7 @@ export async function truncateAll(db: pg.Pool): Promise<void> {
   await db.query(
     `TRUNCATE objects, provenance, sessions, spaces, users, content_units, links, aliases,
               handles, tags, taggings, object_versions, definition_detail, journal_day_detail,
-              provenance_derivations CASCADE`,
+              notebook_detail, provenance_derivations CASCADE`,
   );
 }
 

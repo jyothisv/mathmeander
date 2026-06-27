@@ -402,6 +402,35 @@ pub struct DissolveObjectInput {
     pub inbound_references: Vec<String>,
 }
 
+/// `reparent_unit` payload — move a unit (and its subtree, which follows automatically) to a new parent
+/// and position WITHIN the same object (§6.0a structural ops). The intra-object counterpart to
+/// `rehome_subtree`, which always mints a NEW object and so can't do a same-object move. `new_parent_unit_id
+/// = None` means top-level. `expected_revision` rides only for the glue's concurrency gate (§6.4 — the core
+/// never reads it), like the other op inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ReparentUnitInput {
+    pub expected_revision: u32,
+    pub unit_id: UnitId,
+    /// The new parent; `None` = top-level. Must be a unit of this object and NOT the moved unit or a
+    /// descendant of it (else the tree would cycle).
+    pub new_parent_unit_id: Option<UnitId>,
+    /// Target index among the new siblings (clamped to the end by the gap-fill renumber).
+    pub new_position: u32,
+}
+
+/// `toggle_heading` payload — flip a unit between plain `Prose` and a section `Heading` (§B). The op
+/// infers the direction from the unit's CURRENT kind (prose → promote to heading; heading → dissolve,
+/// lifting the body into the parent). Nothing is minted — promote reuses the unit, dissolve reuses the
+/// existing children — so only the unit id is needed. `expected_revision` rides only for the glue's
+/// concurrency gate (§6.4 — the core never reads it), like the other op inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ToggleHeadingInput {
+    pub expected_revision: u32,
+    pub unit_id: UnitId,
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // Operations
 // ════════════════════════════════════════════════════════════════════════════════
@@ -420,6 +449,164 @@ pub fn set_unit_type(
     if unit.unit_type != Some(UnitType::Example) {
         unit.example_kind = None;
     }
+    content.revision = content.revision.saturating_add(1);
+    Ok(OpOutcome::new(content, ctx, now))
+}
+
+/// Move a unit (e.g. a section `Heading`) to a new parent + position WITHIN the same object — the missing
+/// intra-object primitive (`rehome_subtree` always mints a NEW object, so it can't do this). The unit's
+/// DESCENDANTS follow automatically (they still name the moved root via `parent_unit_id`), so this is O(1)
+/// in the subtree size and PRESERVES every unit + expression id. Cycle-guarded (a unit can't move beneath
+/// itself or a descendant); positions are gap-filled under both the old and new parent; the result is
+/// re-validated (incl. the §B heading invariants).
+pub fn reparent_unit(
+    mut content: MathContent,
+    input: &ReparentUnitInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    if !content.units.iter().any(|u| u.id == input.unit_id) {
+        return Err(ValidationError::UnitNotFound {
+            unit_id: input.unit_id.to_string(),
+        });
+    }
+    if let Some(parent) = input.new_parent_unit_id {
+        // The new parent must be a unit of this object…
+        if !content.units.iter().any(|u| u.id == parent) {
+            return Err(ValidationError::UnitNotFound {
+                unit_id: parent.to_string(),
+            });
+        }
+        // …and never the moved unit or one of its descendants, or the parent chain would cycle.
+        if subtree_closure(&content, input.unit_id)?.contains(&parent) {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "cannot reparent unit {} beneath itself or a descendant",
+                    input.unit_id
+                ),
+            });
+        }
+    }
+
+    // §B: a `Heading` IS the section's parent (not a first-child title), so a body unit may sit at any
+    // position under it — no first-child clamp needed (the B model's heading-slot constraint is gone).
+    let new_position = input.new_position;
+
+    // DETACH-then-INSERT (uniform for same- and cross-parent). Re-home the root and SHELVE its position
+    // (descendants are untouched — they still point at it). Shelving (u32::MAX) takes it out of BOTH
+    // sibling groups' numbering so the make-room shift can't be defeated by the unit's own old slot —
+    // the same-parent down-move bug a naive "shift then place" has.
+    let old_parent = {
+        let u = find_unit_mut(&mut content, input.unit_id)?;
+        let old = u.parent_unit_id;
+        u.parent_unit_id = input.new_parent_unit_id;
+        u.position = u32::MAX;
+        old
+    };
+    // Gap-fill the OLD parent (its hole closes; if same-parent, the shelved unit sorts last and the rest
+    // become 0..n-1).
+    renumber_siblings(&mut content, old_parent);
+    // Make room at `new_position` among the new siblings (the shelved unit is excluded by its id), drop
+    // the unit in, then normalize.
+    for u in &mut content.units {
+        if u.id != input.unit_id
+            && u.parent_unit_id == input.new_parent_unit_id
+            && u.position >= new_position
+        {
+            u.position = u.position.saturating_add(1);
+        }
+    }
+    find_unit_mut(&mut content, input.unit_id)?.position = new_position;
+    renumber_siblings(&mut content, input.new_parent_unit_id);
+    // INVARIANT (relied upon by the editor's structural drain): each `reparent_unit` call leaves BOTH the old
+    // and new parents' children at canonical gap-free 0..n positions. The web adapter emits a batch of
+    // reparents with ABSOLUTE target indices computed once against the doc, then applies them ONE AT A TIME
+    // (packages/web/src/editor/projection.ts `structuralNeeds`); that is sound only because this renumber
+    // self-corrects each step. Don't relax this to a partial/lazy renumber without updating that consumer.
+
+    validate_content_well_formed(&content)?;
+    content.revision = content.revision.saturating_add(1);
+    Ok(OpOutcome::new(content, ctx, now))
+}
+
+/// Toggle a unit between plain `Prose` and a section `Heading` (§B) — the `# `/un-heading gesture. The
+/// title `text`/`inline` ride across unchanged (a heading's content IS prose). PROMOTE (`Prose →
+/// Heading`) is a pure kind flip; the editor attaches the section body afterwards with `reparent_unit`.
+/// DISSOLVE (`Heading → Prose`) flips the kind back AND LIFTS the heading's direct children into its own
+/// parent, in its place (their descendants follow automatically) — so the section's content survives,
+/// un-sectioned, with NO embed (§9.y reversibility; this is the "dissolve heading, keep content"
+/// gesture). Every unit + expression id is preserved. Being a content-KIND change, it can NEVER ride the
+/// coarse `save_content` delta (§6.0a) — the kind freeze there forces it through this op.
+pub fn toggle_heading(
+    mut content: MathContent,
+    input: &ToggleHeadingInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    let idx = unit_index(&content, input.unit_id)?;
+    match &content.units[idx].content {
+        UnitContent::Prose { text, inline } => {
+            let (text, inline) = (text.clone(), inline.clone());
+            content.units[idx].content = UnitContent::Heading { text, inline };
+        }
+        UnitContent::Heading { text, inline } => {
+            let heading_id = input.unit_id;
+            let (text, inline) = (text.clone(), inline.clone());
+            let parent = content.units[idx].parent_unit_id;
+            content.units[idx].content = UnitContent::Prose { text, inline };
+
+            // The heading's direct children, in document order, lift to `parent` in the (now-prose)
+            // former heading's place. Grandchildren are untouched — they still name their parent.
+            let mut lifted: Vec<(u32, UnitId)> = content
+                .units
+                .iter()
+                .filter(|u| u.parent_unit_id == Some(heading_id))
+                .map(|u| (u.position, u.id))
+                .collect();
+            lifted.sort_by_key(|(pos, _)| *pos);
+            let lifted: Vec<UnitId> = lifted.into_iter().map(|(_, id)| id).collect();
+
+            if !lifted.is_empty() {
+                for &cid in &lifted {
+                    find_unit_mut(&mut content, cid)?.parent_unit_id = parent;
+                }
+                // Build the desired sibling order under `parent` — its current children by position,
+                // with the lifted ids spliced in right after the former heading — then assign gap-free
+                // 0..n positions DIRECTLY. This is overflow- and collision-safe regardless of the
+                // original position magnitudes (save_content tolerates arbitrary gaps, so a position can
+                // be near u32::MAX where arithmetic would panic/wrap and a renumber tie-break would
+                // misorder). The former heading is itself among `parent`'s siblings (now prose).
+                let lifted_set: std::collections::HashSet<UnitId> =
+                    lifted.iter().copied().collect();
+                let mut siblings: Vec<(u32, UnitId)> = content
+                    .units
+                    .iter()
+                    .filter(|u| u.parent_unit_id == parent && !lifted_set.contains(&u.id))
+                    .map(|u| (u.position, u.id))
+                    .collect();
+                siblings.sort_by_key(|(pos, _)| *pos);
+                let mut ordered: Vec<UnitId> = Vec::with_capacity(siblings.len() + lifted.len());
+                for (_, sid) in siblings {
+                    ordered.push(sid);
+                    if sid == heading_id {
+                        ordered.extend(lifted.iter().copied());
+                    }
+                }
+                for (i, id) in ordered.into_iter().enumerate() {
+                    find_unit_mut(&mut content, id)?.position = i as u32;
+                }
+            }
+        }
+        other => {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "toggle_heading expects a prose or heading unit, got `{}`",
+                    content_kind_tag(other)
+                ),
+            });
+        }
+    }
+    validate_content_well_formed(&content)?;
     content.revision = content.revision.saturating_add(1);
     Ok(OpOutcome::new(content, ctx, now))
 }
@@ -522,7 +709,16 @@ pub fn save_content(
                 // No other kind is content-edited here (embed/… are op-managed).
                 if u.content != old.content {
                     match &u.content {
+                        // Prose / a §B heading TITLE (heading→heading, kind unchanged) edit FREELY. NOTE
+                        // (keystone exemption): the §6.3a keystone (`ensure_math_keystone_safe`) guards only
+                        // a standalone display `Math` unit below; an `Inline::Math` atom *inside* prose or a
+                        // heading title is NOT guarded here, so a cited inline expression's surface can be
+                        // re-authored (or dropped) through this coarse path. This is PRE-EXISTING for prose;
+                        // the heading arm only keeps parity (it introduces no new exposure). Hardening it
+                        // (diff old↔new inline expr ids/surfaces, route cited inline edits via
+                        // `rewrite_surface`) is a separate, prose+heading-wide change — see review finding.
                         UnitContent::Prose { .. } => {}
+                        UnitContent::Heading { .. } => {}
                         UnitContent::Math { .. } => {
                             ensure_math_keystone_safe(old, current_links)?;
                         }
@@ -579,38 +775,53 @@ pub fn save_content(
                         }
                     }
                     Some(parent_id) => {
-                        // The parent must be a TOP-LEVEL `Equations` container (one level only, §F2 — a
-                        // container is itself always top-level today; the `parent_unit_id.is_none()` guard
-                        // keeps that true defensively if a deeper nest is ever attempted).
+                        // A new row may be coarsely authored under exactly two container kinds:
+                        //   • a TOP-LEVEL `Equations` system (§F2, one level only — the
+                        //     `parent_unit_id.is_none()` guard keeps that true), where the row may carry a
+                        //     leading `row_relation`; OR
+                        //   • a section `Heading` (§B, possibly nested), a plain body paragraph / display
+                        //     equation that asserts no relation.
+                        // Any other parent (a `Group`, a nested `Equations`, a leaf) is op-managed; a NEW
+                        // subsection heading is `toggle_heading`, never a coarse upsert.
                         let parent = prior_by_id
                             .get(&parent_id)
                             .copied()
                             .or_else(|| upsert_by_id.get(&parent_id).copied());
-                        match parent {
-                            Some(p)
-                                if matches!(p.content, UnitContent::Equations)
-                                    && p.parent_unit_id.is_none() => {}
-                            Some(_) => {
-                                return Err(invalid(format!(
-                                    "new row {} names parent {parent_id}, which is not an Equations \
-                                     container",
-                                    u.id
-                                )));
-                            }
+                        let parent = match parent {
+                            Some(p) => p,
                             None => {
                                 return Err(invalid(format!(
                                     "new row {} names parent {parent_id} not in this object",
                                     u.id
                                 )));
                             }
+                        };
+                        let is_equations_parent = matches!(parent.content, UnitContent::Equations)
+                            && parent.parent_unit_id.is_none();
+                        let is_heading_parent =
+                            matches!(parent.content, UnitContent::Heading { .. });
+                        if !is_equations_parent && !is_heading_parent {
+                            return Err(invalid(format!(
+                                "new row {} names parent {parent_id}, which is not an Equations \
+                                 container or a section heading",
+                                u.id
+                            )));
                         }
-                        // An Equations row is a Math/Prose line — never a nested container.
+                        // Both accept only Prose/Math leaves — never a nested container.
                         if !matches!(
                             u.content,
                             UnitContent::Prose { .. } | UnitContent::Math { .. }
                         ) {
-                            return Err(ValidationError::EquationsRowNotPermitted {
-                                row_kind: content_kind_tag(&u.content).into(),
+                            return Err(if is_equations_parent {
+                                ValidationError::EquationsRowNotPermitted {
+                                    row_kind: content_kind_tag(&u.content).into(),
+                                }
+                            } else {
+                                invalid(format!(
+                                    "section-body row {} under heading {parent_id} must be prose or \
+                                     display math",
+                                    u.id
+                                ))
                             });
                         }
                         Unit {
@@ -619,7 +830,12 @@ pub fn save_content(
                             parent_unit_id: Some(parent_id),
                             position: u.position,
                             slot: None,
-                            row_relation: u.row_relation,
+                            // A section-body row asserts no connective; only an Equations row may.
+                            row_relation: if is_equations_parent {
+                                u.row_relation
+                            } else {
+                                None
+                            },
                             unit_type: None,
                             example_kind: None,
                             status: UnitStatus::Rough,
@@ -782,6 +998,8 @@ fn validate_content_well_formed(content: &MathContent) -> Result<(), ValidationE
         }
         match &unit.content {
             UnitContent::Prose { text, inline } => validate_prose_inline(text, inline)?,
+            // A section heading's title is prose — same in-bounds inline contract (§B).
+            UnitContent::Heading { text, inline } => validate_prose_inline(text, inline)?,
             UnitContent::Math { expr } => validate_expression(expr)?,
             _ => {}
         }
@@ -794,6 +1012,35 @@ fn validate_content_well_formed(content: &MathContent) -> Result<(), ValidationE
         if !seen_exprs.insert(id) {
             return Err(ValidationError::ContentSaveInvalid {
                 reason: format!("expression id {id} appears on more than one unit"),
+            });
+        }
+    }
+    validate_section_structure(content)?;
+    Ok(())
+}
+
+/// §B section invariant: every unit that names a `parent_unit_id` must name a CONTAINER kind
+/// (`is_container_kind`) — a section `Heading`, a `Group`, or one of the math containers. A leaf
+/// (`Prose`/`Math`) or `Embed` can never own children, so a paragraph can't accidentally become a
+/// section parent and the editor's flat projection can rely on "only containers nest". `pub(crate)` so
+/// the `.mathpack` import gate (`mathpack::validate_graph`) enforces it in LOCKSTEP with
+/// `save_content`/`reparent_unit`/`toggle_heading` — else an imported malformed tree would wedge every
+/// later edit. (Parent RESOLUTION + position uniqueness are checked by `validate_content_well_formed`;
+/// this is purely the parent-KIND capability, so it is safe to run standalone over an import graph.)
+pub(crate) fn validate_section_structure(content: &MathContent) -> Result<(), ValidationError> {
+    use std::collections::HashMap;
+    let by_id: HashMap<UnitId, &Unit> = content.units.iter().map(|u| (u.id, u)).collect();
+    for u in &content.units {
+        if let Some(p) = u.parent_unit_id
+            && let Some(parent) = by_id.get(&p)
+            && !is_container_kind(&parent.content)
+        {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "unit {} names parent {p}, whose kind `{}` cannot contain child units",
+                    u.id,
+                    content_kind_tag(&parent.content)
+                ),
             });
         }
     }
@@ -844,6 +1091,9 @@ pub fn split_unit(
         parent_unit_id: parent,
         // Same position as the source half; `renumber_siblings` orders the two by vector order.
         position,
+        // The continuation inherits the source's slot (a plain prose split has `None`); split_unit only
+        // accepts `Prose` (a `Heading` is unsplittable here — Enter-in-a-title is an editor gesture that
+        // spawns a body unit, not a core split), so this never produces a second section title.
         slot: base.slot.clone(),
         // The new continuation half asserts no new connective; the original half keeps its relation.
         row_relation: None,
@@ -1957,31 +2207,62 @@ fn find_unit_mut(content: &mut MathContent, id: UnitId) -> Result<&mut Unit, Val
         })
 }
 
+/// The inline elements a content kind carries, if any. BOTH `Prose` and `Heading` are prose-shaped
+/// (`text` + `inline`); a heading's title carries the full inline vocabulary, inline `Math` included
+/// (§B). Resolving the slice in ONE place keeps every inline-aware site — expr-id extraction
+/// (`expr_ids_of`), copy re-mint (`remint_exprs`), expr lookup (`find_expr_in_unit_mut`), the inline
+/// contract (`validate_unit_inline`) — in lockstep, so a heading's inline math can never be silently
+/// skipped (the expr-id-stability + keystone invariants would leak) and a future inline-carrying kind
+/// is one edit. (`Math` is handled separately by callers — its expression is the whole content, not an
+/// inline atom.)
+fn inline_of(content: &UnitContent) -> Option<&[Inline]> {
+    match content {
+        UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => Some(inline),
+        _ => None,
+    }
+}
+fn inline_of_mut(content: &mut UnitContent) -> Option<&mut Vec<Inline>> {
+    match content {
+        UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => Some(inline),
+        _ => None,
+    }
+}
+
 /// Find the `MathExpression` with `id` inside a unit — a standalone `Math` unit, or an
-/// `Inline::Math` within a prose unit.
+/// `Inline::Math` within a prose-shaped unit's inline (`Prose` OR a `Heading` title, §B).
 fn find_expr_in_unit_mut(
     unit: &mut Unit,
     id: ExpressionId,
 ) -> Result<&mut MathExpression, ValidationError> {
-    let not_found = ValidationError::ExpressionNotFound {
+    let not_found = || ValidationError::ExpressionNotFound {
         expression_id: id.to_string(),
     };
+    // ONE match, each arm terminal — returning a borrow from a conditional-then-fallthrough trips NLL,
+    // so the id-check lives INSIDE the Math arm and the prose-shaped kinds (`Prose` OR a `Heading` title,
+    // §B) share an or-pattern rather than re-borrowing via `inline_of_mut`.
     match &mut unit.content {
-        UnitContent::Math { expr } if expr.id == id => Ok(expr),
-        UnitContent::Prose { inline, .. } => inline
+        UnitContent::Math { expr } => {
+            if expr.id == id {
+                Ok(expr)
+            } else {
+                Err(not_found())
+            }
+        }
+        UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => inline
             .iter_mut()
             .find_map(|el| match el {
                 Inline::Math { expr, .. } if expr.id == id => Some(expr),
                 _ => None,
             })
-            .ok_or(not_found),
-        _ => Err(not_found),
+            .ok_or_else(not_found),
+        _ => Err(not_found()),
     }
 }
 
-/// Run the §6.0 inline-atom contract (`validate::validate_inline`) over a prose unit's inline.
+/// Run the §6.0 inline-atom contract (`validate::validate_inline`) over a prose-shaped unit's inline
+/// (`Prose` OR a `Heading` title).
 fn validate_unit_inline(unit: &Unit) -> Result<(), ValidationError> {
-    if let UnitContent::Prose { inline, .. } = &unit.content {
+    if let Some(inline) = inline_of(&unit.content) {
         for el in inline {
             validate_inline(el)?;
         }
@@ -2049,8 +2330,25 @@ pub(crate) fn content_kind_tag(c: &UnitContent) -> &'static str {
         UnitContent::Equations => "equations",
         UnitContent::CaseSplit => "case_split",
         UnitContent::Group => "group",
+        UnitContent::Heading { .. } => "heading",
         UnitContent::Embed { .. } => "embed",
     }
+}
+
+/// Whether a content kind may legitimately OWN child rows (§6.0b nesting). A section `Heading` joins the
+/// existing containers (`List`/`Derivation`/`Equations`/`CaseSplit`/`Group`); the leaves (`Prose`/`Math`)
+/// and `Embed` may never be a `parent_unit_id` — `validate_section_structure` enforces it, which is what
+/// makes "a Prose is a leaf" a structural fact rather than a convention.
+pub(crate) fn is_container_kind(c: &UnitContent) -> bool {
+    matches!(
+        c,
+        UnitContent::List { .. }
+            | UnitContent::Derivation
+            | UnitContent::Equations
+            | UnitContent::CaseSplit
+            | UnitContent::Group
+            | UnitContent::Heading { .. }
+    )
 }
 
 fn inline_span(el: &Inline) -> CharSpan {
@@ -2106,16 +2404,15 @@ fn has_duplicate<T: Eq + std::hash::Hash + Copy>(xs: &[T]) -> bool {
 fn expr_ids_of(content: &MathContent) -> Vec<ExpressionId> {
     let mut ids = Vec::new();
     for u in &content.units {
-        match &u.content {
-            UnitContent::Math { expr } => ids.push(expr.id),
-            UnitContent::Prose { inline, .. } => {
-                for el in inline {
-                    if let Inline::Math { expr, .. } = el {
-                        ids.push(expr.id);
-                    }
+        if let UnitContent::Math { expr } = &u.content {
+            ids.push(expr.id);
+        } else if let Some(inline) = inline_of(&u.content) {
+            // Prose OR Heading title — both may host `Inline::Math` atoms (§B).
+            for el in inline {
+                if let Inline::Math { expr, .. } = el {
+                    ids.push(expr.id);
                 }
             }
-            _ => {}
         }
     }
     ids
@@ -2127,18 +2424,19 @@ fn remint_exprs(
     content: &mut UnitContent,
     map: &std::collections::HashMap<ExpressionId, ExpressionId>,
 ) -> Result<(), ValidationError> {
-    match content {
-        UnitContent::Math { expr } => remint_one(expr, map),
-        UnitContent::Prose { inline, .. } => {
-            for el in inline.iter_mut() {
-                if let Inline::Math { expr, .. } = el {
-                    remint_one(expr, map)?;
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+    if let UnitContent::Math { expr } = content {
+        return remint_one(expr, map);
     }
+    // Prose OR Heading title — re-mint every inline `Math` atom's expr id (§B), so a copied heading's
+    // inline math never keeps the source's id and alias its citations/anchors across objects.
+    if let Some(inline) = inline_of_mut(content) {
+        for el in inline.iter_mut() {
+            if let Inline::Math { expr, .. } = el {
+                remint_one(expr, map)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn remint_one(

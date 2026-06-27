@@ -554,7 +554,8 @@ fn expr_id_multiset(content: &MathContent) -> Vec<ExpressionId> {
     for u in &content.units {
         match &u.content {
             UnitContent::Math { expr } => ids.push(expr.id),
-            UnitContent::Prose { inline, .. } => {
+            // Prose OR a §B heading title — both may host inline `Math` atoms (mirrors prod `expr_ids_of`).
+            UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => {
                 for el in inline {
                     if let Inline::Math { expr, .. } = el {
                         ids.push(expr.id);
@@ -874,6 +875,57 @@ proptest! {
 }
 
 // ── rewrite_surface, insert_reference, resolve_occurrence, materialize (targeted) ──
+
+/// Review finding (wiring §B): a copied section `Heading` whose TITLE carries inline `Math` must get a
+/// FRESH expression id like any other copied expr — `expr_ids_of`/`remint_exprs` cover heading inline,
+/// so the copy never aliases the source's expr id (which would share one expression's citations/anchors
+/// across two objects). Before the fix, both helpers skipped `Heading` and the copy kept the source id.
+#[test]
+fn materialize_remints_inline_math_in_a_heading_title() {
+    let src = ObjectId(v7(1));
+    let e = ExpressionId(v7(40));
+    let mut heading = a_prose_unit(UnitId(v7(0xb1)), src, 0, "x", vec![]);
+    heading.content = UnitContent::Heading {
+        text: "x".into(),
+        inline: vec![Inline::Math {
+            span: CharSpan::new(0, 0),
+            expr: an_expr(e, "x", vec![]),
+        }],
+    };
+    let source = MathContent {
+        object_id: src,
+        revision: 1,
+        units: vec![heading],
+    };
+    let input = MaterializeObjectInput {
+        expected_revision: 1,
+        source_object: an_object(src),
+        source_content: source.clone(),
+        new_object_id: ObjectId(v7(2)),
+        new_provenance_id: ProvenanceId(v7(102)),
+        edge_link_id: LinkId(v7(103)),
+        expr_id_map: vec![ExpressionIdRemap {
+            from: e,
+            to: ExpressionId(v7(9000)),
+        }],
+        unit_id_map: vec![UnitIdRemap {
+            from: UnitId(v7(0xb1)),
+            to: UnitId(v7(8000)),
+        }],
+    };
+    let out = materialize_object(&input, &op_ctx(), op_now())
+        .expect("the heading title's inline expr is covered by the maps");
+    let copied = expr_id_multiset(&out.content);
+    assert_eq!(
+        copied,
+        vec![ExpressionId(v7(9000))],
+        "heading inline math re-minted to the fresh id"
+    );
+    assert!(
+        !copied.contains(&e),
+        "copy must not alias the source's expr id"
+    );
+}
 
 #[test]
 fn rewrite_surface_remaps_then_stales() {

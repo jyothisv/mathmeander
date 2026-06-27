@@ -120,6 +120,17 @@ CREATE TABLE public.links (
 
 
 --
+-- Name: notebook_detail; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.notebook_detail (
+    object_id uuid NOT NULL,
+    space_id uuid NOT NULL,
+    slug text NOT NULL
+);
+
+
+--
 -- Name: object_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -319,6 +330,22 @@ ALTER TABLE ONLY public.journal_day_detail
 
 ALTER TABLE ONLY public.links
     ADD CONSTRAINT links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: notebook_detail notebook_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notebook_detail
+    ADD CONSTRAINT notebook_detail_pkey PRIMARY KEY (object_id);
+
+
+--
+-- Name: notebook_detail notebook_detail_space_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notebook_detail
+    ADD CONSTRAINT notebook_detail_space_id_slug_key UNIQUE (space_id, slug);
 
 
 --
@@ -618,6 +645,22 @@ ALTER TABLE ONLY public.links
 
 
 --
+-- Name: notebook_detail notebook_detail_object_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notebook_detail
+    ADD CONSTRAINT notebook_detail_object_id_fkey FOREIGN KEY (object_id) REFERENCES public.objects(id);
+
+
+--
+-- Name: notebook_detail notebook_detail_space_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notebook_detail
+    ADD CONSTRAINT notebook_detail_space_id_fkey FOREIGN KEY (space_id) REFERENCES public.spaces(id);
+
+
+--
 -- Name: object_versions object_versions_object_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -729,4 +772,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0002'),
     ('0003'),
     ('0004'),
-    ('0005');
+    ('0005'),
+    ('0006');

@@ -40,6 +40,7 @@ const EMPTY_GRAPH = {
   object_versions: [],
   definition_details: [],
   journal_day_details: [],
+  notebook_details: [],
 };
 
 describe('napi addon handshake', () => {

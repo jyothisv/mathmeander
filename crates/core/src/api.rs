@@ -10,13 +10,15 @@ use crate::error::CoreError;
 use crate::ids::UnitId;
 use crate::mathpack::{Mathpack, MathpackGraph, MathpackImport, MathpackMeta};
 use crate::model::{
-    Alias, CanonicalObject, Handle, JournalDayDetail, Link, Provenance, Tagging, Unit,
+    Alias, CanonicalObject, Handle, JournalDayDetail, Link, NotebookDetail, Provenance, Tagging,
+    Unit,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
     DissolveObjectInput, InsertEquationsInput, InsertReferenceInput, MaterializeObjectInput,
-    MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ResolveOccurrenceInput,
-    RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput, ToggleExpressionPlacementInput,
+    MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput,
+    ResolveOccurrenceInput, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ToggleExpressionPlacementInput, ToggleHeadingInput,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
 
@@ -134,6 +136,21 @@ core_result!(
     /// Envelope of `create_journal_day`.
     CreateJournalDayResult, CreatedJournalDay
 );
+
+/// What a successful `notebook` create yields: the THREE rows the glue persists in ONE transaction
+/// (the detail carries the notebook's per-space `slug` — §6.5 / §B).
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct CreatedNotebook {
+    pub object: CanonicalObject,
+    pub provenance: Provenance,
+    pub detail: NotebookDetail,
+}
+
+core_result!(
+    /// Envelope of `create_notebook`.
+    CreateNotebookResult, CreatedNotebook
+);
 core_result!(
     /// Envelope of `apply_title_patch` and `parse_and_migrate_object`.
     ObjectResult, CanonicalObject
@@ -221,6 +238,52 @@ pub fn create_journal_day(
     CreateJournalDayResult::from_result(result).to_json()
 }
 
+/// Normalize a raw notebook slug at the FFI boundary (the server passes one derived from the title):
+/// ASCII alphanumerics lowercased, every other run collapsed to a single `-`, leading/trailing `-`
+/// trimmed. A title of only punctuation collapses to `""`, which `create_notebook` then rejects.
+fn normalize_slug(raw: &str) -> String {
+    let mut out = String::new();
+    let mut pending_dash = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push(c.to_ascii_lowercase());
+        } else {
+            pending_dash = true; // a run of separators becomes at most one interior `-`
+        }
+    }
+    out
+}
+
+/// Create a `notebook` surface (§6.5 / §B): untrusted input + server context + a raw slug (derived from
+/// the title) + now → (object, provenance, detail) envelope. The slug is normalized at the boundary; the
+/// glue persists all three rows in one transaction under `UNIQUE(space_id, slug)` (get-or-create on slug).
+pub fn create_notebook(
+    input_json: &str,
+    ctx_json: &str,
+    space_id: &str,
+    slug_raw: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let input: CreateObjectInput = parse_input("create input", input_json)?;
+        let ctx: CreateContext = parse_input("create context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        let slug = normalize_slug(slug_raw);
+        let (object, provenance, detail) =
+            crate::validate::create_notebook(&input, &ctx, space_id, &slug, now)?;
+        Ok(CreatedNotebook {
+            object,
+            provenance,
+            detail,
+        })
+    })();
+    CreateNotebookResult::from_result(result).to_json()
+}
+
 /// Patch object metadata (pure; concurrency is the glue's conditional UPDATE, §6.4).
 pub fn apply_title_patch(current_json: &str, patch_json: &str, now_iso: &str) -> String {
     let result = (|| {
@@ -260,6 +323,42 @@ pub fn set_unit_type(
         let ctx: OpContext = parse_input("op context", ctx_json)?;
         let now = parse_now(now_iso)?;
         Ok(crate::ops::set_unit_type(content, &input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Move a unit (+ its subtree) to a new parent/position within the same object (§B sections) →
+/// `OpOutcomeResult` JSON. The intra-object counterpart to `rehome_subtree`.
+pub fn reparent_unit(
+    content_json: &str,
+    input_json: &str,
+    ctx_json: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let content: MathContent = parse_input("content", content_json)?;
+        let input: ReparentUnitInput = parse_input("reparent_unit input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::reparent_unit(content, &input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Toggle a unit between plain prose and a section heading (§B) → `OpOutcomeResult` JSON. Promote
+/// (prose → heading) is a kind flip; dissolve (heading → prose) lifts the body into the parent.
+pub fn toggle_heading(
+    content_json: &str,
+    input_json: &str,
+    ctx_json: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let content: MathContent = parse_input("content", content_json)?;
+        let input: ToggleHeadingInput = parse_input("toggle_heading input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::toggle_heading(content, &input, &ctx, now)?)
     })();
     OpOutcomeResult::from_result(result).to_json()
 }

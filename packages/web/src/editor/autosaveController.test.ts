@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { ApiError } from '../api/client';
-import { contentKeyOf, type TypeNeed } from './projection';
+import { contentKeyOf, type StructuralIntent, type StructuralNeed, type TypeNeed } from './projection';
 import type { Delta } from './merge';
 import type { SaveState } from './saveStatus';
 import { createAutosaveController, type AutosavePorts, type SaveBody } from './autosaveController';
@@ -46,11 +46,16 @@ function diffContent(current: MathContent, baseline: MathContent): Delta {
   const baseById = new Map(baseline.units.map((u) => [u.id, u]));
   const seen = new Set<string>();
   const upserts: Unit[] = [];
+  // The real flush emits prose-or-heading content keyed to the PERSISTED kind (a promote is the STRUCTURAL
+  // axis, never a prose upsert), so the prose delta is blind to heading-ness: normalize heading→prose for
+  // both the change comparison and a brand-new unit (new headings can't ride save_content).
+  const asProse = (c: Unit['content']): Unit['content'] =>
+    c.kind === 'heading' ? { kind: 'prose', text: c.text, inline: c.inline } : c;
   for (const u of current.units) {
     seen.add(u.id);
     const prev = baseById.get(u.id);
     if (!prev) {
-      const c = u.content;
+      const c = asProse(u.content);
       if (c.kind === 'prose' && c.text === '' && c.inline.length === 0) continue; // empty new → dropped
       // new unit carries NO type (mirrors newProseUnit) — only the plain-prose fields
       upserts.push({
@@ -59,18 +64,28 @@ function diffContent(current: MathContent, baseline: MathContent): Delta {
         position: u.position,
         status: u.status,
         declared_by: u.declared_by,
-        content: u.content,
+        content: c,
         provenance_id: u.provenance_id,
       });
     } else if (
       u.position !== prev.position ||
-      contentKeyOf(u.content) !== contentKeyOf(prev.content)
+      contentKeyOf(asProse(u.content)) !== contentKeyOf(asProse(prev.content))
     ) {
-      upserts.push({ ...prev, position: u.position, content: u.content }); // freeze all but pos+content
+      upserts.push({ ...prev, position: u.position, content: asProse(u.content) }); // freeze all but pos+content
     }
   }
   const deletes = baseline.units.filter((u) => !seen.has(u.id)).map((u) => u.id);
   return { upserts, deletes };
+}
+
+/** Flip a unit's content prose↔heading for the §B keepStruct overlay (preserving text/inline); other
+ *  kinds pass through unchanged (only prose/heading are toggle targets). */
+function overlayHeading(content: Unit['content'], heading: boolean): Unit['content'] {
+  if (heading && content.kind === 'prose')
+    return { kind: 'heading', text: content.text, inline: content.inline };
+  if (!heading && content.kind === 'heading')
+    return { kind: 'prose', text: content.text, inline: content.inline };
+  return content;
 }
 
 /** Stands in for the live ProseMirror doc: `current.units` carry both prose content AND the `type` node
@@ -112,11 +127,57 @@ class FakeDoc {
     }
     return out;
   }
-  reproject(c: MathContent, keepTypes: TypeNeed[]): void {
-    const want = new Map(keepTypes.map((t) => [t.unitId, t.type]));
+  /** §B structural axis — the units-model analog of `structuralNeeds` (heading-ness = `content.kind`,
+   *  parent = `parent_unit_id`). Toggles ordered before reparents; brand-new units skipped. */
+  docStructuralNeeds(server: MathContent): StructuralNeed[] {
+    const byId = new Map(server.units.map((u) => [u.id, u]));
+    const toggles: StructuralNeed[] = [];
+    const reparents: StructuralNeed[] = [];
+    const posByParent = new Map<string | null, number>();
+    for (const u of this.current.units) {
+      const wantParent = u.parent_unit_id ?? null;
+      const newPosition = posByParent.get(wantParent) ?? 0;
+      posByParent.set(wantParent, newPosition + 1);
+      const srv = byId.get(u.id);
+      if (!srv) continue;
+      if ((u.content.kind === 'heading') !== (srv.content.kind === 'heading'))
+        toggles.push({ op: 'toggle_heading', unitId: u.id });
+      if (wantParent !== (srv.parent_unit_id ?? null))
+        reparents.push({ op: 'reparent', unitId: u.id, newParentId: wantParent, newPosition });
+    }
+    return [...toggles, ...reparents];
+  }
+  docStructuralIntents(baseline: MathContent): StructuralIntent[] {
+    const byId = new Map(baseline.units.map((u) => [u.id, u]));
+    const out: StructuralIntent[] = [];
+    for (const u of this.current.units) {
+      const want = u.content.kind === 'heading';
+      const wantParent = u.parent_unit_id ?? null;
+      const base = byId.get(u.id);
+      const baseHeading = base ? base.content.kind === 'heading' : false;
+      const baseParent = base ? (base.parent_unit_id ?? null) : null;
+      if (want !== baseHeading || wantParent !== baseParent)
+        out.push({ unitId: u.id, heading: want, parentId: wantParent });
+    }
+    return out;
+  }
+  reproject(c: MathContent, keepTypes: TypeNeed[], keepStruct: StructuralIntent[]): void {
+    const wantType = new Map(keepTypes.map((t) => [t.unitId, t.type]));
+    const wantStruct = new Map(keepStruct.map((s) => [s.unitId, s]));
     this.current = {
       ...c,
-      units: c.units.map((u) => (want.has(u.id) ? { ...u, type: want.get(u.id) ?? undefined } : u)),
+      units: c.units.map((u) => {
+        let next = wantType.has(u.id) ? { ...u, type: wantType.get(u.id) ?? undefined } : u;
+        const s = wantStruct.get(u.id);
+        if (s) {
+          next = {
+            ...next,
+            content: overlayHeading(next.content, s.heading),
+            ...(s.parentId ? { parent_unit_id: s.parentId } : { parent_unit_id: undefined }),
+          };
+        }
+        return next;
+      }),
     };
     this.reprojections.push(this.current);
   }
@@ -151,6 +212,7 @@ interface Harness {
   calls: {
     saves: SaveBody[];
     setTypes: Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>;
+    structurals: Array<{ need: StructuralNeed; expectedRevision: number }>;
     persistDraft: number;
     clearDraft: number;
     cancelFlush: number;
@@ -158,6 +220,7 @@ interface Harness {
   };
   queueSave: (fn: () => Promise<MathContent>) => void;
   queueSetType: (fn: () => Promise<MathContent>) => void;
+  queueStruct: (fn: () => Promise<MathContent>) => void;
   setFetch: (fn: () => Promise<MathContent | null>) => void;
   setOnline: (b: boolean) => void;
   setReady: (b: boolean) => void;
@@ -181,6 +244,7 @@ function makeHarness(opts: {
   const calls = {
     saves: [] as SaveBody[],
     setTypes: [] as Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>,
+    structurals: [] as Array<{ need: StructuralNeed; expectedRevision: number }>,
     persistDraft: 0,
     clearDraft: 0,
     cancelFlush: 0,
@@ -188,6 +252,7 @@ function makeHarness(opts: {
   };
   const saveQueue: Array<() => Promise<MathContent>> = [];
   const setTypeQueue: Array<() => Promise<MathContent>> = [];
+  const structQueue: Array<() => Promise<MathContent>> = [];
   let fetchImpl: () => Promise<MathContent | null> = async () => null;
   let online = true;
   let ready = true;
@@ -204,7 +269,7 @@ function makeHarness(opts: {
     fetchFresh: () => fetchImpl(),
     delta: (baseline) => doc.delta(baseline),
     signature: () => doc.signature(),
-    reproject: (c, keepTypes) => doc.reproject(c, keepTypes),
+    reproject: (c, keepTypes, keepStruct) => doc.reproject(c, keepTypes, keepStruct),
     persistDraft: () => {
       calls.persistDraft += 1;
     },
@@ -226,6 +291,42 @@ function makeHarness(opts: {
     },
     docTypeNeeds: (server) => doc.docTypeNeeds(server),
     docTypeIntents: (baseline) => doc.docTypeIntents(baseline),
+    applyStructural: (need, expectedRevision) => {
+      calls.structurals.push({ need, expectedRevision });
+      const override = structQueue.shift();
+      if (override) return override(); // simulate an error / specific echo
+      // default success: apply the op to prior.current, bump the revision (mimics the server echo).
+      if (need.op === 'toggle_heading') {
+        const target = prior.current.units.find((x) => x.id === need.unitId);
+        const wasHeading = target?.content.kind === 'heading';
+        const parentOfTarget = target?.parent_unit_id;
+        const units = prior.current.units.map((u) => {
+          if (u.id === need.unitId) return { ...u, content: overlayHeading(u.content, !wasHeading) };
+          // DISSOLVE side effect (FAITHFUL to the core): lift the former heading's direct children to its
+          // parent. This is what makes the controller's residual-reproject path testable.
+          if (wasHeading && u.parent_unit_id === need.unitId)
+            return parentOfTarget
+              ? { ...u, parent_unit_id: parentOfTarget }
+              : { ...u, parent_unit_id: undefined };
+          return u;
+        });
+        return Promise.resolve({ ...prior.current, revision: prior.current.revision + 1, units });
+      }
+      const units = prior.current.units.map((u) =>
+        u.id === need.unitId
+          ? {
+              ...u,
+              position: need.newPosition,
+              ...(need.newParentId
+                ? { parent_unit_id: need.newParentId }
+                : { parent_unit_id: undefined }),
+            }
+          : u,
+      );
+      return Promise.resolve({ ...prior.current, revision: prior.current.revision + 1, units });
+    },
+    docStructuralNeeds: (server) => doc.docStructuralNeeds(server),
+    docStructuralIntents: (baseline) => doc.docStructuralIntents(baseline),
     setStatus: (fn) => {
       state = fn(state);
     },
@@ -246,6 +347,7 @@ function makeHarness(opts: {
     calls,
     queueSave: (fn) => saveQueue.push(fn),
     queueSetType: (fn) => setTypeQueue.push(fn),
+    queueStruct: (fn) => structQueue.push(fn),
     setFetch: (fn) => {
       fetchImpl = fn;
     },
@@ -943,5 +1045,104 @@ describe('type cues (2c-2) — typed-delete via the merge path (the intermittent
     expect(h.getState()).toMatchObject({ error: false, conflict: false });
     // t1's type was cleared (once in the flush attempt, once in the merge) before any delete.
     expect(h.calls.setTypes.every((s) => s.unitId === 't1' && s.type === null)).toBe(true);
+  });
+});
+
+describe('drainStructure — §B section axis', () => {
+  const heading = (id: string, position: number, text: string, parent?: string): Unit => ({
+    id,
+    object_id: OBJ,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    ...(parent ? { parent_unit_id: parent } : {}),
+    content: { kind: 'heading', text, inline: [] },
+    provenance_id: PROV,
+  });
+  const child = (id: string, position: number, text: string, parent: string): Unit => ({
+    ...prose(id, position, text),
+    parent_unit_id: parent,
+  });
+
+  it('promote: a heading-doc over a prose server unit fires toggle_heading (no prose delta)', async () => {
+    const server = content([prose('p0', 0, 'Title')], 1);
+    const h = makeHarness({ baseline: server });
+    h.doc.type([heading('p0', 0, 'Title')]); // user typed "# " → block is now a heading
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0); // pure promote → no prose delta (structural axis only)
+    expect(h.calls.structurals).toHaveLength(1);
+    expect(h.calls.structurals[0]!.need).toEqual({ op: 'toggle_heading', unitId: 'p0' });
+    expect(h.prior.current.units[0]!.content.kind).toBe('heading'); // server echo applied
+    expect(h.getState()).toMatchObject({ saving: false, dirty: false, conflict: false });
+  });
+
+  it('reparent: a body unit claiming a heading parent fires reparent_unit (no prose delta)', async () => {
+    const server = content([heading('h1', 0, 'Sec'), prose('p1', 1, 'body')], 1); // p1 top-level
+    const h = makeHarness({ baseline: server });
+    // p1 now flows UNDER h1. Its `position` stays at the server's (1): the real flush positions an existing
+    // unit in its BASELINE parent's namespace and never changes parent via the prose delta, so a pure
+    // reparent has no prose delta — only the structural axis. (The reparent's own target index comes from
+    // docStructuralNeeds, not this field.)
+    h.doc.type([heading('h1', 0, 'Sec'), child('p1', 1, 'body', 'h1')]);
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(0); // no prose delta — purely structural
+    expect(h.calls.structurals).toHaveLength(1);
+    expect(h.calls.structurals[0]!.need).toMatchObject({
+      op: 'reparent',
+      unitId: 'p1',
+      newParentId: 'h1',
+    });
+    expect(h.prior.current.units.find((u) => u.id === 'p1')!.parent_unit_id).toBe('h1');
+  });
+
+  it('toggles run BEFORE reparents (promote the heading, then move the body under it)', async () => {
+    const server = content([prose('u1', 0, 'Sec'), prose('p1', 1, 'body')], 1);
+    const h = makeHarness({ baseline: server });
+    h.doc.type([heading('u1', 0, 'Sec'), child('p1', 1, 'body', 'u1')]); // position 1 = server's (no prose delta)
+    await h.ctl.flush();
+    expect(h.calls.structurals.map((s) => s.need.op)).toEqual(['toggle_heading', 'reparent']);
+  });
+
+  it('a brand-new heading is created in ONE flush: save_content (prose) then drainStructure promotes', async () => {
+    // The user typed a new "# Foo" line (no server unit). Pass 1 of the SAME flush: save_content creates it
+    // as PROSE (new headings can't ride save_content); then drainStructure — running after the prose save in
+    // the same cycle — sees it now persisted and toggle_heading-promotes it. Net: one flush, fully settled.
+    const server = content([prose('p0', 0, 'P0')], 1);
+    const h = makeHarness({ baseline: server });
+    h.doc.type([prose('p0', 0, 'P0'), heading('new1', 1, 'Foo')]); // new1 not on server
+    h.queueSave(ok(content([prose('p0', 0, 'P0'), prose('new1', 1, 'Foo')], 2))); // created as prose
+    await h.ctl.flush();
+    expect(h.calls.saves).toHaveLength(1); // new prose row created first
+    expect(h.calls.structurals).toEqual([
+      { need: { op: 'toggle_heading', unitId: 'new1' }, expectedRevision: 2 }, // then promoted, same flush
+    ]);
+    expect(h.prior.current.units.find((u) => u.id === 'new1')!.content.kind).toBe('heading');
+    expect(h.getState()).toMatchObject({ dirty: false, conflict: false });
+  });
+
+  it('a structural 409 with NO server advance DEFERS (draft kept), never a silent conflict', async () => {
+    const server = content([prose('p0', 0, 'Title')], 1);
+    const h = makeHarness({ baseline: server });
+    h.doc.type([heading('p0', 0, 'Title')]);
+    h.queueStruct(() => Promise.reject(apiErr(409))); // toggle_heading races
+    h.setFetch(async () => server); // server did NOT advance → deterministic, not a race
+    await h.ctl.flush();
+    expect(h.getState()).toMatchObject({ conflict: false }); // deferred, not conflict
+    expect(h.calls.persistDraft).toBeGreaterThan(0);
+  });
+
+  it('dissolve converges: the op lifts children server-side, the doc adopts them (no phantom-reparent wedge)', async () => {
+    // server: section h1 with one body child c1. The user dissolved h1 (Backspace on the empty heading): the
+    // gesture marks h1 not-a-heading but does NOT lift c1 in the doc — toggle_heading lifts c1 server-side,
+    // and the controller's residual-reproject must bring the doc into agreement (else c1 would re-POST as a
+    // phantom reparent under the now-prose h1 → a 422 every flush).
+    const server = content([heading('h1', 0, 'Sec'), child('c1', 0, 'body', 'h1')], 1);
+    const h = makeHarness({ baseline: server });
+    h.doc.type([prose('h1', 0, 'Sec'), child('c1', 0, 'body', 'h1')]); // h1 dissolved; c1 still under h1 in doc
+    await h.ctl.flush();
+    expect(h.calls.structurals.map((s) => s.need.op)).toEqual(['toggle_heading']); // ONE op (no phantom)
+    expect(h.prior.current.units.find((u) => u.id === 'c1')!.parent_unit_id ?? null).toBe(null); // lifted
+    expect(h.doc.docStructuralNeeds(h.prior.current)).toEqual([]); // doc adopted the lift → converged
+    expect(h.getState()).toMatchObject({ dirty: false, conflict: false });
   });
 });

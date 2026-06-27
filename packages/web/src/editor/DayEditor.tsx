@@ -14,25 +14,38 @@ import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, chainCommands } from 'prosemirror-commands';
 import { inputRules } from 'prosemirror-inputrules';
 import { history, undo, redo } from 'prosemirror-history';
-import type { MathContent } from '@mathmeander/schema';
+import type { MathContent, MathpackGraph } from '@mathmeander/schema';
 import {
-  getJournalDay,
   saveContent,
   saveContentBeacon,
   setUnitType,
-  type JournalDayEager,
+  reparentUnit,
+  toggleHeading,
 } from '../api/client';
 import { currentToken } from '../auth/store';
 import { editorSchema } from './schema';
-import { flushToContent, projectToDoc, typeNeeds, typeIntents, type TypeNeed } from './projection';
+import {
+  flushToContent,
+  projectToDoc,
+  typeNeeds,
+  typeIntents,
+  structuralNeeds,
+  structuralIntents,
+  type StructuralIntent,
+  type TypeNeed,
+} from './projection';
 import {
   cueRule,
+  headingCueRule,
+  displayCueRule,
   clearTypeAtStart,
   displayEnter,
+  headingEnter,
   enterParagraph,
   exitTypedUnit,
   guardDisplayMerge,
   guardDisplayMergeForward,
+  guardHeadingMergeForward,
   insertHardBreak,
   mergeIntoPrevious,
 } from './cues';
@@ -41,7 +54,14 @@ import { activeUnit } from './activeUnit';
 import { mathRecognize } from './mathRecognize';
 import { markRecognize } from './markRecognize';
 import { markLivePreview } from './markLivePreview';
+import { headingRecognize } from './headingRecognize';
+import { headingLivePreview } from './headingLivePreview';
+import { headingIndent } from './headingIndent';
+import { headingFold } from './headingFold';
 import { formattingKeymap } from './markKeys';
+import { changeHeadingDepth } from './headingDepth';
+import { wrapSelectionAsMath } from './mathWrap';
+import { transformPastedSlice, guardAtomicPaste, guardAtomicDrop } from './paste';
 import { mathLivePreview } from './mathLivePreview';
 import { mathBackspace, mathDelete } from './mathKeys';
 import {
@@ -52,7 +72,7 @@ import {
   CURRENT_DRAFT_VERSION,
 } from './draftStore';
 import { decideRestore } from './restore';
-import { seedDayContent } from './cacheSeed';
+import { seedEagerContent } from './cacheSeed';
 import { createAutosaveController } from './autosaveController';
 import { SaveStatusIndicator } from './SaveStatusIndicator';
 import type { SaveState } from './saveStatus';
@@ -69,20 +89,34 @@ function draftEqualsServer(draft: EditorDraft, server: MathContent): boolean {
     // A draft dirty ONLY by a pending type INTENT (incl. an unpersisted cued-but-empty block) must NOT be
     // judged equal — else it'd be discarded on restore, losing the cue. `typeIntents` (vs the server),
     // unlike `typeNeeds`, does not skip not-yet-persisted blocks. Type is a separate axis (§2c-2).
-    return upserts.length === 0 && deletes.length === 0 && typeIntents(doc, server).length === 0;
+    return (
+      upserts.length === 0 &&
+      deletes.length === 0 &&
+      typeIntents(doc, server).length === 0 &&
+      structuralIntents(doc, server).length === 0 // a pending §B section gesture also keeps the draft
+    );
   } catch {
     return true;
   }
 }
 
+/** The surface-specific bits the editor needs — so the SAME editor serves a journal day OR a notebook.
+ *  `key` is a stable identity (date / slug) for the mount effect; `cacheKey` is where the canonical echo is
+ *  seeded after a save; `fetchEager` re-reads the object + subgraph on a 409 conflict. */
+export interface EditorSurface {
+  key: string;
+  cacheKey: readonly unknown[];
+  fetchEager: () => Promise<{ graph: MathpackGraph }>;
+}
+
 export function DayEditor({
   objectId,
   content,
-  date,
+  surface,
 }: {
   objectId: string;
   content: MathContent;
-  date: string;
+  surface: EditorSurface;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
@@ -128,24 +162,31 @@ export function DayEditor({
     };
 
     const seedCache = (next: MathContent) =>
-      qc.setQueryData<JournalDayEager>(['journal', date], (prev) =>
-        seedDayContent(prev, objectId, next),
+      qc.setQueryData<{ graph: MathpackGraph }>(surface.cacheKey, (prev) =>
+        seedEagerContent(prev, objectId, next),
       );
 
     /** Replace the live doc with `c` WITHOUT going through dispatchTransaction (no spurious dirty/flush);
      *  used after a merge to bring the merged content (incl. foreign units) on screen. Cursor resets.
-     *  `keepTypes` re-overlays my still-pending optimistic type cues so a prose merge (which carries only
-     *  server types) never silently drops a type the user just declared (§2c-2). */
-    const reproject = (c: MathContent, keepTypes: TypeNeed[]) => {
+     *  `keepTypes` re-overlays my still-pending optimistic type cues, and `keepStruct` my pending §B
+     *  section gestures (heading-ness + parent), so a prose merge (which carries only server types/
+     *  structure) never silently drops a type OR a section move the user just made (§2c-2 / §B). */
+    const reproject = (c: MathContent, keepTypes: TypeNeed[], keepStruct: StructuralIntent[]) => {
       if (!view) return;
       const tr = view.state.tr
         .replaceWith(0, view.state.doc.content.size, projectToDoc(c).content)
         .setMeta('addToHistory', false);
-      if (keepTypes.length > 0) {
-        const want = new Map(keepTypes.map((t) => [t.unitId, t.type]));
+      if (keepTypes.length > 0 || keepStruct.length > 0) {
+        const wantType = new Map(keepTypes.map((t) => [t.unitId, t.type]));
+        const wantStruct = new Map(keepStruct.map((s) => [s.unitId, s]));
         tr.doc.descendants((node, pos) => {
-          if (node.type.name === 'prose' && want.has(node.attrs.unitId as string)) {
-            tr.setNodeAttribute(pos, 'unitType', want.get(node.attrs.unitId as string) ?? null);
+          if (node.type.name !== 'prose') return;
+          const id = node.attrs.unitId as string;
+          if (wantType.has(id)) tr.setNodeAttribute(pos, 'unitType', wantType.get(id) ?? null);
+          const s = wantStruct.get(id);
+          if (s) {
+            tr.setNodeAttribute(pos, 'heading', s.heading);
+            tr.setNodeAttribute(pos, 'parentId', s.parentId);
           }
         });
       }
@@ -160,8 +201,8 @@ export function DayEditor({
       prior,
       save: (body) => saveContent(objectId, body).then((o) => o.content),
       fetchFresh: async () => {
-        const day = await getJournalDay(date);
-        return day.graph.content.find((c) => c.object_id === objectId) ?? null;
+        const eager = await surface.fetchEager();
+        return eager.graph.content.find((c) => c.object_id === objectId) ?? null;
       },
       delta: (baseline) =>
         view ? flushToContent(view.state.doc, baseline) : { upserts: [], deletes: [] },
@@ -184,6 +225,18 @@ export function DayEditor({
         }).then((o) => o.content),
       docTypeNeeds: (server) => (view ? typeNeeds(view.state.doc, server) : []),
       docTypeIntents: (baseline) => (view ? typeIntents(view.state.doc, baseline) : []),
+      applyStructural: (need, expectedRevision) =>
+        (need.op === 'toggle_heading'
+          ? toggleHeading(objectId, { expected_revision: expectedRevision, unit_id: need.unitId })
+          : reparentUnit(objectId, {
+              expected_revision: expectedRevision,
+              unit_id: need.unitId,
+              new_parent_unit_id: need.newParentId,
+              new_position: need.newPosition,
+            })
+        ).then((o) => o.content),
+      docStructuralNeeds: (server) => (view ? structuralNeeds(view.state.doc, server) : []),
+      docStructuralIntents: (baseline) => (view ? structuralIntents(view.state.doc, baseline) : []),
       setStatus: setIf,
       cancelScheduledFlush: () => {
         if (timer != null) {
@@ -230,14 +283,16 @@ export function DayEditor({
                 mathBackspace,
               ),
             }),
-            keymap({ Delete: chainCommands(guardDisplayMergeForward, mathDelete) }),
+            keymap({
+              Delete: chainCommands(guardDisplayMergeForward, guardHeadingMergeForward, mathDelete),
+            }),
             // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
             // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).
             // Shift-Enter is always a soft line break; ⌘/Ctrl-Enter finishes a unit and starts a new one.
             keymap({
-              // displayEnter pre-empts inside a `$$…$$` equation: a newline stays in the equation (multi-line),
-              // and Enter at the end of a closed one exits to a new line below. Else the paragraph model runs.
-              Enter: chainCommands(displayEnter, enterParagraph),
+              // displayEnter pre-empts inside a `$$…$$` equation; headingEnter pre-empts in a §B heading
+              // (Enter spawns a body unit flowing UNDER the title, never a soft break). Else the paragraph model.
+              Enter: chainCommands(displayEnter, headingEnter, enterParagraph),
               'Shift-Enter': insertHardBreak,
               'Mod-Enter': exitTypedUnit,
             }),
@@ -245,18 +300,60 @@ export function DayEditor({
             // markRecognize applies the styling from them (delimiters are never consumed — keyboard-friendly,
             // no hidden text). Before baseKeymap so Mod-b etc. aren't shadowed.
             keymap(formattingKeymap),
-            // The cue input rule (`Thm.` etc.). Inline math needs no input rule — `$` is just typed text;
-            // mathRecognize (below) scans `$…$` and applies the identity mark + live preview.
-            inputRules({ rules: [cueRule] }),
+            // §B outline (3c): Tab / Shift-Tab change a heading's depth (indent/outdent the section) by
+            // rewriting the `#` prefix of the whole subtree; the recognizer + structural drain reparent it.
+            // Falls through (no-op) outside a heading, so Tab elsewhere is unaffected.
+            keymap({ Tab: changeHeadingDepth(1), 'Shift-Tab': changeHeadingDepth(-1) }),
+            // Input rules (ONE plugin — PM fires only one inputRules plugin's handleTextInput): the type cue
+            // (`Thm.` etc.); the `# `/`## ` heading cue and the `$$…$$` display cue, which SPLIT the line onto
+            // its own block so the construct is recognized on ANY line, not just a block's first (the rules are
+            // disjoint — word vs `#` vs the closing `$$`). Inline `$…$` still needs no rule (mathRecognize scans).
+            inputRules({ rules: [cueRule, headingCueRule, displayCueRule] }),
             keymap(baseKeymap),
             idStamper,
-            mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr
+            headingRecognize, // scan a block's leading `#`×n → set heading/parentId (depth); demote when gone
+            mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr (skips headings)
             markRecognize, // scan `**…**`/`*…*`/`~~…~~`/`` `…` `` → the styled mark (after math; math wins)
+            headingLivePreview, // hide the `#` prefix when the caret is out of the heading; dim it when in
+            headingIndent, // indent each block by its section depth (view-only; from the parentId chain)
+            headingFold, // collapse/expand a section (chevron widget hides descendants; view-only)
             mathLivePreview, // render KaTeX over a marked span (inline on caret-out; display always, centered)
             markLivePreview, // hide the markdown delimiters when the caret is out; reveal on touch (like math)
             activeUnit,
           ],
         }),
+        // Type `$` over a SELECTION → wrap it in `$…$` (a 2nd `$` over an inline equation → `$$…$$` display).
+        // A direct view prop so it runs BEFORE the inputRules plugin; an empty selection returns false (the
+        // `$` types normally, and the display cue / inline recognizer handle a hand-typed `$$…$$`/`$…$`).
+        handleTextInput(_view, _from, _to, text) {
+          if (text !== '$' || !view) return false;
+          return wrapSelectionAsMath(view.state, view.dispatch.bind(view));
+        },
+        // Re-segment a paste into clean whole blocks so `# `/`$$…$$` land as units (not inline text) and a
+        // multi-block paste splits the target instead of merging — recognizers re-apply identity from source.
+        transformPasted: (slice) => transformPastedSlice(slice),
+        // A block-level paste must NEVER split an atomic block (a heading — whose hidden `# ` prefix traps a
+        // visual-start click PAST the prefix, so a split would sever it into a stray empty heading + demote
+        // the title — or a `$$…$$` equation). Redirect such a paste to the block boundary. Runs after
+        // transformPasted, before the default replaceSelection; returns false (default) when there's no risk.
+        handlePaste(_view, _event, slice) {
+          if (!view) return false;
+          const tr = guardAtomicPaste(view.state, slice);
+          if (!tr) return false;
+          view.dispatch(tr);
+          return true;
+        },
+        // Drag-drop reuses the same closed-slice path as paste, so it can split an atomic block the same way.
+        // Guard it at the DROP POINT (handleDrop is otherwise unwired → default behaviour would corrupt).
+        handleDrop(_view, event, slice, moved) {
+          if (!view) return false;
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+          if (!at) return false;
+          const tr = guardAtomicDrop(view.state, slice, at.pos, moved);
+          if (!tr) return false;
+          view.dispatch(tr);
+          return true;
+        },
         dispatchTransaction(tr) {
           if (!view) return;
           view.updateState(view.state.apply(tr));
@@ -345,9 +442,10 @@ export function DayEditor({
         view.destroy();
       }
     };
-    // Mount once per object/date; `content` is the mount-time baseline (later canonical state lives in
-    // the closure's `prior`), so a post-save cache refresh does NOT tear down the live editor.
-  }, [objectId, date, qc]);
+    // Mount once per object/surface; `content` is the mount-time baseline (later canonical state lives in
+    // the closure's `prior`), so a post-save cache refresh does NOT tear down the live editor. `surface` is
+    // memoized by the page (stable per date/slug), so this re-mounts only on a genuine surface switch.
+  }, [objectId, surface, qc]);
 
   return (
     <div>

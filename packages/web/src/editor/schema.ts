@@ -26,22 +26,45 @@ export const editorSchema = new Schema({
       // co-equal row unit, positionally aligned to the non-empty lines — so editing a row is a content-only
       // upsert, never a re-mint (the save-churn fix). `[]` for any non-system block. idStamper keeps it
       // synced to the row count + deduped (paste safety), exactly as it does for `unitId`.
-      attrs: { unitId: { default: null }, unitType: { default: null }, rowIds: { default: [] } },
+      // §B sections, FLAT representation. A section is the §6.0 `UnitContent::Heading` kind; the doc stays
+      // FLAT (a heading is a normal block, NOT a wrapper node), so every flat consumer (flush/idStamper/
+      // merge) is unchanged for the no-section base case. Two attrs carry the structure:
+      //   • `parentId` — the canonical `parent_unit_id` (the enclosing section heading's id); `null` =
+      //     top-level. Drives the flush's per-parent positions + render-time depth/folding (decorations,
+      //     never schema nesting — §B "no level field").
+      //   • `heading` — true when this block is a section heading (its content projects to/from a `Heading`
+      //     unit; rendered as a title). The kind itself is canonical; becoming/un-becoming a heading is the
+      //     `toggle_heading` op (a kind change, never `save_content`), so the FLUSH only emits `heading`
+      //     content when the prior unit is already a heading — a pending promotion settles via drainStructure.
+      attrs: {
+        unitId: { default: null },
+        unitType: { default: null },
+        rowIds: { default: [] },
+        parentId: { default: null },
+        heading: { default: false },
+      },
       toDOM: (node) => [
         'p',
         {
           'data-unit-id': (node.attrs.unitId as string | null) ?? '',
           ...(node.attrs.unitType ? { 'data-unit-type': node.attrs.unitType as string } : {}),
+          ...(node.attrs.parentId ? { 'data-parent-id': node.attrs.parentId as string } : {}),
+          ...(node.attrs.heading ? { 'data-heading': 'true', class: 'mm-heading' } : {}),
         },
         0,
       ],
-      // Paste keeps a copied block's TYPE (`data-unit-type`) but NOT its id — a pasted block must get a
-      // fresh id (idStamper), never alias the source unit. unitId stays at its `null` default.
+      // Paste keeps a copied block's TYPE + `heading` look (a pasted heading still READS as a heading) but
+      // NOT its id OR `parentId` — a pasted block gets a fresh id (idStamper) and lands TOP-LEVEL, never
+      // aliasing/escaping into the source's section (copy-mints-fresh). A pasted heading is created as prose
+      // by the flush, then promoted by drainStructure once it has a persisted unit (new headings can't ride
+      // `save_content`).
       parseDOM: [
         {
           tag: 'p',
           getAttrs: (dom) => ({
             unitType: (dom as HTMLElement).getAttribute('data-unit-type') || null,
+            heading: (dom as HTMLElement).getAttribute('data-heading') === 'true',
+            // parentId deliberately omitted → stays at its `null` default (paste lands top-level).
           }),
         },
       ],

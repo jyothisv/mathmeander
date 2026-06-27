@@ -6,6 +6,8 @@ import type { FastifyInstance } from 'fastify';
 import { v7 as uuidv7 } from 'uuid';
 import {
   SetUnitTypeInputSchema,
+  ReparentUnitInputSchema,
+  ToggleHeadingInputSchema,
   SplitUnitInputSchema,
   MergeUnitsInputSchema,
   ToggleExpressionPlacementInputSchema,
@@ -28,6 +30,8 @@ import {
   type ResolveOccurrenceInput,
   type RewriteSurfaceInput,
   type SetUnitTypeInput,
+  type ReparentUnitInput,
+  type ToggleHeadingInput,
   type SplitUnitInput,
   type ToggleExpressionPlacementInput,
   type InsertEquationsInput,
@@ -44,10 +48,12 @@ import {
   dissolveObject,
   mergeUnits,
   projectNumbering,
+  reparentUnit,
   resolveOccurrence,
   rewriteSurface,
   saveContent,
   setUnitType,
+  toggleHeading,
   splitUnit,
   toggleExpressionPlacement,
   insertEquations,
@@ -110,6 +116,40 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
       const result = setUnitType(content, input, opCtx, now);
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
+    },
+  );
+
+  // ── reparent_unit (§B intra-object section move; descendants follow, ids preserved) ──
+  app.post(
+    '/api/objects/:id/ops/reparent-unit',
+    { schema: { body: ReparentUnitInputSchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const input = req.body as ReparentUnitInput;
+      const content = await loadContent(deps.db, ctx.spaceId, id);
+      if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const result = reparentUnit(content, input, opCtx, now);
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
+    },
+  );
+
+  // ── toggle_heading (§B prose↔heading; promote, or dissolve lifting the body) ──
+  app.post(
+    '/api/objects/:id/ops/toggle-heading',
+    { schema: { body: ToggleHeadingInputSchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      const input = req.body as ToggleHeadingInput;
+      const content = await loadContent(deps.db, ctx.spaceId, id);
+      if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const result = toggleHeading(content, input, opCtx, now);
       return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
     },
   );
@@ -558,11 +598,13 @@ function sendCoreError(
   return reply.status(status).send(body);
 }
 
-/** Every `ExpressionId` inside one unit's content (a math unit's expr, or prose inline math). */
+/** Every `ExpressionId` inside one unit's content — a math unit's expr, or inline math in a prose unit
+ *  OR a §B section heading's title (lockstep with the core's `expr_ids_of`; both Prose and Heading are
+ *  prose-shaped). */
 function expressionIdsOf(unit: Unit): string[] {
   const content = unit.content;
   if (content.kind === 'math') return [content.expr.id];
-  if (content.kind === 'prose') {
+  if (content.kind === 'prose' || content.kind === 'heading') {
     return content.inline.flatMap((el) => (el.kind === 'math' ? [el.expr.id] : []));
   }
   return [];

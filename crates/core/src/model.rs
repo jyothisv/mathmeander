@@ -53,6 +53,11 @@ pub enum ObjectType {
     // (`validate::create_journal_day` + `journal_day_detail`), NOT the plain typed POST; it
     // stays non-directly-creatable (a raw POST still 422s with TypeNotDirectlyCreatable). (§6.5)
     JournalDay,
+    // notebook — a structured WRITING-SURFACE (§6.5 / §B), the non-date sibling of journal_day:
+    // produced via its own surface op (`validate::create_notebook` + `notebook_detail`), identity is
+    // its per-space `slug`. Like journal_day it is producible-but-not-directly-creatable, and is a
+    // SURFACE (so never a greedy-capture/copy target). Authored into directly with §B `Heading` sections.
+    Notebook,
 }
 
 impl ObjectType {
@@ -84,7 +89,10 @@ impl ObjectType {
     /// keeps the `is_producible` lift (slice 2b) from silently opening `journal_day` as a rehome
     /// target (which would mint a dateless, detail-less day, bypassing `UNIQUE(space_id, date)`).
     pub fn is_surface(self) -> bool {
-        matches!(self, ObjectType::JournalDay | ObjectType::Trail)
+        matches!(
+            self,
+            ObjectType::JournalDay | ObjectType::Trail | ObjectType::Notebook
+        )
     }
 }
 
@@ -505,6 +513,17 @@ pub enum UnitContent {
     CaseSplit,
     /// THE generic container — a typed unit's multi-part body, or a neutral grouping.
     Group,
+    /// A titled section anchor (§B). The title IS this unit's own prose — `text` + `inline`, with the
+    /// full prose vocabulary (formatting `Mark`s, inline `Math` atoms, `Reference` mentions), so a
+    /// heading can read "§3 Properties of $L^2$". The section's BODY and SUBSECTIONS are this unit's
+    /// CHILD rows (`parent_unit_id` → this heading); a subsection is just a child `Heading`. Because the
+    /// title lives ON the unit (not in a child), every section unit is 1:1 with one editor block — the
+    /// flat-flush invariant — and a section move is a single `reparent_unit` (the subtree follows). LEVEL
+    /// is nesting depth (no level field, §B). Distinct from the anonymous `Group`: a `Heading` is titled
+    /// and participates in the outline / numbering. The title edits freely through `save_content` (like
+    /// `Prose`); becoming/un-becoming a heading is the `toggle_heading` op (a content-KIND change, frozen
+    /// from the coarse delta like every other kind transition).
+    Heading { text: String, inline: Vec<Inline> },
     /// Quotes & object embeds.
     Embed { target: EmbedTarget },
 }
@@ -755,6 +774,18 @@ pub struct DefinitionDetail {
 pub struct JournalDayDetail {
     pub object_id: ObjectId,
     pub date: chrono::NaiveDate,
+}
+
+/// Non-content metadata for a `notebook` object (§6.5 surfaces / §B): the per-space `slug` that is
+/// the notebook's stable identity (`UNIQUE(space_id, slug)` in SQL) — the non-date analogue of
+/// `JournalDayDetail.date`. The human title rides on `CanonicalObject.title` (tri-state, patchable);
+/// the slug is identity (derived from the title at create, normalized at the FFI boundary), not a
+/// content edit. The flow is the notebook's `content_units`, authored directly with §B `Heading` sections.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct NotebookDetail {
+    pub object_id: ObjectId,
+    pub slug: String,
 }
 
 /// One edge of the provenance derivation chain (§6.1) — a typed, FK-checked join row

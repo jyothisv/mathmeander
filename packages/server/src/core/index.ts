@@ -7,10 +7,13 @@ import {
   coreVersion as addonCoreVersion,
   createObject as addonCreateObject,
   createJournalDay as addonCreateJournalDay,
+  createNotebook as addonCreateNotebook,
   applyTitlePatch as addonApplyTitlePatch,
   parseAndMigrateObject as addonParseAndMigrateObject,
   currentSchemaVersion as addonCurrentSchemaVersion,
   setUnitType as addonSetUnitType,
+  reparentUnit as addonReparentUnit,
+  toggleHeading as addonToggleHeading,
   splitUnit as addonSplitUnit,
   saveContent as addonSaveContent,
   mergeUnits as addonMergeUnits,
@@ -30,6 +33,7 @@ import {
   ARTIFACT_HASH,
   CreateObjectResultSchema,
   CreateJournalDayResultSchema,
+  CreateNotebookResultSchema,
   ObjectResultSchema,
   OpOutcomeResultSchema,
   NumberingResultSchema,
@@ -40,12 +44,15 @@ import {
   type CreateObjectInput,
   type CreateObjectResult,
   type CreateJournalDayResult,
+  type CreateNotebookResult,
   type ObjectPatch,
   type ObjectResult,
   type MathContent,
   type OpContext,
   type OpOutcomeResult,
   type SetUnitTypeInput,
+  type ReparentUnitInput,
+  type ToggleHeadingInput,
   type SplitUnitInput,
   type MergeUnitsInput,
   type ToggleExpressionPlacementInput,
@@ -127,6 +134,27 @@ export function createJournalDay(
   return CreateJournalDayResultSchema.parse(JSON.parse(envelope));
 }
 
+/**
+ * Create a `notebook` surface (§6.5 / §B): the raw slug (derived from the title) is normalized in the
+ * core. Yields the (object, provenance, detail) triplet the route persists in one transaction.
+ */
+export function createNotebook(
+  input: CreateObjectInput,
+  ctx: CreateContext,
+  spaceId: string,
+  slugRaw: string,
+  now: Date,
+): CreateNotebookResult {
+  const envelope = addonCreateNotebook(
+    JSON.stringify(input),
+    JSON.stringify(ctx),
+    spaceId,
+    slugRaw,
+    now.toISOString(),
+  );
+  return CreateNotebookResultSchema.parse(JSON.parse(envelope));
+}
+
 export function applyTitlePatch(
   current: CanonicalObject,
   patch: ObjectPatch,
@@ -157,6 +185,44 @@ export function setUnitType(
   return OpOutcomeResultSchema.parse(
     JSON.parse(
       addonSetUnitType(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+/** Move a unit (+ its subtree) to a new parent/position — the §B intra-object section move. */
+export function reparentUnit(
+  content: MathContent,
+  input: ReparentUnitInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonReparentUnit(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+/** Toggle a unit between plain prose and a section heading — the §B `# `/un-heading op. */
+export function toggleHeading(
+  content: MathContent,
+  input: ToggleHeadingInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonToggleHeading(
         JSON.stringify(content),
         JSON.stringify(input),
         JSON.stringify(ctx),
