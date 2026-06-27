@@ -317,6 +317,18 @@ mod tests {
     }
 
     #[test]
+    fn deeply_nested_def_source_is_safe() {
+        // The PARSE-time boundary the resolve caps don't cover: a single def whose SOURCE is pathologically
+        // deep. The parser's own MAX_DEPTH cap recovers it (an `Error` fragment past the cap, the rest picked
+        // up flat), so building the scope can't overflow the stack at parse time, and the stored/rendered tree
+        // stays bounded. Returning here at all is the no-overflow proof.
+        let deep = format!("{}1{}", "(".repeat(5000), ")".repeat(5000));
+        let scope = NotationScope::from_definitions(&[("X", deep.as_str())]);
+        let resolved = resolve_notation(&parse("X + 1"), &scope);
+        assert!(node_count(&resolved) <= NOTATION_NODE_BUDGET + 1);
+    }
+
+    #[test]
     fn unmatchable_triggers_are_skipped() {
         // A parse-error / empty trigger would structurally match stray error fragments across the doc; both
         // are excluded, so a scope built from only such defs is empty (an unrelated `)`-error is untouched).
