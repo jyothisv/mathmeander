@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::ValidationError;
-use crate::ids::{ObjectId, ProvenanceId, SpaceId};
+use crate::ids::{ObjectId, ProvenanceId, SpaceId, UnitId};
 use crate::model::{
-    CanonicalObject, Inline, JournalDayDetail, Link, LinkType, MathExpression, NotebookDetail,
-    ObjectStatus, ObjectType, Origin, Provenance, Tagging,
+    CanonicalObject, ConfigFamily, DeclaredBy, Inline, JournalDayDetail, Link, LinkType,
+    MathExpression, NotebookDetail, ObjectStatus, ObjectType, Origin, Provenance, Tagging, Unit,
+    UnitContent, UnitStatus,
 };
 use crate::patch::Patch;
 
@@ -261,8 +262,9 @@ pub fn create_notebook(
     ctx: &CreateContext,
     space_id: &str,
     slug: &str,
+    config_unit_id: &str,
     now: DateTime<Utc>,
-) -> Result<(CanonicalObject, Provenance, NotebookDetail), ValidationError> {
+) -> Result<(CanonicalObject, Provenance, NotebookDetail, Vec<Unit>), ValidationError> {
     let id = ObjectId(parse_uuid_v7("id", &input.id)?);
     let object_type = parse_object_type(&input.object_type)?;
     if object_type != ObjectType::Notebook {
@@ -326,7 +328,30 @@ pub fn create_notebook(
         slug: slug.to_string(),
     };
 
-    Ok((object, provenance, detail))
+    // The notation home (§Design-model: a single home per notebook): a pre-created, EMPTY `config` block of
+    // family `notation` at position 0. Its id is CLIENT-MINTED (passed in — the core stays pure, no entropy)
+    // and it shares the notebook's provenance (one creation event). The user fills it with `TRIGGER :=
+    // EXPANSION` lines; resolution stays render-only (notation-as-register), the source canonical.
+    let notation_home = Unit {
+        id: UnitId(parse_uuid_v7("config_unit_id", config_unit_id)?),
+        object_id: id,
+        parent_unit_id: None,
+        position: 0,
+        slot: None,
+        row_relation: None,
+        unit_type: None,
+        example_kind: None,
+        status: UnitStatus::Rough,
+        declared_by: DeclaredBy::User,
+        extracted_structure: None,
+        content: UnitContent::Config {
+            family: ConfigFamily::Notation,
+            source: String::new(),
+        },
+        provenance_id,
+    };
+
+    Ok((object, provenance, detail, vec![notation_home]))
 }
 
 /// Apply a metadata patch (pure). Revision increments; `updated_at` becomes `now`;

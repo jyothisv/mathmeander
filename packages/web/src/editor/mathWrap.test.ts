@@ -6,6 +6,7 @@ import { EditorState, TextSelection, type Transaction } from 'prosemirror-state'
 import type { MathExpression } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { wrapSelectionAsMath } from './mathWrap';
+import { toggleDelimiter } from './markKeys';
 import { mathRecognize } from './mathRecognize';
 
 const expr = (id: string, surface: string): MathExpression => ({
@@ -19,7 +20,11 @@ const expr = (id: string, surface: string): MathExpression => ({
 });
 
 /** A doc of one prose block; `make` builds its inline content. Selection set to `[from,to]` (doc positions). */
-function blockState(children: import('prosemirror-model').Node[], from: number, to: number): EditorState {
+function blockState(
+  children: import('prosemirror-model').Node[],
+  from: number,
+  to: number,
+): EditorState {
   const block = editorSchema.nodes.prose.create({ unitId: 'u1' }, children);
   const doc = editorSchema.nodes.doc.create(null, [block]);
   const base = EditorState.create({ schema: editorSchema, doc });
@@ -50,7 +55,9 @@ describe('wrapSelectionAsMath — `$` over a selection', () => {
 
   it('upgrades a selection that IS one inline `$…$` equation to a `$$…$$` display block', () => {
     // a marked inline equation "$x$" (doc pos 1..4); select the whole run
-    const math = editorSchema.text('$x$', [editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') })]);
+    const math = editorSchema.text('$x$', [
+      editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') }),
+    ]);
     const s = blockState([math], 1, 4);
     const { ran, next } = capture(s);
     expect(ran).toBe(true);
@@ -59,7 +66,9 @@ describe('wrapSelectionAsMath — `$` over a selection', () => {
   });
 
   it('the upgraded `$$x$$` is recognized as display (id reused) when mathRecognize runs', () => {
-    const math = editorSchema.text('$x$', [editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') })]);
+    const math = editorSchema.text('$x$', [
+      editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') }),
+    ]);
     const block = editorSchema.nodes.prose.create({ unitId: 'u1' }, [math]);
     const doc = editorSchema.nodes.doc.create(null, [block]);
     const base = EditorState.create({ schema: editorSchema, doc, plugins: [mathRecognize] });
@@ -76,7 +85,9 @@ describe('wrapSelectionAsMath — `$` over a selection', () => {
     // "foo $x$ bar": select the `$x$` run; pressing `$` must be a no-op (the equation isn't whole-line, so
     // it can't become a display block — upgrading would bake stray `$` into the prose).
     const a = editorSchema.text('foo ');
-    const math = editorSchema.text('$x$', [editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') })]);
+    const math = editorSchema.text('$x$', [
+      editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') }),
+    ]);
     const b = editorSchema.text(' bar');
     const s = blockState([a, math, b], 5, 8); // select "$x$" (doc pos 5..8)
     const { ran, next } = capture(s);
@@ -85,7 +96,9 @@ describe('wrapSelectionAsMath — `$` over a selection', () => {
   });
 
   it('does NOT upgrade an inline equation in a HEADING title (headings are never display) — M2', () => {
-    const math = editorSchema.text('$x$', [editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') })]);
+    const math = editorSchema.text('$x$', [
+      editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') }),
+    ]);
     const block = editorSchema.nodes.prose.create({ unitId: 'h', heading: true }, [
       editorSchema.text('# '),
       math,
@@ -104,11 +117,60 @@ describe('wrapSelectionAsMath — `$` over a selection', () => {
   it('is a swallowed no-op when the selection crosses a math span (would leave stray `$`)', () => {
     // "a$x$b" with "$x$" marked; select "a$x" (crosses into the math) → no-op
     const a = editorSchema.text('a');
-    const math = editorSchema.text('$x$', [editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') })]);
+    const math = editorSchema.text('$x$', [
+      editorSchema.marks.mathExpr.create({ expr: expr('e1', 'x') }),
+    ]);
     const b = editorSchema.text('b');
     const s = blockState([a, math, b], 1, 4); // "a" + first two chars of the math
     const { ran, next } = capture(s);
     expect(ran).toBe(true); // handled (swallowed)
     expect(next).toBeNull(); // but no transaction dispatched → no stray delimiters
+  });
+});
+
+// The prose-block CONTRACT (isProseBlock, schema.ts): markup affordances must be INERT inside a non-prose
+// text block — the `config` notation home. A `config` node has inline `text*` content, so the old
+// `inlineContent`-only guard let Mod-b / `$` inject literal `**` / `$` into the notation source. These lock
+// that the markup commands no-op there (and so, by the same predicate, will for future code/spec blocks).
+describe('prose-block contract — markup is inert inside a config (notation home) block', () => {
+  function configState(source: string, from: number, to: number): EditorState {
+    const block = editorSchema.nodes.config.create(
+      { unitId: 'c1', configFamily: 'notation' },
+      source.length ? [editorSchema.text(source)] : [],
+    );
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    return base.apply(base.tr.setSelection(TextSelection.create(base.doc, from, to)));
+  }
+
+  it('`$`-over-selection (wrapSelectionAsMath) is a no-op inside a config block', () => {
+    const s = configState('Z* := ZZ^*', 1, 3); // select "Z*"
+    let tr: Transaction | null = null;
+    const ran = wrapSelectionAsMath(s, (t) => (tr = t));
+    expect(ran).toBe(false); // declined, NOT swallowed — `$` would corrupt the source
+    expect(tr).toBeNull();
+  });
+
+  it('toggleDelimiter (Mod-b `**`, Mod-i `*`, …) is a no-op inside a config block', () => {
+    for (const delim of ['**', '*', '`', '~~']) {
+      const s = configState('Z* := ZZ^*', 1, 3);
+      let tr: Transaction | null = null;
+      const ran = toggleDelimiter(delim)(s, (t) => (tr = t));
+      expect(ran).toBe(false);
+      expect(tr).toBeNull();
+    }
+  });
+
+  it('the same command DOES act in a prose block (the guard is config-specific, not a blanket off)', () => {
+    const block = editorSchema.nodes.prose.create({ unitId: 'p1' }, [
+      editorSchema.text('hello world'),
+    ]);
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const s = base.apply(base.tr.setSelection(TextSelection.create(base.doc, 7, 12))); // "world"
+    let tr: Transaction | null = null;
+    const ran = toggleDelimiter('**')(s, (t) => (tr = t));
+    expect(ran).toBe(true);
+    expect(s.apply(tr!).doc.firstChild!.textContent).toBe('hello **world**');
   });
 });

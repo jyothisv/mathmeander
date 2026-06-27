@@ -26,6 +26,7 @@ pub mod grammar;
 pub mod latex;
 pub mod lexer;
 pub mod normalize;
+pub mod notation;
 pub mod parser;
 pub mod path;
 pub mod render;
@@ -39,6 +40,7 @@ pub mod migrate;
 
 pub use ast::{Expr, ExprKind};
 pub use normalize::{Normalized, normalize_fresh};
+pub use notation::{NotationEntry, NotationScope, resolve_notation};
 pub use path::StructuralPath;
 pub use rewrite::{RemapOutcome, SurfaceEdit, rewrite_with_remap};
 pub use span::{ByteSpan, CharSpan};

@@ -5,14 +5,25 @@
 // `styled` marks + the `mathExpr` mark (inline math as editable `$…$` source text — slice 2d). (Display
 // math, embeds, groups, and type cues arrive in 2c-2/2c-3; a day containing them falls back to the
 // read-only view — see DayEditor.)
-import { Schema } from 'prosemirror-model';
+import { Node, Schema } from 'prosemirror-model';
+
+/** THE contract for the prose-editing affordances — the math/heading/mark recognizers, their live-previews,
+ *  the type/heading/paragraph cues, the editing keymaps, and the formatting commands. They operate on, and
+ *  ONLY on, prose blocks: plain prose AND §B heading titles (a heading is a prose node with `heading: true`).
+ *  EVERY other block kind — the `config` notation home today, diagram/annotation blocks later — is ISOLATED
+ *  by this predicate: its source/spec is never mis-recognized as math/markdown, and the markup commands no-op
+ *  inside it. A new block kind is isolated by DEFAULT; it must opt IN to a prose affordance deliberately,
+ *  never leak in. Routing guards through this ONE predicate (rather than ad-hoc `type.name`/`inlineContent`
+ *  checks scattered per plugin) is what stops a weak guard from silently admitting a new text-bearing block —
+ *  the `inlineContent` hole that let formatting write into a `config` node was exactly that failure. */
+export const isProseBlock = (node: Node): boolean => node.type.name === 'prose';
 
 export const editorSchema = new Schema({
   nodes: {
     // A day is a sequence of prose blocks. Display math (structured-math increment 1) is NOT a separate node:
     // a whole-line `$$…$$` is a prose block whose sole content is a `display:true` `mathExpr` span (see
     // mathRecognize / mathLivePreview), and the projection seam maps such a block ⇄ a canonical `Math` unit.
-    doc: { content: 'prose+' },
+    doc: { content: '(prose | config)+' },
 
     // One canonical prose unit. `unitId` is the identity carrier (null = a brand-new unit the
     // server-side flush mints); other unit fields are reconciled from prior content on flush. `unitType`
@@ -65,6 +76,46 @@ export const editorSchema = new Schema({
             unitType: (dom as HTMLElement).getAttribute('data-unit-type') || null,
             heading: (dom as HTMLElement).getAttribute('data-heading') === 'true',
             // parentId deliberately omitted → stays at its `null` default (paste lands top-level).
+          }),
+        },
+      ],
+    },
+
+    // The notation home (config-family block, §Design-model): a plain-text source region holding the
+    // declarative `source` (e.g. `TRIGGER := EXPANSION` lines). A DEDICATED node (NOT prose) so every prose
+    // plugin — math/heading/mark recognizers, live-previews, cues, keymaps, idStamper, paste — skips it via
+    // its `type.name === 'prose'` guard: the source is never mis-recognized as math/heading/markdown, and
+    // editing falls through to baseKeymap (Enter → newline, since `code: true`). The projection maps it ⇄ a
+    // canonical `Config` unit; mathLivePreview reads it to build the notation scope. `configFamily` mirrors
+    // the canonical `family` (`notation` today). Top-level only for now (section-level config is deferred).
+    config: {
+      group: 'block',
+      content: 'text*',
+      marks: '',
+      code: true,
+      defining: true,
+      attrs: {
+        unitId: { default: null },
+        configFamily: { default: 'notation' },
+        parentId: { default: null },
+      },
+      toDOM: (node) => [
+        'div',
+        {
+          class: 'mm-config',
+          'data-unit-id': (node.attrs.unitId as string | null) ?? '',
+          'data-config-family': (node.attrs.configFamily as string | null) ?? 'notation',
+        },
+        ['pre', 0],
+      ],
+      // Paste keeps the config LOOK (family) but not id/parentId — a pasted notation block gets a fresh id
+      // (flush mints it) and lands top-level, never aliasing the source's unit.
+      parseDOM: [
+        {
+          tag: 'div.mm-config',
+          preserveWhitespace: 'full',
+          getAttrs: (dom) => ({
+            configFamily: (dom as HTMLElement).getAttribute('data-config-family') || 'notation',
           }),
         },
       ],

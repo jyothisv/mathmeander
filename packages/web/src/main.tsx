@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import 'katex/dist/katex.min.css';
+import './editor/editor.css';
 import { router } from './router';
 import { initMathRuntime } from './editor/mathRuntime';
 

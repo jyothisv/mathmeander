@@ -24,9 +24,9 @@ use crate::mathpack::{
     MathpackMeta,
 };
 use crate::model::{
-    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ContentLocator, DeclaredBy,
-    DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle, HandleScope,
-    HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
+    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ConfigFamily, ContentLocator,
+    DeclaredBy, DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle,
+    HandleScope, HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
     MathExpression, NotebookDetail, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
     OccurrenceTarget, Origin, ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget,
     RowRelation, SurfaceFormat, Tag, Tagging, TargetSelector, Unit, UnitContent, UnitStatus,
@@ -92,6 +92,7 @@ pub fn artifact_json() -> String {
     defs.insert("ReferenceTarget", inline_schema_for::<ReferenceTarget>());
     defs.insert("Inline", inline_schema_for::<Inline>());
     defs.insert("UnitContent", inline_schema_for::<UnitContent>());
+    defs.insert("ConfigFamily", inline_schema_for::<ConfigFamily>());
     defs.insert(
         "ExtractedStructureEnvelope",
         inline_schema_for::<ExtractedStructureEnvelope>(),
@@ -686,12 +687,19 @@ pub fn conformance_json() -> String {
         { "type": "UnitContent",
           "value": { "kind": "embed", "target": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a1" } },
           "valid": true },
+        { "type": "UnitContent",
+          "value": { "kind": "config", "family": "notation", "source": "Z* := ZZ^*" }, "valid": true,
+          "note": "the notation home — declarative source, family-tagged, resolved at render" },
         { "type": "UnitContent", "value": { "kind": "prose", "text": "hi" }, "valid": false,
           "note": "inline required (always present, [] when none)" },
         { "type": "UnitContent", "value": { "kind": "heading", "text": "hi" }, "valid": false,
           "note": "heading inline required, same as prose" },
         { "type": "UnitContent", "value": { "kind": "list" }, "valid": false, "note": "ordered missing" },
         { "type": "UnitContent", "value": { "kind": "matrix" }, "valid": false, "note": "unknown kind" },
+        { "type": "UnitContent", "value": { "kind": "config", "source": "x" }, "valid": false,
+          "note": "config family required" },
+        { "type": "UnitContent", "value": { "kind": "config", "family": "convention", "source": "" }, "valid": false,
+          "note": "unknown config family (only notation registered)" },
 
         // ── RowRelation (a sample of variants + negatives) ──
         { "type": "RowRelation", "value": "eq", "valid": true },
@@ -701,6 +709,10 @@ pub fn conformance_json() -> String {
         { "type": "RowRelation", "value": "subseteq", "valid": true },
         { "type": "RowRelation", "value": "=", "valid": false, "note": "wire vocab is the variant name, not the symbol" },
         { "type": "RowRelation", "value": "equals", "valid": false, "note": "unknown variant" },
+
+        // ── ConfigFamily (the notation home's family tag) ──
+        { "type": "ConfigFamily", "value": "notation", "valid": true },
+        { "type": "ConfigFamily", "value": "convention", "valid": false, "note": "not yet a registered family" },
 
         // ── ExtractedStructureEnvelope ──
         { "type": "ExtractedStructureEnvelope",
@@ -1353,6 +1365,7 @@ mod tests {
                 "InputSyntax" => serde_json::from_value::<InputSyntax>(value.clone()).is_ok(),
                 "ParseStatus" => serde_json::from_value::<ParseStatus>(value.clone()).is_ok(),
                 "RowRelation" => serde_json::from_value::<RowRelation>(value.clone()).is_ok(),
+                "ConfigFamily" => serde_json::from_value::<ConfigFamily>(value.clone()).is_ok(),
                 // ── Slice 1 content model + unions ──
                 "CharSpan" => serde_json::from_value::<CharSpan>(value.clone()).is_ok(),
                 "MathExpression" => serde_json::from_value::<MathExpression>(value.clone()).is_ok(),

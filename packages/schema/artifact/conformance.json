@@ -1109,6 +1109,16 @@
   {
     "type": "UnitContent",
     "value": {
+      "kind": "config",
+      "family": "notation",
+      "source": "Z* := ZZ^*"
+    },
+    "valid": true,
+    "note": "the notation home — declarative source, family-tagged, resolved at render"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
       "kind": "prose",
       "text": "hi"
     },
@@ -1139,6 +1149,25 @@
     },
     "valid": false,
     "note": "unknown kind"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "config",
+      "source": "x"
+    },
+    "valid": false,
+    "note": "config family required"
+  },
+  {
+    "type": "UnitContent",
+    "value": {
+      "kind": "config",
+      "family": "convention",
+      "source": ""
+    },
+    "valid": false,
+    "note": "unknown config family (only notation registered)"
   },
   {
     "type": "RowRelation",
@@ -1176,6 +1205,17 @@
     "value": "equals",
     "valid": false,
     "note": "unknown variant"
+  },
+  {
+    "type": "ConfigFamily",
+    "value": "notation",
+    "valid": true
+  },
+  {
+    "type": "ConfigFamily",
+    "value": "convention",
+    "valid": false,
+    "note": "not yet a registered family"
   },
   {
     "type": "ExtractedStructureEnvelope",

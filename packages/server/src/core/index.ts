@@ -143,6 +143,7 @@ export function createNotebook(
   ctx: CreateContext,
   spaceId: string,
   slugRaw: string,
+  configUnitId: string,
   now: Date,
 ): CreateNotebookResult {
   const envelope = addonCreateNotebook(
@@ -150,6 +151,7 @@ export function createNotebook(
     JSON.stringify(ctx),
     spaceId,
     slugRaw,
+    configUnitId,
     now.toISOString(),
   );
   return CreateNotebookResultSchema.parse(JSON.parse(envelope));

@@ -64,9 +64,17 @@ pub fn create_notebook(
     ctx_json: String,
     space_id: String,
     slug_raw: String,
+    config_unit_id: String,
     now_iso: String,
 ) -> String {
-    mathmeander_core::api::create_notebook(&input_json, &ctx_json, &space_id, &slug_raw, &now_iso)
+    mathmeander_core::api::create_notebook(
+        &input_json,
+        &ctx_json,
+        &space_id,
+        &slug_raw,
+        &config_unit_id,
+        &now_iso,
+    )
 }
 
 /// Patch object metadata (pure) → `ObjectResult` JSON.

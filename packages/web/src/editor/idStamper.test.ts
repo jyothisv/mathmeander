@@ -71,6 +71,19 @@ describe('idStamper', () => {
     expect(out.child(1).attrs.unitId).toBeTruthy();
   });
 
+  it('stamps + de-dups a config (notation-home) block, like a prose block (A2/A3)', () => {
+    const cfg = (id: string | null) =>
+      editorSchema.nodes.config.create({ unitId: id, configFamily: 'notation' }, [
+        editorSchema.text('Z* := ZZ^*'),
+      ]);
+    const doc = editorSchema.nodes.doc.create(null, [cfg(null), cfg('dup'), cfg('dup')]);
+    const out = stamp(doc);
+    expect(out.child(0).attrs.unitId).toBeTruthy(); // null → stamped (no churn-a-new-unit-every-save)
+    expect(out.child(1).attrs.unitId).toBe('dup'); // first keeps it
+    expect(out.child(2).attrs.unitId).not.toBe('dup'); // paste-clone re-minted → no id aliasing / def loss
+    expect(new Set([0, 1, 2].map((i) => out.child(i).attrs.unitId)).size).toBe(3);
+  });
+
   it('a de-duplicated doc flushes to two DIFFERENT ids (no "appears twice in upserts")', () => {
     const doc = stamp(build(['dup', 'dup'])); // was the split-copies-attrs duplicate
     const prior: MathContent = {

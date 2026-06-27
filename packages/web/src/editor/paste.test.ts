@@ -7,18 +7,16 @@ import { describe, expect, it } from 'vitest';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { Fragment, Slice, type Node } from 'prosemirror-model';
 import { editorSchema } from './schema';
-import {
-  blocksFromText,
-  transformPastedSlice,
-  guardAtomicPaste,
-  guardAtomicDrop,
-} from './paste';
+import { blocksFromText, transformPastedSlice, guardAtomicPaste, guardAtomicDrop } from './paste';
 import { idStamper } from './idStamper';
 import { headingRecognize } from './headingRecognize';
 import { mathRecognize } from './mathRecognize';
 
 const proseBlock = (text: string, attrs: Record<string, unknown> = {}): Node =>
-  editorSchema.nodes.prose.create({ unitId: null, ...attrs }, text ? editorSchema.text(text) : undefined);
+  editorSchema.nodes.prose.create(
+    { unitId: null, ...attrs },
+    text ? editorSchema.text(text) : undefined,
+  );
 
 /** A block's source with `\n` per hard_break (text nodes drop breaks in `textContent`). */
 const blockSrc = (block: Node): string => {
@@ -79,7 +77,9 @@ describe('transformPastedSlice', () => {
   });
 
   it('end-to-end: after idStamper + recognizers the pasted blocks gain ids + heading/display identity', () => {
-    const out = transformPastedSlice(new Slice(Fragment.from(blocksFromText('# H\n\n$$x$$')), 0, 0));
+    const out = transformPastedSlice(
+      new Slice(Fragment.from(blocksFromText('# H\n\n$$x$$')), 0, 0),
+    );
     const doc = editorSchema.nodes.doc.create(null, out.content);
     let state = EditorState.create({
       schema: editorSchema,
@@ -148,7 +148,12 @@ function applyGuard(state: EditorState, slice: Slice) {
 describe('guardAtomicPaste — a block-level paste never splits a heading / equation', () => {
   it('THE FIX: pasting `# Src` at the trapped offset 2 of `# Title2` does NOT split or demote it', () => {
     // caret at offset 2 (after the hidden "# " prefix) — the exact corruption trigger, next block a heading.
-    const s = docState(['# Title2', '# Next'], { 0: { heading: true }, 1: { heading: true } }, 0, 2);
+    const s = docState(
+      ['# Title2', '# Next'],
+      { 0: { heading: true }, 1: { heading: true } },
+      0,
+      2,
+    );
     const { fired, blocks } = applyGuard(s, closed('# Src'));
     expect(fired).toBe(true);
     // boundary insert AFTER the heading — no stray "# " empty heading, Title2 INTACT (still a heading), order kept

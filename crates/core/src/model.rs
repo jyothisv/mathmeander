@@ -526,6 +526,28 @@ pub enum UnitContent {
     Heading { text: String, inline: Vec<Inline> },
     /// Quotes & object embeds.
     Embed { target: EmbedTarget },
+    /// A config-family block (the notation home, §Design-model): declarative `source` interpreted by
+    /// `family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED
+    /// (notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);
+    /// its `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`
+    /// is rejected like every other content-kind transition.
+    Config {
+        family: ConfigFamily,
+        source: String,
+    },
+}
+
+/// The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the
+/// block's `source` (notation → a render-time register; conventions / annotation-recipes / styles join
+/// later as added variants, reusing the one block construct). Wire vocabulary is the variant name
+/// (`"notation"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /
+/// projection machinery is shared, the cascade is a property of config-family blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigFamily {
+    /// User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).
+    Notation,
 }
 
 /// The typed relation a row asserts relative to its prior sibling row (a `Derivation` step's

@@ -34,7 +34,12 @@ export function NotebookDetailPage() {
       <h1>{slug}</h1>
       {notebookContent && isEditable(notebookContent) ? (
         // The §B section home: the same editor as the journal, keyed by object id for a clean remount.
-        <DayEditor key={object.id} objectId={object.id} content={notebookContent} surface={surface} />
+        <DayEditor
+          key={object.id}
+          objectId={object.id}
+          content={notebookContent}
+          surface={surface}
+        />
       ) : notebookContent ? (
         <MathContentView content={notebookContent} contentById={contentById} />
       ) : (

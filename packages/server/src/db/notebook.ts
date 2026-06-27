@@ -5,9 +5,10 @@
 // identity, set at create (re-slugging is a future surface op, never a column edit here). Mirrors
 // `db/journal.ts` with `slug` in place of `date`.
 import type pg from 'pg';
-import type { CanonicalObject, NotebookDetail, Provenance } from '@mathmeander/schema';
+import type { CanonicalObject, NotebookDetail, Provenance, Unit } from '@mathmeander/schema';
 import { withTransaction } from './pool.js';
 import { insertObjectWithProvenance, type ObjectRow } from './objects.js';
+import { insertContentUnit } from './graph.js';
 
 type Queryable = pg.Pool | pg.PoolClient;
 
@@ -51,6 +52,7 @@ export async function getOrCreateNotebook(
   provenance: Provenance,
   detail: NotebookDetail,
   spaceId: string,
+  units: Unit[],
 ): Promise<{ created: boolean; objectId: string; slug: string }> {
   try {
     return await withTransaction(db, async (client) => {
@@ -64,6 +66,9 @@ export async function getOrCreateNotebook(
       );
       const row = won.rows[0];
       if (!row) throw new NotebookRaced(); // lost → roll back the orphan object+provenance
+      // Pre-created scaffold units (the notation home) — persisted in the SAME tx, ONLY on a winning create.
+      // They reference the object + provenance just inserted; top-level, so no parent ordering needed.
+      for (const u of units) await insertContentUnit(client, u);
       return { created: true, objectId: row.object_id, slug: row.slug };
     });
   } catch (err) {

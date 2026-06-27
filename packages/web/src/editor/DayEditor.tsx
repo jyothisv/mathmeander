@@ -43,6 +43,8 @@ import {
   headingEnter,
   enterParagraph,
   exitTypedUnit,
+  guardConfigMerge,
+  guardConfigMergeForward,
   guardDisplayMerge,
   guardDisplayMergeForward,
   guardHeadingMergeForward,
@@ -274,17 +276,24 @@ export function DayEditor({
             // whole equation. Otherwise falls through to baseKeymap's native char delete. Delete (forward) gets
             // the mirror guard (mathDelete). Both are placed before baseKeymap so they pre-empt native.
             keymap({
-              // guardDisplayMerge refuses a join that would dissolve a `$$…$$` equation (atomic for block
-              // joins); else clear type / soft-break-merge / single-char math-boundary delete, then native.
+              // guardConfigMerge/guardDisplayMerge refuse a join that would dissolve a notation-home / `$$…$$`
+              // block (both atomic for block joins); else clear type / soft-break-merge / single-char
+              // math-boundary delete, then native.
               Backspace: chainCommands(
                 clearTypeAtStart,
+                guardConfigMerge,
                 guardDisplayMerge,
                 mergeIntoPrevious,
                 mathBackspace,
               ),
             }),
             keymap({
-              Delete: chainCommands(guardDisplayMergeForward, guardHeadingMergeForward, mathDelete),
+              Delete: chainCommands(
+                guardConfigMergeForward,
+                guardDisplayMergeForward,
+                guardHeadingMergeForward,
+                mathDelete,
+              ),
             }),
             // Enter — paragraph model: a soft line on a non-empty line; a blank line makes a new unit in
             // plain prose but a paragraph break inside a typed unit (2nd consecutive blank exits it).

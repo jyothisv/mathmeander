@@ -5,6 +5,8 @@
 import init, {
   katex as wasmKatex,
   katexDisplay as wasmKatexDisplay,
+  katexScoped as wasmKatexScoped,
+  katexScopedDisplay as wasmKatexScopedDisplay,
   mathml as wasmMathml,
   latexImport as wasmLatexImport,
   normalizeFresh as wasmNormalizeFresh,
@@ -55,6 +57,24 @@ export function toKatex(surfaceText: string): string {
  *  Used for DISPLAY equations + SYSTEM rows; inline keeps the cheaper untagged `toKatex`. */
 export function toKatexDisplay(surfaceText: string): string {
   return wasmKatexDisplay(surfaceText);
+}
+
+/** A single document-scope notation: a trigger and its expansion, both `mathmeander` surface source. */
+export interface NotationDef {
+  trigger: string;
+  expansion: string;
+}
+
+/** `toKatex` + a document-scope NOTATION registry applied at RENDER time (notation-as-register, §6.3a):
+ *  the literal `surfaceText` is unchanged; matched triggers (e.g. `Z*`) render as their expansion. An
+ *  empty scope is identical to `toKatex`. */
+export function toKatexScoped(surfaceText: string, scope: NotationDef[]): string {
+  return wasmKatexScoped(surfaceText, JSON.stringify(scope));
+}
+
+/** `toKatexScoped` for DISPLAY / system equations (`\htmlData`-tagged). */
+export function toKatexScopedDisplay(surfaceText: string, scope: NotationDef[]): string {
+  return wasmKatexScopedDisplay(surfaceText, JSON.stringify(scope));
 }
 
 /** One sub-term's structural path + its char-span in the canonical surface (precise click, F3). */

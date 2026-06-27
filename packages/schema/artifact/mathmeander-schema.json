@@ -224,6 +224,17 @@
         }
       }
     },
+    "ConfigFamily": {
+      "oneOf": [
+        {
+          "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+          "type": "string",
+          "const": "notation"
+        }
+      ],
+      "title": "ConfigFamily",
+      "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks."
+    },
     "ContentLocator": {
       "oneOf": [
         {
@@ -2909,12 +2920,1066 @@
                     "object_id",
                     "slug"
                   ]
+                },
+                "units": {
+                  "description": "Scaffold units pre-created + persisted in the SAME transaction as the notebook — today the notation\nhome (one empty `config` block, family `notation`, at position 0). The glue inserts these on a\nwinning create.",
+                  "type": "array",
+                  "items": {
+                    "description": "A content unit — the §6.0b `content_units` row. Content is the authored material;\n`content_kind` is a DERIVED SQL column (the `content` tag), so it is NOT a field here.",
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "description": "Identity of a content unit (`content_units` row, §6.0b) — what annotations\nanchor to, AI candidates target, and edges point at.",
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "object_id": {
+                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "parent_unit_id": {
+                        "description": "THE nesting mechanism: a child names its parent (must be in the same object, §6.1a).",
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "uuid"
+                      },
+                      "position": {
+                        "description": "Order among siblings (§6.0b).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0
+                      },
+                      "slot": {
+                        "description": "Container-internal part where needed, e.g. `assumption` (case child) /\n`justification` (proof_step child); `None` otherwise.",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "row_relation": {
+                        "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "eq",
+                          "lt",
+                          "gt",
+                          "le",
+                          "ge",
+                          "ne",
+                          "defines",
+                          "maps_to",
+                          "implies",
+                          "in",
+                          "not_in",
+                          "subset",
+                          "subseteq",
+                          null
+                        ]
+                      },
+                      "type": {
+                        "description": "THE one user-facing math-flow label; `None` = plain content.",
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "theorem",
+                          "lemma",
+                          "proposition",
+                          "corollary",
+                          "definition",
+                          "conjecture",
+                          "claim",
+                          "question",
+                          "proof",
+                          "proof_step",
+                          "motivation",
+                          "intuition",
+                          "idea",
+                          "proof_idea",
+                          "remark",
+                          "observation",
+                          "warning",
+                          "analogy",
+                          "application",
+                          "open_issue",
+                          "return_later",
+                          "note",
+                          "example",
+                          null
+                        ]
+                      },
+                      "example_kind": {
+                        "description": "For `type = example`: the example refinement.",
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "illustrative",
+                          "worked",
+                          "non_example",
+                          null
+                        ]
+                      },
+                      "status": {
+                        "description": "Per-unit crystallization state (§6.0/§2.4) — distinct from `MathExpression.parse_status`\n(surface renderability) and from `ObjectStatus` (object lifecycle).",
+                        "type": "string",
+                        "enum": [
+                          "rough",
+                          "parsed",
+                          "user_verified",
+                          "stale"
+                        ]
+                      },
+                      "declared_by": {
+                        "description": "Who declared a unit's STRUCTURE (its type/kind) — a separate fact from content\nprovenance (§6.0). `ai` is deliberately absent: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` with AI provenance/derivation (§3.9).",
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "deterministic",
+                          "imported"
+                        ]
+                      },
+                      "extracted_structure": {
+                        "description": "Optional candidate decomposition — declared, never written in slice 1 (§6.0).",
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "description": "A value from the small named registry (e.g. `hypothesis_conclusion_decomposition`).",
+                            "type": "string"
+                          },
+                          "schema_version": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "generated_by": {
+                            "type": "string"
+                          },
+                          "base_object_revision": {
+                            "type": "integer",
+                            "format": "uint32",
+                            "minimum": 0
+                          },
+                          "accepted_into": {
+                            "description": "The version it materialized into, once accepted (audit trail) — `None` until then.",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "schema_version",
+                          "generated_by",
+                          "base_object_revision"
+                        ]
+                      },
+                      "content": {
+                        "description": "A SINGLE unit's own authored material (§6.0) — never an embedded unit tree (children\nare rows: `parent_unit_id` + `position` + `slot`). The internal `kind` tag is the\nAUTHORITATIVE discriminator and the source of the derived `content_kind` SQL column.",
+                        "oneOf": [
+                          {
+                            "description": "Prose + inline formatting + inline math + mentions.",
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              },
+                              "inline": {
+                                "type": "array",
+                                "items": {
+                                  "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                                  "oneOf": [
+                                    {
+                                      "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "style": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "mark"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "style"
+                                      ]
+                                    },
+                                    {
+                                      "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "expr": {
+                                          "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                          "type": "object",
+                                          "properties": {
+                                            "id": {
+                                              "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "surface_text": {
+                                              "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                              "type": "string"
+                                            },
+                                            "surface_format": {
+                                              "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                              "type": "string",
+                                              "enum": [
+                                                "mathmeander",
+                                                "latex",
+                                                "typst",
+                                                "asciimath"
+                                              ]
+                                            },
+                                            "input_syntax": {
+                                              "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ],
+                                              "enum": [
+                                                "mathmeander",
+                                                "latex",
+                                                "typst",
+                                                "asciimath",
+                                                "unicode",
+                                                "mixed",
+                                                "unknown",
+                                                null
+                                              ]
+                                            },
+                                            "original_input": {
+                                              "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                              "type": "string"
+                                            },
+                                            "parse_status": {
+                                              "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                              "type": "string",
+                                              "enum": [
+                                                "unresolved",
+                                                "renderable",
+                                                "partially_resolved",
+                                                "invalid"
+                                              ]
+                                            },
+                                            "occurrences": {
+                                              "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                              "type": "array",
+                                              "items": {
+                                                "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                                "type": "object",
+                                                "properties": {
+                                                  "selector": {
+                                                    "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "start": {
+                                                        "type": "integer",
+                                                        "format": "uint32",
+                                                        "minimum": 0
+                                                      },
+                                                      "end": {
+                                                        "type": "integer",
+                                                        "format": "uint32",
+                                                        "minimum": 0
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "start",
+                                                      "end"
+                                                    ]
+                                                  },
+                                                  "target": {
+                                                    "anyOf": [
+                                                      {
+                                                        "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                                        "oneOf": [
+                                                          {
+                                                            "type": "object",
+                                                            "properties": {
+                                                              "object_id": {
+                                                                "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                                "type": "string",
+                                                                "format": "uuid"
+                                                              },
+                                                              "kind": {
+                                                                "type": "string",
+                                                                "const": "object"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind",
+                                                              "object_id"
+                                                            ]
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "type": "null"
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "selector"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "id",
+                                            "surface_text",
+                                            "surface_format",
+                                            "original_input",
+                                            "parse_status",
+                                            "occurrences"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "math"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "expr"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "text": {
+                                          "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                                          "type": "string"
+                                        },
+                                        "target": {
+                                          "anyOf": [
+                                            {
+                                              "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                              "oneOf": [
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "object_id": {
+                                                      "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                      "type": "string",
+                                                      "format": "uuid"
+                                                    },
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "const": "object"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "object_id"
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "reference"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "text"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "prose"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "text",
+                              "inline"
+                            ]
+                          },
+                          {
+                            "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+                            "type": "object",
+                            "properties": {
+                              "expr": {
+                                "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "surface_text": {
+                                    "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                    "type": "string"
+                                  },
+                                  "surface_format": {
+                                    "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                    "type": "string",
+                                    "enum": [
+                                      "mathmeander",
+                                      "latex",
+                                      "typst",
+                                      "asciimath"
+                                    ]
+                                  },
+                                  "input_syntax": {
+                                    "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ],
+                                    "enum": [
+                                      "mathmeander",
+                                      "latex",
+                                      "typst",
+                                      "asciimath",
+                                      "unicode",
+                                      "mixed",
+                                      "unknown",
+                                      null
+                                    ]
+                                  },
+                                  "original_input": {
+                                    "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                    "type": "string"
+                                  },
+                                  "parse_status": {
+                                    "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                    "type": "string",
+                                    "enum": [
+                                      "unresolved",
+                                      "renderable",
+                                      "partially_resolved",
+                                      "invalid"
+                                    ]
+                                  },
+                                  "occurrences": {
+                                    "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                    "type": "array",
+                                    "items": {
+                                      "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "target": {
+                                          "anyOf": [
+                                            {
+                                              "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                              "oneOf": [
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "object_id": {
+                                                      "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                      "type": "string",
+                                                      "format": "uuid"
+                                                    },
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "const": "object"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "object_id"
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "surface_text",
+                                  "surface_format",
+                                  "original_input",
+                                  "parse_status",
+                                  "occurrences"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "math"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "expr"
+                            ]
+                          },
+                          {
+                            "description": "Items are child rows.",
+                            "type": "object",
+                            "properties": {
+                              "ordered": {
+                                "type": "boolean"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "list"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "ordered"
+                            ]
+                          },
+                          {
+                            "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "derivation"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "equations"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "case_split"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "group"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "description": "A titled section anchor (§B). The title IS this unit's own prose — `text` + `inline`, with the\nfull prose vocabulary (formatting `Mark`s, inline `Math` atoms, `Reference` mentions), so a\nheading can read \"§3 Properties of $L^2$\". The section's BODY and SUBSECTIONS are this unit's\nCHILD rows (`parent_unit_id` → this heading); a subsection is just a child `Heading`. Because the\ntitle lives ON the unit (not in a child), every section unit is 1:1 with one editor block — the\nflat-flush invariant — and a section move is a single `reparent_unit` (the subtree follows). LEVEL\nis nesting depth (no level field, §B). Distinct from the anonymous `Group`: a `Heading` is titled\nand participates in the outline / numbering. The title edits freely through `save_content` (like\n`Prose`); becoming/un-becoming a heading is the `toggle_heading` op (a content-KIND change, frozen\nfrom the coarse delta like every other kind transition).",
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              },
+                              "inline": {
+                                "type": "array",
+                                "items": {
+                                  "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                                  "oneOf": [
+                                    {
+                                      "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "style": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "mark"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "style"
+                                      ]
+                                    },
+                                    {
+                                      "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "expr": {
+                                          "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                          "type": "object",
+                                          "properties": {
+                                            "id": {
+                                              "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "surface_text": {
+                                              "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                              "type": "string"
+                                            },
+                                            "surface_format": {
+                                              "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                              "type": "string",
+                                              "enum": [
+                                                "mathmeander",
+                                                "latex",
+                                                "typst",
+                                                "asciimath"
+                                              ]
+                                            },
+                                            "input_syntax": {
+                                              "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ],
+                                              "enum": [
+                                                "mathmeander",
+                                                "latex",
+                                                "typst",
+                                                "asciimath",
+                                                "unicode",
+                                                "mixed",
+                                                "unknown",
+                                                null
+                                              ]
+                                            },
+                                            "original_input": {
+                                              "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                              "type": "string"
+                                            },
+                                            "parse_status": {
+                                              "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                              "type": "string",
+                                              "enum": [
+                                                "unresolved",
+                                                "renderable",
+                                                "partially_resolved",
+                                                "invalid"
+                                              ]
+                                            },
+                                            "occurrences": {
+                                              "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                              "type": "array",
+                                              "items": {
+                                                "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                                "type": "object",
+                                                "properties": {
+                                                  "selector": {
+                                                    "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "start": {
+                                                        "type": "integer",
+                                                        "format": "uint32",
+                                                        "minimum": 0
+                                                      },
+                                                      "end": {
+                                                        "type": "integer",
+                                                        "format": "uint32",
+                                                        "minimum": 0
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "start",
+                                                      "end"
+                                                    ]
+                                                  },
+                                                  "target": {
+                                                    "anyOf": [
+                                                      {
+                                                        "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                                        "oneOf": [
+                                                          {
+                                                            "type": "object",
+                                                            "properties": {
+                                                              "object_id": {
+                                                                "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                                "type": "string",
+                                                                "format": "uuid"
+                                                              },
+                                                              "kind": {
+                                                                "type": "string",
+                                                                "const": "object"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind",
+                                                              "object_id"
+                                                            ]
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "type": "null"
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "selector"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "id",
+                                            "surface_text",
+                                            "surface_format",
+                                            "original_input",
+                                            "parse_status",
+                                            "occurrences"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "math"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "expr"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                                      "type": "object",
+                                      "properties": {
+                                        "span": {
+                                          "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                          "type": "object",
+                                          "properties": {
+                                            "start": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            },
+                                            "end": {
+                                              "type": "integer",
+                                              "format": "uint32",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "start",
+                                            "end"
+                                          ]
+                                        },
+                                        "text": {
+                                          "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                                          "type": "string"
+                                        },
+                                        "target": {
+                                          "anyOf": [
+                                            {
+                                              "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                              "oneOf": [
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "object_id": {
+                                                      "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                      "type": "string",
+                                                      "format": "uuid"
+                                                    },
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "const": "object"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "object_id"
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "reference"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "span",
+                                        "text"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "heading"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "text",
+                              "inline"
+                            ]
+                          },
+                          {
+                            "description": "Quotes & object embeds.",
+                            "type": "object",
+                            "properties": {
+                              "target": {
+                                "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "object_id": {
+                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                        "type": "string",
+                                        "format": "uuid"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "object_id"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "embed"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "target"
+                            ]
+                          },
+                          {
+                            "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                            "type": "object",
+                            "properties": {
+                              "family": {
+                                "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                "oneOf": [
+                                  {
+                                    "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                    "type": "string",
+                                    "const": "notation"
+                                  }
+                                ]
+                              },
+                              "source": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "config"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "family",
+                              "source"
+                            ]
+                          }
+                        ]
+                      },
+                      "provenance_id": {
+                        "description": "Identity of a provenance row (glue-minted UUIDv7).",
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "object_id",
+                      "position",
+                      "status",
+                      "declared_by",
+                      "content",
+                      "provenance_id"
+                    ]
+                  }
                 }
               },
               "required": [
                 "object",
                 "provenance",
-                "detail"
+                "detail",
+                "units"
               ]
             }
           },
@@ -5535,7 +6600,8 @@
       "required": [
         "object",
         "provenance",
-        "detail"
+        "detail",
+        "units"
       ],
       "title": "CreatedNotebook",
       "description": "What a successful `notebook` create yields: the THREE rows the glue persists in ONE transaction\n(the detail carries the notebook's per-space `slug` — §6.5 / §B).",
@@ -5697,6 +6763,1059 @@
             "object_id",
             "slug"
           ]
+        },
+        "units": {
+          "description": "Scaffold units pre-created + persisted in the SAME transaction as the notebook — today the notation\nhome (one empty `config` block, family `notation`, at position 0). The glue inserts these on a\nwinning create.",
+          "type": "array",
+          "items": {
+            "description": "A content unit — the §6.0b `content_units` row. Content is the authored material;\n`content_kind` is a DERIVED SQL column (the `content` tag), so it is NOT a field here.",
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "Identity of a content unit (`content_units` row, §6.0b) — what annotations\nanchor to, AI candidates target, and edges point at.",
+                "type": "string",
+                "format": "uuid"
+              },
+              "object_id": {
+                "description": "Identity of a canonical object (client-minted UUIDv7).",
+                "type": "string",
+                "format": "uuid"
+              },
+              "parent_unit_id": {
+                "description": "THE nesting mechanism: a child names its parent (must be in the same object, §6.1a).",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "position": {
+                "description": "Order among siblings (§6.0b).",
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "slot": {
+                "description": "Container-internal part where needed, e.g. `assumption` (case child) /\n`justification` (proof_step child); `None` otherwise.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "row_relation": {
+                "description": "The relation this row asserts toward its prior sibling — a `Derivation` step's connective or\nan `Equations` row's leading relation; `None` otherwise (the common `Equations` case).",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "eq",
+                  "lt",
+                  "gt",
+                  "le",
+                  "ge",
+                  "ne",
+                  "defines",
+                  "maps_to",
+                  "implies",
+                  "in",
+                  "not_in",
+                  "subset",
+                  "subseteq",
+                  null
+                ]
+              },
+              "type": {
+                "description": "THE one user-facing math-flow label; `None` = plain content.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "theorem",
+                  "lemma",
+                  "proposition",
+                  "corollary",
+                  "definition",
+                  "conjecture",
+                  "claim",
+                  "question",
+                  "proof",
+                  "proof_step",
+                  "motivation",
+                  "intuition",
+                  "idea",
+                  "proof_idea",
+                  "remark",
+                  "observation",
+                  "warning",
+                  "analogy",
+                  "application",
+                  "open_issue",
+                  "return_later",
+                  "note",
+                  "example",
+                  null
+                ]
+              },
+              "example_kind": {
+                "description": "For `type = example`: the example refinement.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "illustrative",
+                  "worked",
+                  "non_example",
+                  null
+                ]
+              },
+              "status": {
+                "description": "Per-unit crystallization state (§6.0/§2.4) — distinct from `MathExpression.parse_status`\n(surface renderability) and from `ObjectStatus` (object lifecycle).",
+                "type": "string",
+                "enum": [
+                  "rough",
+                  "parsed",
+                  "user_verified",
+                  "stale"
+                ]
+              },
+              "declared_by": {
+                "description": "Who declared a unit's STRUCTURE (its type/kind) — a separate fact from content\nprovenance (§6.0). `ai` is deliberately absent: AI proposals are review_items, never\ncanonical units; acceptance enters as `user` with AI provenance/derivation (§3.9).",
+                "type": "string",
+                "enum": [
+                  "user",
+                  "deterministic",
+                  "imported"
+                ]
+              },
+              "extracted_structure": {
+                "description": "Optional candidate decomposition — declared, never written in slice 1 (§6.0).",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "kind": {
+                    "description": "A value from the small named registry (e.g. `hypothesis_conclusion_decomposition`).",
+                    "type": "string"
+                  },
+                  "schema_version": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  },
+                  "generated_by": {
+                    "type": "string"
+                  },
+                  "base_object_revision": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  },
+                  "accepted_into": {
+                    "description": "The version it materialized into, once accepted (audit trail) — `None` until then.",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "schema_version",
+                  "generated_by",
+                  "base_object_revision"
+                ]
+              },
+              "content": {
+                "description": "A SINGLE unit's own authored material (§6.0) — never an embedded unit tree (children\nare rows: `parent_unit_id` + `position` + `slot`). The internal `kind` tag is the\nAUTHORITATIVE discriminator and the source of the derived `content_kind` SQL column.",
+                "oneOf": [
+                  {
+                    "description": "Prose + inline formatting + inline math + mentions.",
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "inline": {
+                        "type": "array",
+                        "items": {
+                          "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                          "oneOf": [
+                            {
+                              "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "style": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "mark"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "style"
+                              ]
+                            },
+                            {
+                              "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "expr": {
+                                  "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "surface_text": {
+                                      "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                      "type": "string"
+                                    },
+                                    "surface_format": {
+                                      "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                      "type": "string",
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath"
+                                      ]
+                                    },
+                                    "input_syntax": {
+                                      "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ],
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath",
+                                        "unicode",
+                                        "mixed",
+                                        "unknown",
+                                        null
+                                      ]
+                                    },
+                                    "original_input": {
+                                      "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                      "type": "string"
+                                    },
+                                    "parse_status": {
+                                      "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                      "type": "string",
+                                      "enum": [
+                                        "unresolved",
+                                        "renderable",
+                                        "partially_resolved",
+                                        "invalid"
+                                      ]
+                                    },
+                                    "occurrences": {
+                                      "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                      "type": "array",
+                                      "items": {
+                                        "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                        "type": "object",
+                                        "properties": {
+                                          "selector": {
+                                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                            "type": "object",
+                                            "properties": {
+                                              "start": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              },
+                                              "end": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              }
+                                            },
+                                            "required": [
+                                              "start",
+                                              "end"
+                                            ]
+                                          },
+                                          "target": {
+                                            "anyOf": [
+                                              {
+                                                "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                                "oneOf": [
+                                                  {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "object_id": {
+                                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                        "type": "string",
+                                                        "format": "uuid"
+                                                      },
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "const": "object"
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "object_id"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "selector"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "surface_text",
+                                    "surface_format",
+                                    "original_input",
+                                    "parse_status",
+                                    "occurrences"
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "math"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "expr"
+                              ]
+                            },
+                            {
+                              "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "text": {
+                                  "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "reference"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "text"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "prose"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "text",
+                      "inline"
+                    ]
+                  },
+                  {
+                    "description": "A display/block PLACEMENT of one `MathExpression` — not a separate math model.",
+                    "type": "object",
+                    "properties": {
+                      "expr": {
+                        "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "surface_text": {
+                            "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                            "type": "string"
+                          },
+                          "surface_format": {
+                            "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                            "type": "string",
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath"
+                            ]
+                          },
+                          "input_syntax": {
+                            "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "mathmeander",
+                              "latex",
+                              "typst",
+                              "asciimath",
+                              "unicode",
+                              "mixed",
+                              "unknown",
+                              null
+                            ]
+                          },
+                          "original_input": {
+                            "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                            "type": "string"
+                          },
+                          "parse_status": {
+                            "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                            "type": "string",
+                            "enum": [
+                              "unresolved",
+                              "renderable",
+                              "partially_resolved",
+                              "invalid"
+                            ]
+                          },
+                          "occurrences": {
+                            "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                            "type": "array",
+                            "items": {
+                              "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "selector"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface_text",
+                          "surface_format",
+                          "original_input",
+                          "parse_status",
+                          "occurrences"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "math"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "expr"
+                    ]
+                  },
+                  {
+                    "description": "Items are child rows.",
+                    "type": "object",
+                    "properties": {
+                      "ordered": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "list"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordered"
+                    ]
+                  },
+                  {
+                    "description": "Steps are child rows; each step child carries its relation (slice 1b+).",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "derivation"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Co-equal, jointly-asserted relation rows — the \"system of equations\" `{2x+y=1; x−y=4}`.\nChildren are `Math`/`Prose` rows (`parent_unit_id` → this container); each row may carry a\n`row_relation`. Names the MATHEMATICS, not the layout — column alignment is DERIVED at render\n(never stored). Distinct from `Derivation` (sequential) and `CaseSplit` (conditional).",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "equations"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "Each case is a child group; `slot` marks the assumption child vs body children.",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "case_split"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "THE generic container — a typed unit's multi-part body, or a neutral grouping.",
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "group"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  {
+                    "description": "A titled section anchor (§B). The title IS this unit's own prose — `text` + `inline`, with the\nfull prose vocabulary (formatting `Mark`s, inline `Math` atoms, `Reference` mentions), so a\nheading can read \"§3 Properties of $L^2$\". The section's BODY and SUBSECTIONS are this unit's\nCHILD rows (`parent_unit_id` → this heading); a subsection is just a child `Heading`. Because the\ntitle lives ON the unit (not in a child), every section unit is 1:1 with one editor block — the\nflat-flush invariant — and a section move is a single `reparent_unit` (the subtree follows). LEVEL\nis nesting depth (no level field, §B). Distinct from the anonymous `Group`: a `Heading` is titled\nand participates in the outline / numbering. The title edits freely through `save_content` (like\n`Prose`); becoming/un-becoming a heading is the `toggle_heading` op (a content-KIND change, frozen\nfrom the coarse delta like every other kind transition).",
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "inline": {
+                        "type": "array",
+                        "items": {
+                          "description": "An inline element of prose (§6.0): minimal formatting, inline math, or a mention.\n\n**The span contract** — `span` always char-indexes into the prose `text`, but two shapes:\n  • An element that carries its **own content field** is a ZERO-WIDTH ATOM (`span = [p, p]`):\n    its surface lives in that field, NOT in the prose `text`, so there is a single source of\n    truth (§2.2 — no `Reference.text`-vs-`prose[span]` drift). `Math` (content in `expr`) and\n    `Reference` (content in `text`) are atoms; the prose `text` holds no characters for them.\n  • `Mark` carries no content — it is a REGION `[s, e)` overlaying real prose `text`\n    (formatting). It may be non-empty.\nInline `$…$` math is thus a positional atom, not its own unit (else one sentence explodes into\nunits); promoting it to display math (`$$`) is `ops::toggle_expression_placement`. The\nzero-width invariant for atoms is enforced by `validate::validate_inline` (not just convention),\nso a future op/editor cannot silently reintroduce width. Rich formatting waits for the editor\n(slice 2); MVP `Mark` carries an open-ended `style` tag so import/export round-trips losslessly.",
+                          "oneOf": [
+                            {
+                              "description": "A formatting region over prose `text` — `span` may be non-empty (the marked range).",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "style": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "mark"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "style"
+                              ]
+                            },
+                            {
+                              "description": "Inline math — a zero-width atom (`span = [p, p]`); content lives in `expr`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "expr": {
+                                  "description": "The one structure for all math, wherever it sits (§6.3a). Identity is STABLE and\npresentation-independent; display mode is DERIVED from placement, so there is no mode\nfield. The `mathmeander` parser/serializer that fills these fields lands in slice 1b;\nthis is the wire shape it produces.",
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "description": "Stable identity, minted in content (UUIDv7), unique workspace-wide — the\ncopy-mints-fresh / transclude-references rule hangs off this (§6.3a).",
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "surface_text": {
+                                      "description": "The canonical surface in our grammar (names-canonical `mathmeander`).",
+                                      "type": "string"
+                                    },
+                                    "surface_format": {
+                                      "description": "The grammar a `surface_text` is written in (arch doc §6.3a). `mathmeander` (our owned\ngrammar) is canonical; `latex` is retained for raw-imported/unnormalized surfaces;\n`typst` and `asciimath` are reserved.",
+                                      "type": "string",
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath"
+                                      ]
+                                    },
+                                    "input_syntax": {
+                                      "description": "Tri-state (absent ≠ `unknown`); see `InputSyntax`.",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ],
+                                      "enum": [
+                                        "mathmeander",
+                                        "latex",
+                                        "typst",
+                                        "asciimath",
+                                        "unicode",
+                                        "mixed",
+                                        "unknown",
+                                        null
+                                      ]
+                                    },
+                                    "original_input": {
+                                      "description": "Raw keystrokes, preserved verbatim — NEVER overwritten by normalization (§2.2).",
+                                      "type": "string"
+                                    },
+                                    "parse_status": {
+                                      "description": "Whether a surface is usable, per OUR parser (arch doc §6.3a) — defined by `mathmeander`,\nnot LaTeX. Un-parseable input is never punished: it persists as `invalid` with\n`original_input` intact (§2.2).\n\n- `renderable`    — parses cleanly into a fully-formed AST.\n- `partially_resolved` — parses, but with one or more recovered error fragments\n  (`Expr::Error`); still renderable, with the bad parts shown verbatim.\n- `invalid`       — nothing usable parsed (e.g. empty after trimming, or all error).\n- `unresolved`    — reserved for \"parsed, but has unresolved occurrences/references\"\n  (set by the core once occurrence resolution runs; the parser never emits it).",
+                                      "type": "string",
+                                      "enum": [
+                                        "unresolved",
+                                        "renderable",
+                                        "partially_resolved",
+                                        "invalid"
+                                      ]
+                                    },
+                                    "occurrences": {
+                                      "description": "Semantic refs inside the surface; each extracts to an edge (§6.1b). Always present\n(`[]` when none) so the shape is explicit on both sides of the FFI.",
+                                      "type": "array",
+                                      "items": {
+                                        "description": "A semantic reference INSIDE a `MathExpression` (§6.3a). MVP selector is a coarse char\nspan (Q3); sub-term `Symbol` resolution (with `BoundVar`) is reserved. `target` is\nabsent while unresolved (the queue carries the unresolved text on the `links` row).",
+                                        "type": "object",
+                                        "properties": {
+                                          "selector": {
+                                            "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                            "type": "object",
+                                            "properties": {
+                                              "start": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              },
+                                              "end": {
+                                                "type": "integer",
+                                                "format": "uint32",
+                                                "minimum": 0
+                                              }
+                                            },
+                                            "required": [
+                                              "start",
+                                              "end"
+                                            ]
+                                          },
+                                          "target": {
+                                            "anyOf": [
+                                              {
+                                                "description": "Resolution target of an `Occurrence` (§6.3a). Slice 1 resolves the OBJECT arm only;\nthe `notation` arm (resolve to `notation_entries`) is reserved until that registry\nlands (slice 2), and `symbol` (with `BoundVar`) is reserved.",
+                                                "oneOf": [
+                                                  {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "object_id": {
+                                                        "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                                        "type": "string",
+                                                        "format": "uuid"
+                                                      },
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "const": "object"
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "object_id"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "selector"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "surface_text",
+                                    "surface_format",
+                                    "original_input",
+                                    "parse_status",
+                                    "occurrences"
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "math"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "expr"
+                              ]
+                            },
+                            {
+                              "description": "A mention — a zero-width atom (`span = [p, p]`); the surface lives in `text`.",
+                              "type": "object",
+                              "properties": {
+                                "span": {
+                                  "description": "A character-offset span into a surface (`[start, end)`), the wire span. Identical in\nshape to the type the core embedded in slice 1a — relocated here (the surface owns the\nchar-span model) and re-exported by the core. The artifact `$defs` for it are byte-\nidentical to 1a's; the artifact HASH did move (the doc-comment-derived `description`\ntext changed), so do not hand-edit the recorded hash — it is regenerated by codegen.",
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    },
+                                    "end": {
+                                      "type": "integer",
+                                      "format": "uint32",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "start",
+                                    "end"
+                                  ]
+                                },
+                                "text": {
+                                  "description": "The literal reference surface (\"Bolzano–Weierstrass\") — kept verbatim; the\nresolved edge lives in `links` (§6.1b).",
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "anyOf": [
+                                    {
+                                      "description": "Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT\narm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.",
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "object_id": {
+                                              "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                              "type": "string",
+                                              "format": "uuid"
+                                            },
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "object"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "object_id"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "reference"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "span",
+                                "text"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "heading"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "text",
+                      "inline"
+                    ]
+                  },
+                  {
+                    "description": "Quotes & object embeds.",
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "description": "What an `embed` unit transcludes (§6.0/§6.5). Slice 1 supports the OBJECT arm;\n`source_excerpt` is reserved until sources land (slice 3).",
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "object_id": {
+                                "description": "Identity of a canonical object (client-minted UUIDv7).",
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "object"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "object_id"
+                            ]
+                          }
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "embed"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "target"
+                    ]
+                  },
+                  {
+                    "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                    "type": "object",
+                    "properties": {
+                      "family": {
+                        "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                        "oneOf": [
+                          {
+                            "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                            "type": "string",
+                            "const": "notation"
+                          }
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "config"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "family",
+                      "source"
+                    ]
+                  }
+                ]
+              },
+              "provenance_id": {
+                "description": "Identity of a provenance row (glue-minted UUIDv7).",
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "id",
+              "object_id",
+              "position",
+              "status",
+              "declared_by",
+              "content",
+              "provenance_id"
+            ]
+          }
         }
       }
     },
@@ -6998,6 +9117,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -8053,6 +10200,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -8965,6 +11140,34 @@
               "required": [
                 "kind",
                 "target"
+              ]
+            },
+            {
+              "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+              "type": "object",
+              "properties": {
+                "family": {
+                  "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                  "oneOf": [
+                    {
+                      "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                      "type": "string",
+                      "const": "notation"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "config"
+                }
+              },
+              "required": [
+                "kind",
+                "family",
+                "source"
               ]
             }
           ]
@@ -10317,6 +12520,34 @@
                     "required": [
                       "kind",
                       "target"
+                    ]
+                  },
+                  {
+                    "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                    "type": "object",
+                    "properties": {
+                      "family": {
+                        "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                        "oneOf": [
+                          {
+                            "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                            "type": "string",
+                            "const": "notation"
+                          }
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "config"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "family",
+                      "source"
                     ]
                   }
                 ]
@@ -12255,6 +14486,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -13368,6 +15627,34 @@
                     "required": [
                       "kind",
                       "target"
+                    ]
+                  },
+                  {
+                    "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                    "type": "object",
+                    "properties": {
+                      "family": {
+                        "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                        "oneOf": [
+                          {
+                            "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                            "type": "string",
+                            "const": "notation"
+                          }
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "const": "config"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "family",
+                      "source"
                     ]
                   }
                 ]
@@ -14864,6 +17151,34 @@
                               "required": [
                                 "kind",
                                 "target"
+                              ]
+                            },
+                            {
+                              "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                              "type": "object",
+                              "properties": {
+                                "family": {
+                                  "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                  "oneOf": [
+                                    {
+                                      "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                      "type": "string",
+                                      "const": "notation"
+                                    }
+                                  ]
+                                },
+                                "source": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "config"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "family",
+                                "source"
                               ]
                             }
                           ]
@@ -16764,6 +19079,34 @@
                           "required": [
                             "kind",
                             "target"
+                          ]
+                        },
+                        {
+                          "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                          "type": "object",
+                          "properties": {
+                            "family": {
+                              "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                              "oneOf": [
+                                {
+                                  "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                  "type": "string",
+                                  "const": "notation"
+                                }
+                              ]
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "config"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "family",
+                            "source"
                           ]
                         }
                       ]
@@ -18695,6 +21038,34 @@
                               "required": [
                                 "kind",
                                 "target"
+                              ]
+                            },
+                            {
+                              "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                              "type": "object",
+                              "properties": {
+                                "family": {
+                                  "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                  "oneOf": [
+                                    {
+                                      "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                      "type": "string",
+                                      "const": "notation"
+                                    }
+                                  ]
+                                },
+                                "source": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "const": "config"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "family",
+                                "source"
                               ]
                             }
                           ]
@@ -20647,6 +23018,34 @@
                                       "required": [
                                         "kind",
                                         "target"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                                      "type": "object",
+                                      "properties": {
+                                        "family": {
+                                          "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                          "oneOf": [
+                                            {
+                                              "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                              "type": "string",
+                                              "const": "notation"
+                                            }
+                                          ]
+                                        },
+                                        "source": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "config"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "family",
+                                        "source"
                                       ]
                                     }
                                   ]
@@ -23911,6 +26310,34 @@
                                       "required": [
                                         "kind",
                                         "target"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                                      "type": "object",
+                                      "properties": {
+                                        "family": {
+                                          "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                          "oneOf": [
+                                            {
+                                              "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                              "type": "string",
+                                              "const": "notation"
+                                            }
+                                          ]
+                                        },
+                                        "source": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "const": "config"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "family",
+                                        "source"
                                       ]
                                     }
                                   ]
@@ -29427,6 +31854,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -30946,6 +33401,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -32056,6 +34539,34 @@
                                 "required": [
                                   "kind",
                                   "target"
+                                ]
+                              },
+                              {
+                                "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                                "type": "object",
+                                "properties": {
+                                  "family": {
+                                    "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                    "oneOf": [
+                                      {
+                                        "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                        "type": "string",
+                                        "const": "notation"
+                                      }
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "config"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "family",
+                                  "source"
                                 ]
                               }
                             ]
@@ -33575,6 +36086,34 @@
                                 "required": [
                                   "kind",
                                   "target"
+                                ]
+                              },
+                              {
+                                "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                                "type": "object",
+                                "properties": {
+                                  "family": {
+                                    "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                                    "oneOf": [
+                                      {
+                                        "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                        "type": "string",
+                                        "const": "notation"
+                                      }
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "config"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "family",
+                                  "source"
                                 ]
                               }
                             ]
@@ -36039,6 +38578,34 @@
                           "kind",
                           "target"
                         ]
+                      },
+                      {
+                        "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+                        "type": "object",
+                        "properties": {
+                          "family": {
+                            "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                            "oneOf": [
+                              {
+                                "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                                "type": "string",
+                                "const": "notation"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "config"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "family",
+                          "source"
+                        ]
                       }
                     ]
                   },
@@ -37658,6 +40225,34 @@
                 "kind",
                 "target"
               ]
+            },
+            {
+              "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+              "type": "object",
+              "properties": {
+                "family": {
+                  "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+                  "oneOf": [
+                    {
+                      "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                      "type": "string",
+                      "const": "notation"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "config"
+                }
+              },
+              "required": [
+                "kind",
+                "family",
+                "source"
+              ]
             }
           ]
         },
@@ -38505,6 +41100,34 @@
           "required": [
             "kind",
             "target"
+          ]
+        },
+        {
+          "description": "A config-family block (the notation home, §Design-model): declarative `source` interpreted by\n`family`. The `source` is the canonical, lossless truth; any rendering/resolution is DERIVED\n(notation-as-register — the literal source is never rewritten). A leaf (never a `parent_unit_id`);\nits `source` edits freely through `save_content` like `Prose`, but a kind flip into/out of `Config`\nis rejected like every other content-kind transition.",
+          "type": "object",
+          "properties": {
+            "family": {
+              "description": "The declarative category of a `UnitContent::Config` block — it selects the interpreter that reads the\nblock's `source` (notation → a render-time register; conventions / annotation-recipes / styles join\nlater as added variants, reusing the one block construct). Wire vocabulary is the variant name\n(`\"notation\"`). A new family is an ADDITIVE enum variant + its own interpreter — the block / editor /\nprojection machinery is shared, the cascade is a property of config-family blocks.",
+              "oneOf": [
+                {
+                  "description": "User-defined notation: `TRIGGER := EXPANSION` lines, resolved at render (notation-as-register).",
+                  "type": "string",
+                  "const": "notation"
+                }
+              ]
+            },
+            "source": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "config"
+            }
+          },
+          "required": [
+            "kind",
+            "family",
+            "source"
           ]
         }
       ],

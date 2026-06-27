@@ -50,6 +50,19 @@ function headingUnit(id: string, position: number, text: string, parentUnitId?: 
   };
 }
 
+/** The notation home — a top-level `UnitContent::Config` block holding declarative source. */
+function configUnit(id: string, position: number, source: string): Unit {
+  return {
+    id,
+    object_id: OBJ,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'config', family: 'notation', source },
+    provenance_id: '0197675f-71f4-7000-8000-0000000000d4',
+  };
+}
+
 /** A top-level display-math (`UnitContent::Math`) unit. */
 function mathUnit(id: string, position: number, surface: string): Unit {
   return {
@@ -256,6 +269,58 @@ describe('flushToContent delta', () => {
     const { upserts, deletes } = flushToContent(projectToDoc(empty), empty);
     expect(upserts).toEqual([]);
     expect(deletes).toEqual([]);
+  });
+});
+
+describe('config (notation home) block', () => {
+  it('isEditable admits a top-level config block', () => {
+    expect(isEditable(content([configUnit('c1', 0, 'Z* := ZZ^*')]))).toBe(true);
+  });
+
+  it('projects a config unit to a `config` node carrying its (multi-line) source', () => {
+    const doc = projectToDoc(content([configUnit('c1', 0, 'Z* := ZZ^*\nNN := bb(N)')]));
+    const cfg = doc.firstChild!;
+    expect(cfg.type.name).toBe('config');
+    expect(cfg.attrs.unitId).toBe('c1');
+    expect(cfg.attrs.configFamily).toBe('notation');
+    expect(cfg.textContent).toBe('Z* := ZZ^*\nNN := bb(N)');
+    // a config-only doc gets a trailing plain prose block to home the caret below the home
+    const last = doc.child(doc.childCount - 1);
+    expect(last.type.name).toBe('prose');
+    expect(last.attrs.unitId).toBeNull();
+  });
+
+  it('round-trips unchanged: an untouched config + prose emits no upsert/delete', () => {
+    const c = content([configUnit('c1', 0, 'Z* := ZZ^*'), prose('p1', 1, 'after')]);
+    const { upserts, deletes } = flushToContent(projectToDoc(c), c);
+    expect(deletes).toEqual([]);
+    expect(upserts.find((u) => u.id === 'c1')).toBeUndefined();
+  });
+
+  it('flushes an edited config source as a content-only upsert (same id + kind, no kind-flip)', () => {
+    const c = content([configUnit('c1', 0, 'Z* := ZZ^*')]);
+    const edited = editorSchema.nodes.doc.create(null, [
+      editorSchema.nodes.config.create({ unitId: 'c1', configFamily: 'notation' }, [
+        editorSchema.text('Z* := ZZ^**'),
+      ]),
+    ]);
+    const { upserts, deletes } = flushToContent(edited, c);
+    const up = upserts.find((u) => u.id === 'c1');
+    expect(up).toBeDefined();
+    expect(up!.content).toMatchObject({
+      kind: 'config',
+      family: 'notation',
+      source: 'Z* := ZZ^**',
+    });
+    expect(deletes).toEqual([]);
+  });
+
+  it('a config under a heading fails CLOSED (section-level config is deferred → read-only)', () => {
+    const h = headingUnit('h1', 0, 'Defs');
+    const c = content([h, configUnit('c1', 0, 'Z* := ZZ^*')]);
+    // place the config under the heading
+    (c.units[1] as Unit).parent_unit_id = 'h1';
+    expect(isEditable(c)).toBe(false);
   });
 });
 
@@ -986,10 +1051,7 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
   it('isEditable accepts a section tree but rejects a heading nested under a system', () => {
     expect(isEditable(sectionTree())).toBe(true);
     // A heading whose parent is an equations container is not round-trippable → read-only.
-    const bad = content([
-      mathSystemContainer('eq', 0),
-      heading('hbad', 0, 'nope', 'eq'),
-    ]);
+    const bad = content([mathSystemContainer('eq', 0), heading('hbad', 0, 'nope', 'eq')]);
     expect(isEditable(bad)).toBe(false);
   });
 
@@ -1006,7 +1068,9 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
     const server = content([heading('h1', 0, 'Sec'), prose('p1', 1, 'body')]); // p1 top-level
     const doc = editorSchema.nodes.doc.create(null, [
       editorSchema.nodes.prose.create({ unitId: 'h1', heading: true }, [editorSchema.text('Sec')]),
-      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'h1' }, [editorSchema.text('body')]),
+      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'h1' }, [
+        editorSchema.text('body'),
+      ]),
     ]);
     expect(structuralNeeds(doc, server)).toEqual([
       { op: 'reparent', unitId: 'p1', newParentId: 'h1', newPosition: 0 },
@@ -1017,7 +1081,9 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
     const server = content([prose('u1', 0, 'Sec'), prose('p1', 1, 'body')]);
     const doc = editorSchema.nodes.doc.create(null, [
       editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('Sec')]),
-      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'u1' }, [editorSchema.text('body')]),
+      editorSchema.nodes.prose.create({ unitId: 'p1', parentId: 'u1' }, [
+        editorSchema.text('body'),
+      ]),
     ]);
     const needs = structuralNeeds(doc, server);
     expect(needs[0]).toEqual({ op: 'toggle_heading', unitId: 'u1' });
@@ -1028,7 +1094,9 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
     const server = content([prose('u1', 0, 'x')]);
     const doc = editorSchema.nodes.doc.create(null, [
       editorSchema.nodes.prose.create({ unitId: 'u1' }, [editorSchema.text('x')]),
-      editorSchema.nodes.prose.create({ unitId: 'new1', heading: true }, [editorSchema.text('New')]),
+      editorSchema.nodes.prose.create({ unitId: 'new1', heading: true }, [
+        editorSchema.text('New'),
+      ]),
     ]);
     expect(structuralNeeds(doc, server)).toEqual([]);
   });
@@ -1069,7 +1137,9 @@ describe('§B sections (Heading kind, flat parentId projection)', () => {
     const baseline = content([prose('u1', 0, 'x')]);
     const doc = editorSchema.nodes.doc.create(null, [
       editorSchema.nodes.prose.create({ unitId: 'u1', heading: true }, [editorSchema.text('x')]),
-      editorSchema.nodes.prose.create({ unitId: 'p2', parentId: 'u1' }, [editorSchema.text('body')]),
+      editorSchema.nodes.prose.create({ unitId: 'p2', parentId: 'u1' }, [
+        editorSchema.text('body'),
+      ]),
     ]);
     expect(structuralIntents(doc, baseline)).toEqual([
       { unitId: 'u1', heading: true, parentId: null },

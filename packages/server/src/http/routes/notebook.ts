@@ -43,6 +43,7 @@ export function registerNotebookRoutes(app: FastifyInstance, deps: AppDeps): voi
       { provenance_id: uuidv7(), origin: 'user', created_by: ctx.userId },
       ctx.spaceId,
       title,
+      uuidv7(), // config_unit_id — the pre-created notation home's id (client-minted; the core stays pure)
       deps.now(),
     );
     if (!result.ok) {
@@ -50,13 +51,14 @@ export function registerNotebookRoutes(app: FastifyInstance, deps: AppDeps): voi
       return reply.status(status).send(body);
     }
 
-    const { object, provenance, detail } = result.value;
+    const { object, provenance, detail, units } = result.value;
     const { created, objectId, slug } = await getOrCreateNotebook(
       deps.db,
       object,
       provenance,
       detail,
       ctx.spaceId,
+      units,
     );
     const row = await findObjectInSpace(deps.db, ctx.spaceId, objectId);
     if (!row) throw new AppError(404, 'NOT_FOUND', 'notebook vanished'); // unreachable

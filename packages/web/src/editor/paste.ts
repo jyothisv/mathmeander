@@ -85,7 +85,9 @@ export function blocksFromText(text: string): Node[] {
       // the `#`s + one separator char, so `line.slice(hm[0].length)` is the title with its own spaces intact.
       const rest = line.slice(hm[0].length);
       blocks.push(
-        proseType.create({ unitId: null }, [editorSchema.text(headingPrefix(hm[1]!.length) + rest)]),
+        proseType.create({ unitId: null }, [
+          editorSchema.text(headingPrefix(hm[1]!.length) + rest),
+        ]),
       );
       continue;
     }
@@ -126,6 +128,9 @@ export function transformPastedSlice(slice: Slice): Slice {
  *  or a whole-block `$$…$$` display / system (a split severs the delimiters and destroys the equation). The
  *  block reads identity off its WHOLE source, so any interior split corrupts it. */
 function isAtomicBlock(block: Node): boolean {
+  // The notation home (config block) is whole-block source: a block-level paste must land at its boundary,
+  // never split it mid-definition (idStamper dedups the resulting ids; this keeps the source intact).
+  if (block.type.name === 'config') return true;
   if (block.type.name !== 'prose') return false;
   return ((block.attrs.heading as boolean) ?? false) || isDisplayBlock(block);
 }

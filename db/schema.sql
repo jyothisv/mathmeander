@@ -773,4 +773,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0003'),
     ('0004'),
     ('0005'),
-    ('0006');
+    ('0006'),
+    ('0007');

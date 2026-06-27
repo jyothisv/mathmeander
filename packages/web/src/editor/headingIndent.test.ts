@@ -6,7 +6,10 @@ import { editorSchema } from './schema';
 import { computeDepths } from './headingIndent';
 
 const prose = (unitId: string, text: string, attrs: Record<string, unknown> = {}): Node =>
-  editorSchema.nodes.prose.create({ unitId, ...attrs }, text ? [editorSchema.text(text)] : undefined);
+  editorSchema.nodes.prose.create(
+    { unitId, ...attrs },
+    text ? [editorSchema.text(text)] : undefined,
+  );
 const docOf = (...blocks: Node[]): Node => editorSchema.nodes.doc.create(null, blocks);
 const levels = (doc: Node): number[] => computeDepths(doc).map((b) => b.level);
 
@@ -16,10 +19,7 @@ describe('computeDepths', () => {
   });
 
   it('a top-level heading is flush-left (level 0); its body is one step in (level 1)', () => {
-    const doc = docOf(
-      prose('h', '# A', { heading: true }),
-      prose('b', 'body', { parentId: 'h' }),
-    );
+    const doc = docOf(prose('h', '# A', { heading: true }), prose('b', 'body', { parentId: 'h' }));
     expect(levels(doc)).toEqual([0, 1]);
   });
 
@@ -45,7 +45,13 @@ describe('computeDepths', () => {
     let parent: string | null = null;
     for (let i = 1; i <= 9; i++) {
       const id = `h${i}`;
-      blocks.push(prose(id, '#'.repeat(i) + ' H', parent ? { heading: true, parentId: parent } : { heading: true }));
+      blocks.push(
+        prose(
+          id,
+          '#'.repeat(i) + ' H',
+          parent ? { heading: true, parentId: parent } : { heading: true },
+        ),
+      );
       parent = id;
     }
     const lv = levels(docOf(...blocks));

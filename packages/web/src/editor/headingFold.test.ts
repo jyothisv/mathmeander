@@ -15,7 +15,10 @@ import {
 } from './headingFold';
 
 const prose = (unitId: string, text: string, attrs: Record<string, unknown> = {}): Node =>
-  editorSchema.nodes.prose.create({ unitId, ...attrs }, text ? [editorSchema.text(text)] : undefined);
+  editorSchema.nodes.prose.create(
+    { unitId, ...attrs },
+    text ? [editorSchema.text(text)] : undefined,
+  );
 const docOf = (...blocks: Node[]): Node => editorSchema.nodes.doc.create(null, blocks);
 const withFold = (doc: Node): EditorState =>
   EditorState.create({ schema: editorSchema, doc, plugins: [headingFold] });
@@ -42,7 +45,9 @@ const toggle = (s: EditorState, id: string): EditorState => {
 describe('descendantBlocks', () => {
   it('returns the whole subtree (body + subsection + its body), excluding a following sibling section', () => {
     const doc = section();
-    const ids = descendantBlocks(doc, 'h', headingIndex(doc)).map((d) => doc.resolve(d.pos + 1).parent.attrs.unitId);
+    const ids = descendantBlocks(doc, 'h', headingIndex(doc)).map(
+      (d) => doc.resolve(d.pos + 1).parent.attrs.unitId,
+    );
     expect(ids).toEqual(['hb', 's', 'sb']); // NOT 'after'
   });
 

@@ -9,6 +9,7 @@ import {
   AssetChecksumSchema,
   CanonicalObjectSchema,
   CharSpanSchema,
+  ConfigFamilySchema,
   ContentLocatorSchema,
   CoreErrorSchema,
   CreateContextSchema,
@@ -99,6 +100,7 @@ export type AliasScope = z.infer<typeof AliasScopeSchema>;
 export type AssetChecksum = z.infer<typeof AssetChecksumSchema>;
 export type CanonicalObject = z.infer<typeof CanonicalObjectSchema>;
 export type CharSpan = z.infer<typeof CharSpanSchema>;
+export type ConfigFamily = z.infer<typeof ConfigFamilySchema>;
 export type ContentLocator = z.infer<typeof ContentLocatorSchema>;
 export type CoreError = z.infer<typeof CoreErrorSchema>;
 export type CreateContext = z.infer<typeof CreateContextSchema>;

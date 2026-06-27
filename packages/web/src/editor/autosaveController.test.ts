@@ -6,7 +6,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { ApiError } from '../api/client';
-import { contentKeyOf, type StructuralIntent, type StructuralNeed, type TypeNeed } from './projection';
+import {
+  contentKeyOf,
+  type StructuralIntent,
+  type StructuralNeed,
+  type TypeNeed,
+} from './projection';
 import type { Delta } from './merge';
 import type { SaveState } from './saveStatus';
 import { createAutosaveController, type AutosavePorts, type SaveBody } from './autosaveController';
@@ -301,7 +306,8 @@ function makeHarness(opts: {
         const wasHeading = target?.content.kind === 'heading';
         const parentOfTarget = target?.parent_unit_id;
         const units = prior.current.units.map((u) => {
-          if (u.id === need.unitId) return { ...u, content: overlayHeading(u.content, !wasHeading) };
+          if (u.id === need.unitId)
+            return { ...u, content: overlayHeading(u.content, !wasHeading) };
           // DISSOLVE side effect (FAITHFUL to the core): lift the former heading's direct children to its
           // parent. This is what makes the controller's residual-reproject path testable.
           if (wasHeading && u.parent_unit_id === need.unitId)

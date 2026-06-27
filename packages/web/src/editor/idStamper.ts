@@ -39,8 +39,13 @@ export const idStamper = new Plugin({
     const seen = new Set<string>();
     let tr: ReturnType<typeof newState.tr.setNodeAttribute> | null = null;
     newState.doc.descendants((node, pos) => {
-      // Identity-bearing blocks are prose blocks (display equations + systems are prose blocks too).
-      if (node.type.name !== 'prose') return false;
+      // Identity-bearing blocks: prose blocks (display equations + systems are prose blocks too) AND config
+      // (notation-home) blocks. A config block needs the SAME unitId stamping/dedup so a pasted copy — or a
+      // null-id "ensure" — doesn't churn a fresh unit (id + provenance) on every save, or alias the source's
+      // id (two nodes → one upsert → the first copy's defs silently lost). A config block has no `rowIds`.
+      const isProse = node.type.name === 'prose';
+      const isConfig = node.type.name === 'config';
+      if (!isProse && !isConfig) return false;
 
       // (1)+(2) unitId — fresh if null, re-minted if a duplicate of an earlier block.
       let id = node.attrs.unitId as string | null;
@@ -50,22 +55,24 @@ export const idStamper = new Plugin({
       }
       seen.add(id);
 
-      // (3) rowIds — synced to the row count of a multi-line `$$…$$` system; [] otherwise.
-      const src = blockSource(node);
-      const inner = src != null ? wholeDisplaySource(src) : null;
-      const rowCount = inner != null ? splitSystemRows(inner).length : 0;
-      const cur = (node.attrs.rowIds as string[] | undefined) ?? [];
-      const next: string[] = [];
-      if (rowCount >= 2) {
-        for (let i = 0; i < rowCount; i++) {
-          let rid = i < cur.length ? cur[i]! : undefined;
-          if (rid == null || seen.has(rid)) rid = uuidv7();
-          seen.add(rid);
-          next.push(rid);
+      // (3) rowIds — only a prose `$$…$$` SYSTEM carries co-equal rows; config has no rowIds attr at all.
+      if (isProse) {
+        const src = blockSource(node);
+        const inner = src != null ? wholeDisplaySource(src) : null;
+        const rowCount = inner != null ? splitSystemRows(inner).length : 0;
+        const cur = (node.attrs.rowIds as string[] | undefined) ?? [];
+        const next: string[] = [];
+        if (rowCount >= 2) {
+          for (let i = 0; i < rowCount; i++) {
+            let rid = i < cur.length ? cur[i]! : undefined;
+            if (rid == null || seen.has(rid)) rid = uuidv7();
+            seen.add(rid);
+            next.push(rid);
+          }
         }
-      }
-      if (!sameIds(cur, next)) {
-        tr = (tr ?? newState.tr).setNodeAttribute(pos, 'rowIds', next);
+        if (!sameIds(cur, next)) {
+          tr = (tr ?? newState.tr).setNodeAttribute(pos, 'rowIds', next);
+        }
       }
       return false;
     });

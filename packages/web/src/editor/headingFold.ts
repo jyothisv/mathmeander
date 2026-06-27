@@ -5,7 +5,13 @@
 // subtree onto the heading, and an appendTransaction auto-unfolds if the selection otherwise lands in a
 // hidden block. Fold state is keyed by unitId so it survives a reproject (and is pruned when a heading is
 // demoted/removed).
-import { type Command, type EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import {
+  type Command,
+  type EditorState,
+  Plugin,
+  PluginKey,
+  TextSelection,
+} from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
@@ -38,7 +44,11 @@ export function descendantBlocks(
 }
 
 /** The folded heading ids that are ANCESTORS of `block` (so its content is hidden) — for caret safety. */
-function foldedAncestorsOf(block: PMNode, folded: Set<string>, byId: Map<string, PMNode>): string[] {
+function foldedAncestorsOf(
+  block: PMNode,
+  folded: Set<string>,
+  byId: Map<string, PMNode>,
+): string[] {
   const out: string[] = [];
   let pid = block.attrs.parentId as string | null;
   const guard = new Set<string>();
@@ -106,7 +116,10 @@ function buildDecorations(doc: PMNode, folded: Set<string>): DecorationSet {
     if (descendants.length === 0) return; // a leaf heading isn't foldable — no chevron
     const isFolded = folded.has(id);
     decos.push(
-      Decoration.widget(offset + 1, foldChevron(id, isFolded), { side: -1, key: `fold:${id}:${isFolded}` }),
+      Decoration.widget(offset + 1, foldChevron(id, isFolded), {
+        side: -1,
+        key: `fold:${id}:${isFolded}`,
+      }),
     );
     if (isFolded) {
       for (const d of descendants) {
@@ -118,7 +131,12 @@ function buildDecorations(doc: PMNode, folded: Set<string>): DecorationSet {
 }
 
 /** Apply a fold meta + prune ids whose heading vanished, returning the next folded set (or the same ref). */
-function nextFolded(folded: Set<string>, meta: FoldMeta | undefined, doc: PMNode, pruneStale: boolean): Set<string> {
+function nextFolded(
+  folded: Set<string>,
+  meta: FoldMeta | undefined,
+  doc: PMNode,
+  pruneStale: boolean,
+): Set<string> {
   let next = folded;
   if (meta?.toggle) {
     next = new Set(next);
@@ -140,7 +158,10 @@ function nextFolded(folded: Set<string>, meta: FoldMeta | undefined, doc: PMNode
 export const headingFold = new Plugin<FoldState>({
   key: KEY,
   state: {
-    init: (_config, state) => ({ folded: new Set(), decos: buildDecorations(state.doc, new Set()) }),
+    init: (_config, state) => ({
+      folded: new Set(),
+      decos: buildDecorations(state.doc, new Set()),
+    }),
     apply(tr, value, _old, newState) {
       const meta = tr.getMeta(KEY) as FoldMeta | undefined;
       const folded = nextFolded(value.folded, meta, newState.doc, tr.docChanged);
@@ -156,7 +177,9 @@ export const headingFold = new Plugin<FoldState>({
     const block = newState.selection.$from.parent;
     if (block.type.name !== 'prose') return null;
     const ancestors = foldedAncestorsOf(block, ps.folded, headingIndex(newState.doc));
-    return ancestors.length ? newState.tr.setMeta(KEY, { unfold: ancestors } satisfies FoldMeta) : null;
+    return ancestors.length
+      ? newState.tr.setMeta(KEY, { unfold: ancestors } satisfies FoldMeta)
+      : null;
   },
   props: {
     decorations: (state) => KEY.getState(state)?.decos ?? null,

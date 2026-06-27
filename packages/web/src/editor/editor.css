@@ -1,0 +1,34 @@
+/* Editor block styling. Kept minimal (the editor is otherwise unstyled beyond KaTeX); this is the first
+ * custom rule, added for the notation home so it reads as a distinct, labeled "settings" surface. */
+
+/* The notation home — a `config` block (schema.ts). A subtle left-accent box with a small uppercase title.
+ * The title is a CSS `::before` pseudo-element: it is NOT editable content and is invisible to ProseMirror's
+ * selection model, so it can never trap the caret or be absorbed by an edit. Keyed on the family so future
+ * config families (conventions, …) get their own label. */
+.mm-config {
+  margin: 0.6rem 0;
+  padding: 0.3rem 0.7rem 0.45rem;
+  border-left: 3px solid #cbb89a;
+  background: #faf7f0;
+  border-radius: 0 4px 4px 0;
+}
+
+.mm-config[data-config-family='notation']::before {
+  content: 'Notation';
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a99a7c;
+  user-select: none;
+}
+
+.mm-config pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}

@@ -658,7 +658,7 @@ async function insertObjectRow(client: pg.PoolClient, o: CanonicalObject): Promi
  * inserted before children. `content_kind` is GENERATED — never written.
  */
 /** INSERT one content_unit row (never the GENERATED `content_kind`/`in_expression`). */
-async function insertContentUnit(client: pg.PoolClient, u: Unit): Promise<void> {
+export async function insertContentUnit(client: pg.PoolClient, u: Unit): Promise<void> {
   await client.query(
     `INSERT INTO content_units
        (id, object_id, parent_unit_id, position, slot, row_relation, type, example_kind, status,

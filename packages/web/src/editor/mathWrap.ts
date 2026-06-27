@@ -10,7 +10,11 @@ import { splitLineOut } from './cues';
 
 /** The `[from,to)` of a single contiguous INLINE (`display:false`) `mathExpr` run that fully contains the
  *  selection `[from,to]`, or null. Used to detect "the selection IS an inline equation" → upgrade to display. */
-function inlineMathRegionAround(state: EditorState, from: number, to: number): { from: number; to: number } | null {
+function inlineMathRegionAround(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } | null {
   const $from = state.doc.resolve(from);
   const block = $from.parent;
   if (!block.isTextblock) return null;
@@ -49,7 +53,8 @@ function isWholeLineEquation(state: EditorState, regionFrom: number, regionTo: n
   let p = cStart;
   block.forEach((child) => {
     if (child.type.name === 'hard_break') {
-      if (p < regionFrom) lineStart = p + 1; // a break before the run → the line starts after it
+      if (p < regionFrom)
+        lineStart = p + 1; // a break before the run → the line starts after it
       else if (!foundEnd) {
         lineEnd = p; // the first break at/after the run → the line ends here
         foundEnd = true;

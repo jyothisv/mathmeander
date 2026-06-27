@@ -3,7 +3,7 @@
 // observable. The leaf rendering is deliberately minimal (prose text, math surface_text in <code>);
 // 2c's ProseMirror replaces it. `MathContentView` stays a pure fn of (content, subgraph) so the
 // embed resolution survives that swap.
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import type { Inline, MathContent, MathExpression, RowRelation, Unit } from '@mathmeander/schema';
@@ -11,6 +11,8 @@ import { getJournalDay } from '../api/client';
 import { DayEditor, type EditorSurface } from '../editor/DayEditor';
 import { isEditable } from '../editor/projection';
 import { renderMathInto } from '../editor/renderMath';
+import { notationDefsFromSource } from '../editor/notationScope';
+import type { NotationDef } from '../editor/mathRuntime';
 
 /** Glyph for a per-row connective (a derivation step's relation / an equation row's leading relation). */
 const ROW_RELATION_SYMBOL: Record<RowRelation, string> = {
@@ -29,12 +31,29 @@ const ROW_RELATION_SYMBOL: Record<RowRelation, string> = {
   subseteq: '⊆',
 };
 
+/** The notebook-wide notation registry for this read-only view (the `config` notation-home block's defs),
+ *  applied at render so math resolves consistently with the editor (notation-as-register). */
+const NotationScopeContext = createContext<NotationDef[]>([]);
+
+/** Notation defs from a MathContent's `config` (family `notation`) units, in document order (= definition
+ *  order). ONE notebook-wide layer — the per-region cascade is deferred, matching the editor. */
+function notationScopeFromContent(content: MathContent): NotationDef[] {
+  const defs: NotationDef[] = [];
+  for (const u of content.units) {
+    const c = u.content;
+    if (c.kind === 'config' && c.family === 'notation')
+      defs.push(...notationDefsFromSource(c.source));
+  }
+  return defs;
+}
+
 /** A KaTeX-rendered math expression (display block or inline), via the shared `renderMathInto`. */
 function MathView({ expr, display }: { expr: MathExpression; display: boolean }): ReactNode {
   const ref = useRef<HTMLSpanElement>(null);
+  const scope = useContext(NotationScopeContext);
   useEffect(() => {
-    if (ref.current) renderMathInto(expr, ref.current, { display });
-  }, [expr, display]);
+    if (ref.current) renderMathInto(expr, ref.current, { display, scope });
+  }, [expr, display, scope]);
   return <span ref={ref} className={display ? 'math-render-display' : 'math-render'} />;
 }
 
@@ -77,9 +96,7 @@ function inlineRun(text: string, inline: Inline[]): ReactNode[] {
   return [
     text,
     ...inline.flatMap((i, n) =>
-      i.kind === 'math'
-        ? [<code key={n} className="math">{` ${i.expr.surface_text} `}</code>]
-        : [],
+      i.kind === 'math' ? [<code key={n} className="math">{` ${i.expr.surface_text} `}</code>] : [],
     ),
   ];
 }
@@ -206,8 +223,11 @@ export function MathContentView({
   content: MathContent;
   contentById: ContentById;
 }): ReactNode {
+  const scope = useMemo(() => notationScopeFromContent(content), [content]);
   return (
-    <>{renderLevel(null, byParent(content.units), contentById, new Set([content.object_id]))}</>
+    <NotationScopeContext.Provider value={scope}>
+      {renderLevel(null, byParent(content.units), contentById, new Set([content.object_id]))}
+    </NotationScopeContext.Provider>
   );
 }
 

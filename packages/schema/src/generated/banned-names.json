@@ -5,6 +5,7 @@
   "AssetChecksum",
   "CanonicalObject",
   "CharSpan",
+  "ConfigFamily",
   "ContentLocator",
   "CoreError",
   "CreateContext",

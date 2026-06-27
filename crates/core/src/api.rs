@@ -145,6 +145,10 @@ pub struct CreatedNotebook {
     pub object: CanonicalObject,
     pub provenance: Provenance,
     pub detail: NotebookDetail,
+    /// Scaffold units pre-created + persisted in the SAME transaction as the notebook — today the notation
+    /// home (one empty `config` block, family `notation`, at position 0). The glue inserts these on a
+    /// winning create.
+    pub units: Vec<Unit>,
 }
 
 core_result!(
@@ -266,6 +270,7 @@ pub fn create_notebook(
     ctx_json: &str,
     space_id: &str,
     slug_raw: &str,
+    config_unit_id: &str,
     now_iso: &str,
 ) -> String {
     let result = (|| {
@@ -273,12 +278,13 @@ pub fn create_notebook(
         let ctx: CreateContext = parse_input("create context", ctx_json)?;
         let now = parse_now(now_iso)?;
         let slug = normalize_slug(slug_raw);
-        let (object, provenance, detail) =
-            crate::validate::create_notebook(&input, &ctx, space_id, &slug, now)?;
+        let (object, provenance, detail, units) =
+            crate::validate::create_notebook(&input, &ctx, space_id, &slug, config_unit_id, now)?;
         Ok(CreatedNotebook {
             object,
             provenance,
             detail,
+            units,
         })
     })();
     CreateNotebookResult::from_result(result).to_json()

@@ -22,6 +22,8 @@ import {
   headingEnter,
   enterParagraph,
   exitTypedUnit,
+  guardConfigMerge,
+  guardConfigMergeForward,
   guardDisplayMerge,
   guardDisplayMergeForward,
   guardHeadingMergeForward,
@@ -646,7 +648,12 @@ describe('headingCueRule (`# ` on any line splits the line into its own block, k
 
 describe('displayCueRule (`$$…$$` on any line splits onto its own block)', () => {
   it('at a BLOCK START it just completes `$$x$$` (no split)', () => {
-    const { next } = fireCue(stateWith('$$x$', { cursor: 4 }), applyDisplayCue, DISPLAY_CUE_RE, '$');
+    const { next } = fireCue(
+      stateWith('$$x$', { cursor: 4 }),
+      applyDisplayCue,
+      DISPLAY_CUE_RE,
+      '$',
+    );
     expect(next!.doc.childCount).toBe(1);
     expect(next!.doc.firstChild!.textContent).toBe('$$x$$');
   });
@@ -753,5 +760,63 @@ describe('splitLineOut helper (the shared two-way line peel)', () => {
     expect(blockSrc(next.doc.child(0))).toBe('aa');
     expect(blockSrc(next.doc.child(1))).toBe('bb');
     expect(blockSrc(next.doc.child(2))).toBe('cc');
+  });
+});
+
+// A1 — the notation home (config block) is ATOMIC for block joins. Without these guards, Backspace/Delete at
+// a config↔prose boundary falls through to baseKeymap's joinBackward/joinForward and merges prose text INTO
+// the notation source (config `content:'text*'` absorbs it) or destroys the home — silent §2.2 loss.
+describe('config (notation-home) join guards (A1)', () => {
+  const cfg = (src: string): Node =>
+    editorSchema.nodes.config.create(
+      { unitId: 'c1', configFamily: 'notation' },
+      src ? [editorSchema.text(src)] : [],
+    );
+  const para = (t: string): Node =>
+    editorSchema.nodes.prose.create({ unitId: 'p1' }, t ? editorSchema.text(t) : undefined);
+
+  /** A doc of the given blocks with the caret at the start (or end) of block `index`'s content. */
+  function at(blocks: Node[], index: number, atEnd: boolean): EditorState {
+    const doc = editorSchema.nodes.doc.create(null, blocks);
+    let pos = 0;
+    for (let i = 0; i < index; i++) pos += doc.child(i).nodeSize;
+    const block = doc.child(index);
+    const caret = atEnd ? pos + block.nodeSize - 1 : pos + 1;
+    const base = EditorState.create({ schema: editorSchema, doc });
+    return base.apply(base.tr.setSelection(TextSelection.create(base.doc, caret)));
+  }
+  const run = (cmd: typeof guardConfigMerge, s: EditorState) => {
+    let tr: Transaction | null = null;
+    const ran = cmd(s, (t) => (tr = t));
+    return { ran, tr: tr as Transaction | null };
+  };
+
+  it('Backspace at the start of prose AFTER a config block is guarded (no merge into source)', () => {
+    const { ran, tr } = run(guardConfigMerge, at([cfg('Z* := X'), para('after')], 1, false));
+    expect(ran).toBe(true); // handled → baseKeymap joinBackward never runs
+    expect(tr!.doc.childCount).toBe(2); // both blocks intact — the prose was NOT absorbed
+  });
+
+  it('Backspace at the START of a config block is swallowed (atomic; home preserved)', () => {
+    const { ran, tr } = run(guardConfigMerge, at([para('intro'), cfg('Z* := X')], 1, false));
+    expect(ran).toBe(true);
+    expect(tr).toBeNull(); // pure swallow, no join
+  });
+
+  it('Backspace mid-config is NOT guarded (normal char delete falls through)', () => {
+    const s = at([cfg('Z* := X')], 0, true); // caret at the config source end (mid/end, not start)
+    expect(run(guardConfigMerge, s).ran).toBe(false);
+  });
+
+  it('Delete at the END of a config block is swallowed (no forward pull-in)', () => {
+    const { ran, tr } = run(guardConfigMergeForward, at([cfg('Z* := X'), para('after')], 0, true));
+    expect(ran).toBe(true);
+    expect(tr).toBeNull();
+  });
+
+  it('Delete at the END of prose BEFORE a config block is guarded (no merge into source)', () => {
+    const { ran, tr } = run(guardConfigMergeForward, at([para('intro'), cfg('Z* := X')], 0, true));
+    expect(ran).toBe(true);
+    expect(tr!.doc.childCount).toBe(2);
   });
 });

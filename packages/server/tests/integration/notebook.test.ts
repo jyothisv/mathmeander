@@ -48,6 +48,41 @@ describe('notebook: get-or-create', () => {
     expect(await notebookCount()).toBe(1);
   });
 
+  it('pre-creates the notation home: ONE empty `config`/notation unit at position 0', async () => {
+    const res = await postNotebook('Real Analysis');
+    expect(res.statusCode).toBe(201);
+    const objectId = (res.json() as { object: { id: string } }).object.id;
+    const units = await stack.db.query<{
+      position: number;
+      content_kind: string;
+      parent_unit_id: string | null;
+      content: { kind: string; family: string; source: string };
+    }>(
+      `SELECT position, content_kind, parent_unit_id, content
+       FROM content_units WHERE object_id = $1 ORDER BY position`,
+      [objectId],
+    );
+    expect(units.rows).toHaveLength(1);
+    const home = units.rows[0]!;
+    expect(home.content_kind).toBe('config'); // the GENERATED column reflects the new arm
+    expect(home.position).toBe(0);
+    expect(home.parent_unit_id).toBeNull();
+    expect(home.content).toMatchObject({ kind: 'config', family: 'notation', source: '' });
+  });
+
+  it('the idempotent get-existing path does NOT add a second notation home', async () => {
+    const first = await postNotebook('Measure Theory');
+    expect(first.statusCode).toBe(201);
+    const second = await postNotebook('measure theory'); // same slug → 200, no new rows
+    expect(second.statusCode).toBe(200);
+    const objectId = (first.json() as { object: { id: string } }).object.id;
+    const n = await stack.db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM content_units WHERE object_id = $1`,
+      [objectId],
+    );
+    expect(Number(n.rows[0]!.n)).toBe(1);
+  });
+
   it('is idempotent: a title that normalizes to the same slug returns the SAME object (200)', async () => {
     const first = await postNotebook('Linear Algebra');
     expect(first.statusCode).toBe(201);

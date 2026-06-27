@@ -719,6 +719,9 @@ pub fn save_content(
                         // `rewrite_surface`) is a separate, prose+heading-wide change — see review finding.
                         UnitContent::Prose { .. } => {}
                         UnitContent::Heading { .. } => {}
+                        // A config block's `source` edits freely (notation-as-register, lossless) — the
+                        // canonical truth is the source; resolution is derived at render.
+                        UnitContent::Config { .. } => {}
                         UnitContent::Math { .. } => {
                             ensure_math_keystone_safe(old, current_links)?;
                         }
@@ -751,10 +754,11 @@ pub fn save_content(
                             UnitContent::Prose { .. }
                                 | UnitContent::Math { .. }
                                 | UnitContent::Equations
+                                | UnitContent::Config { .. }
                         ) {
                             return Err(invalid(format!(
-                                "new top-level unit {} must be prose, display math, or a system \
-                                 (Equations) container",
+                                "new top-level unit {} must be prose, display math, a system \
+                                 (Equations) container, or a config block",
                                 u.id
                             )));
                         }
@@ -875,6 +879,9 @@ pub fn save_content(
             // in the same delta — a surviving row whose parent vanished is caught downstream by
             // `validate_content_well_formed`'s parent-resolution check (a clean 422, never an orphan).
             Some(old) if matches!(old.content, UnitContent::Equations) => {}
+            // A config block (the notation home) is a deletable leaf — removing it is a normal edit; if the
+            // pre-created home is wanted-always, an ensure-on-open re-creates it (deferred).
+            Some(old) if matches!(old.content, UnitContent::Config { .. }) => {}
             Some(_) => {
                 return Err(invalid(format!(
                     "unit {d} is non-prose/non-math; clear/dissolve it via the unit operations"
@@ -2332,6 +2339,7 @@ pub(crate) fn content_kind_tag(c: &UnitContent) -> &'static str {
         UnitContent::Group => "group",
         UnitContent::Heading { .. } => "heading",
         UnitContent::Embed { .. } => "embed",
+        UnitContent::Config { .. } => "config",
     }
 }
 

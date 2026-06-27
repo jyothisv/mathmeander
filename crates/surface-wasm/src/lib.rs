@@ -10,7 +10,7 @@
 //! recognition, live render, and offline are all on the table, and the parser stays single-source
 //! (the Rust grammar), never reimplemented in TypeScript.
 use mathmeander_surface::{
-    CharSpan, ParseStatus, latex, normalize_fresh, parser, path, render, serializer,
+    CharSpan, ParseStatus, latex, normalize_fresh, notation, parser, path, render, serializer,
 };
 use wasm_bindgen::prelude::*;
 
@@ -62,6 +62,41 @@ pub fn katex(surface_text: &str) -> String {
 #[wasm_bindgen(js_name = katexDisplay)]
 pub fn katex_display(surface_text: &str) -> String {
     render::katex_with_paths(&parser::parse(surface_text))
+}
+
+#[derive(serde::Deserialize)]
+struct NotationDefDto {
+    trigger: String,
+    expansion: String,
+}
+
+/// Build a `NotationScope` from JSON `[{ "trigger": "Z*", "expansion": "ZZ^*" }, …]` (definition
+/// order). Malformed JSON degrades to the empty scope (render unchanged) — never crashes.
+fn parse_notation_scope(scope_json: &str) -> notation::NotationScope {
+    let defs: Vec<NotationDefDto> = serde_json::from_str(scope_json).unwrap_or_default();
+    let pairs: Vec<(String, String)> = defs.into_iter().map(|d| (d.trigger, d.expansion)).collect();
+    notation::NotationScope::from_definitions(&pairs)
+}
+
+/// Like `katex`, but a document-scope NOTATION registry (JSON) is applied at RENDER time: the literal
+/// `surface_text` is unchanged; matched triggers render as their expansion (notation-as-register, §6.3a).
+#[wasm_bindgen(js_name = katexScoped)]
+pub fn katex_scoped(surface_text: &str, scope_json: &str) -> String {
+    let scope = parse_notation_scope(scope_json);
+    render::katex(&notation::resolve_notation(
+        &parser::parse(surface_text),
+        &scope,
+    ))
+}
+
+/// `katexDisplay` + notation resolution (display/system equations).
+#[wasm_bindgen(js_name = katexScopedDisplay)]
+pub fn katex_scoped_display(surface_text: &str, scope_json: &str) -> String {
+    let scope = parse_notation_scope(scope_json);
+    render::katex_with_paths(&notation::resolve_notation(
+        &parser::parse(surface_text),
+        &scope,
+    ))
 }
 
 #[derive(serde::Serialize)]

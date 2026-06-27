@@ -14,7 +14,10 @@ import { headingRecognize } from './headingRecognize';
 import { structuralNeeds } from './projection';
 
 const prose = (unitId: string, text: string, attrs: Record<string, unknown> = {}): Node =>
-  editorSchema.nodes.prose.create({ unitId, ...attrs }, text ? [editorSchema.text(text)] : undefined);
+  editorSchema.nodes.prose.create(
+    { unitId, ...attrs },
+    text ? [editorSchema.text(text)] : undefined,
+  );
 const docOf = (...blocks: Node[]): Node => editorSchema.nodes.doc.create(null, blocks);
 
 /** A state with headingRecognize; caret at content offset `o` of block `i`. */
@@ -135,10 +138,7 @@ describe('changeHeadingDepth — clamps & fall-through (no corruption / no drift
   });
 
   it('Tab in a non-heading body block returns false (falls through to default)', () => {
-    const doc = docOf(
-      prose('a', '# A', { heading: true }),
-      prose('b', 'body', { parentId: 'a' }),
-    );
+    const doc = docOf(prose('a', '# A', { heading: true }), prose('b', 'body', { parentId: 'a' }));
     expect(changeHeadingDepth(1)(stateAt(doc, 1, 2), () => {})).toBe(false);
   });
 });

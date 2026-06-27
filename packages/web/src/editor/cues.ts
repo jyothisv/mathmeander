@@ -118,7 +118,11 @@ export function headingDepthOf(block: Node, byId: Map<string, Node>): number {
  *  the nearest PRECEDING heading: if it is shallower (`d < targetDepth`) the new heading is ITS child
  *  (clamped to `d+1` — levels can't be skipped, §13a Stage-3 rule); if it is `≥ targetDepth`, climb its
  *  ancestor chain to the heading at `targetDepth-1`. No preceding heading or depth 1 → top-level (`null`). */
-export function parentForHeadingDepth(doc: Node, blockIndex: number, targetDepth: number): string | null {
+export function parentForHeadingDepth(
+  doc: Node,
+  blockIndex: number,
+  targetDepth: number,
+): string | null {
   if (targetDepth <= 1) return null;
   const byId = headingIndex(doc);
   for (let i = blockIndex - 1; i >= 0; i -= 1) {
@@ -266,7 +270,9 @@ export const headingEnter: Command = (state, dispatch) => {
   if (dispatch) {
     const parentId = (block.attrs.unitId as string | null) ?? null; // the body flows UNDER this heading
     const tr = state.tr;
-    tr.split($cursor.pos, 1, [{ type: proseType, attrs: { unitId: null, unitType: null, parentId } }]);
+    tr.split($cursor.pos, 1, [
+      { type: proseType, attrs: { unitId: null, unitType: null, parentId } },
+    ]);
     const $after = tr.doc.resolve(tr.mapping.map($cursor.pos, 1));
     dispatch(tr.setSelection(Selection.near($after, 1)).scrollIntoView());
   }
@@ -384,7 +390,9 @@ export const displayEnter: Command = (state, dispatch) => {
       // EXIT: a new plain unit below; the equation stays closed + rendered. Stays in the block's section.
       const tr = state.tr;
       const parentId = (block.attrs.parentId as string | null) ?? null;
-      tr.split($cursor.pos, 1, [{ type: proseType, attrs: { unitId: null, unitType: null, parentId } }]);
+      tr.split($cursor.pos, 1, [
+        { type: proseType, attrs: { unitId: null, unitType: null, parentId } },
+      ]);
       const $after = tr.doc.resolve(tr.mapping.map($cursor.pos, 1));
       dispatch(tr.setSelection(Selection.near($after, 1)).scrollIntoView());
     } else {
@@ -460,12 +468,60 @@ export const guardHeadingMergeForward: Command = (state, dispatch) => {
   const after = $cursor.after();
   const next = state.doc.resolve(after).nodeAfter;
   const curHeading = ($cursor.parent.attrs.heading as boolean) ?? false;
-  const nextHeading = !!next && next.type.name === 'prose' && ((next.attrs.heading as boolean) ?? false);
+  const nextHeading =
+    !!next && next.type.name === 'prose' && ((next.attrs.heading as boolean) ?? false);
   if (!curHeading && !nextHeading) return false;
   if (dispatch && next) {
-    dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(after + 1), 1)).scrollIntoView());
+    dispatch(
+      state.tr.setSelection(Selection.near(state.doc.resolve(after + 1), 1)).scrollIntoView(),
+    );
   }
   return true; // swallowed at the last block (nothing after to merge)
+};
+
+/** Backspace at a config (notation-home) boundary — the block is ATOMIC for joins, like a heading/display
+ *  block. Two cases the default `joinBackward` would otherwise corrupt: (1) the caret at the START of a config
+ *  block (joining it backward would merge its source up / destroy the home); (2) the caret at the START of a
+ *  prose block whose PREVIOUS sibling is a config block (joining would absorb the prose text INTO the notation
+ *  source — §2.2 loss, since config `content:'text*'` happily takes it). Swallow case 1; land the caret at the
+ *  config's end for case 2 (non-destructive). Returns false otherwise (normal Backspace / mid-source delete). */
+export const guardConfigMerge: Command = (state, dispatch) => {
+  const { $cursor } = state.selection as TextSelection;
+  if (!$cursor) return false;
+  if ($cursor.parent.type.name === 'config') {
+    return $cursor.parentOffset === 0; // at start → swallow the join; mid-source → normal char delete
+  }
+  if ($cursor.parent.type.name !== 'prose' || $cursor.parentOffset !== 0) return false;
+  const bPos = $cursor.before();
+  const prev = state.doc.resolve(bPos).nodeBefore;
+  if (!prev || prev.type.name !== 'config') return false;
+  if (dispatch)
+    dispatch(
+      state.tr.setSelection(Selection.near(state.doc.resolve(bPos - 1), -1)).scrollIntoView(),
+    );
+  return true;
+};
+
+/** Delete at a config boundary — the forward mirror of `guardConfigMerge`. (1) the caret at the END of a
+ *  config block (a forward join would pull the next block into the source); (2) the caret at the END of a
+ *  prose block whose NEXT sibling is config (a forward join would merge the source up into the prose). Land
+ *  the caret at the config's start for case 2; swallow case 1. Returns false otherwise (normal Delete). */
+export const guardConfigMergeForward: Command = (state, dispatch) => {
+  const { $cursor } = state.selection as TextSelection;
+  if (!$cursor) return false;
+  if ($cursor.parent.type.name === 'config') {
+    return $cursor.parentOffset === $cursor.parent.content.size;
+  }
+  if ($cursor.parent.type.name !== 'prose' || $cursor.parentOffset !== $cursor.parent.content.size)
+    return false;
+  const after = $cursor.after();
+  const next = state.doc.resolve(after).nodeAfter;
+  if (!next || next.type.name !== 'config') return false;
+  if (dispatch)
+    dispatch(
+      state.tr.setSelection(Selection.near(state.doc.resolve(after + 1), 1)).scrollIntoView(),
+    );
+  return true;
 };
 
 /** ⌘/Ctrl+Enter — finish the current unit and start a new plain one, splitting at the cursor (content after
@@ -477,7 +533,9 @@ export const exitTypedUnit: Command = (state, dispatch) => {
     const tr = state.tr;
     // The new plain unit stays in the current block's section (inherit `parentId`; §B).
     const parentId = ($cursor.parent.attrs.parentId as string | null) ?? null;
-    tr.split($cursor.pos, 1, [{ type: proseType, attrs: { unitId: null, unitType: null, parentId } }]);
+    tr.split($cursor.pos, 1, [
+      { type: proseType, attrs: { unitId: null, unitType: null, parentId } },
+    ]);
     const $after = tr.doc.resolve(tr.mapping.map($cursor.pos, 1));
     dispatch(tr.setSelection(Selection.near($after, 1)).scrollIntoView());
   }

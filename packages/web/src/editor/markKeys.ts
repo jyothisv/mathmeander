@@ -4,6 +4,7 @@
 // selection it drops `****` and parks the caret between, ready to type. A second press on a span the delimiters
 // already wrap UNWRAPS it (toggle). Delimiters are never hidden, so this stays keyboard-navigable.
 import { type Command, type EditorState, TextSelection } from 'prosemirror-state';
+import { isProseBlock } from './schema';
 
 /** Would wrapping the selection in delimiters STRADDLE (or sit inside) a `$…$` math span — or cross an inline
  *  atom / line break? In any of those the inserted `**` can't pair (math/atoms break the recognizer's text run),
@@ -50,7 +51,11 @@ export function alreadyWrapped(
 export function toggleDelimiter(delim: string): Command {
   return (state, dispatch) => {
     const { from, to, empty } = state.selection;
-    if (!state.selection.$from.parent.inlineContent) return false;
+    // Markup is a PROSE-block affordance only (plain prose + §B heading titles). A non-prose text block — the
+    // `config` notation home, future code/spec blocks — also has `inlineContent`, so that check alone would let
+    // Mod-b / `$` insert literal delimiters into its source. Gate on the prose-block contract (isProseBlock).
+    if (!isProseBlock(state.selection.$from.parent) || !state.selection.$from.parent.inlineContent)
+      return false;
     // Swallow (handled, no edit) rather than drop unpairable delimiters across/inside math or an atom.
     if (crossesMathOrAtom(state)) return true;
     const n = delim.length;

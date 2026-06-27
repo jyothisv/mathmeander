@@ -5,13 +5,20 @@
 // failed to load, math degrades to source-only (verbatim, no KaTeX) rather than crashing.
 import katex from 'katex';
 import type { MathExpression } from '@mathmeander/schema';
-import { toKatex, toKatexDisplay, isMathRuntimeReady } from './mathRuntime';
+import {
+  toKatex,
+  toKatexDisplay,
+  toKatexScoped,
+  toKatexScopedDisplay,
+  isMathRuntimeReady,
+  type NotationDef,
+} from './mathRuntime';
 
 /** Render `expr` into `into` (cleared first). `display` = block (centered) vs inline. */
 export function renderMathInto(
   expr: MathExpression,
   into: HTMLElement,
-  opts: { display: boolean },
+  opts: { display: boolean; scope?: NotationDef[] },
 ): void {
   into.replaceChildren();
   into.classList.remove('math-invalid', 'math-partial');
@@ -42,7 +49,16 @@ export function renderMathInto(
   // emitter's escaping: even a future escaping gap or a new emitter command can't become an injection
   // vector (KaTeX rejects `\href`/`\url`/`\includegraphics`/etc.). `strict:false` silences its warning
   // on the custom data attr.
-  katex.render(opts.display ? toKatexDisplay(text) : toKatex(text), into, {
+  // Notation-as-register: when the caller passes a document-scope registry, resolve triggers at RENDER
+  // time (e.g. `Z*` → `ZZ^*` → ℤ*) — the literal source is unchanged. No scope → today's render.
+  const scope = opts.scope;
+  let katexInput: string;
+  if (scope && scope.length > 0) {
+    katexInput = opts.display ? toKatexScopedDisplay(text, scope) : toKatexScoped(text, scope);
+  } else {
+    katexInput = opts.display ? toKatexDisplay(text) : toKatex(text);
+  }
+  katex.render(katexInput, into, {
     displayMode: opts.display,
     throwOnError: false, // defense-in-depth; the surface transpile already escapes error fragments
     trust: opts.display ? (ctx) => ctx.command === '\\htmlData' : false,

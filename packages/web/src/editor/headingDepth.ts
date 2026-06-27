@@ -11,7 +11,11 @@ import { headingDepthOf, headingIndex, parentForHeadingDepth } from './cues';
 import { HEADING_PREFIX_RE } from './headingSyntax';
 
 /** Does `block`'s `parentId` chain reach `ancestorId`? (cycle-guarded). */
-export function isDescendantOf(block: PMNode, ancestorId: string, byId: Map<string, PMNode>): boolean {
+export function isDescendantOf(
+  block: PMNode,
+  ancestorId: string,
+  byId: Map<string, PMNode>,
+): boolean {
   let pid = block.attrs.parentId as string | null;
   const guard = new Set<string>();
   while (pid && !guard.has(pid)) {
@@ -74,7 +78,12 @@ export function changeHeadingDepth(delta: 1 | -1): Command {
 
     if (dispatch) {
       const headingPos = $cursor.before();
-      const positions = subtreeHeadingPositions(state.doc, headingPos, block.attrs.unitId as string | null, byId);
+      const positions = subtreeHeadingPositions(
+        state.doc,
+        headingPos,
+        block.attrs.unitId as string | null,
+        byId,
+      );
       const tr = state.tr;
       // Shift the `#` prefix of every heading in the subtree (descending → positions stay valid).
       for (const pos of positions) {

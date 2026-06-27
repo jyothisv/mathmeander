@@ -10,8 +10,12 @@
 //     transaction); a DOUBLE click drops the caret inside → reveals. Keyboard arrow-in still reveals normally.
 //   • OPEN-REGION color: while the caret sits in an UNCLOSED `$…` region (still being typed), its source is
 //     colored (`math-src`) via a caret-local decoration — the live "math mode" feedback before the closing `$`.
-//   • Cost: the marked-span list is cached in plugin state and recomputed only on a doc edit, so a pure caret
-//     move does O(#math spans) + an O(run) open-region scan — not a full-document walk.
+//   • NOTATION (§6.3a): the notebook-wide registry (the `config` notation-home block's defs, see notationScope.ts)
+//     is applied at render time (notation-as-register) — the literal source is unchanged. It's cached in plugin
+//     state with a fingerprint that's folded into each widget's decoration key, so editing a definition
+//     re-renders the math that depends on it.
+//   • Cost: the marked-span list + the scope are cached in plugin state and recomputed only on a doc edit, so a
+//     pure caret move does O(#math spans) + an O(run) open-region scan — not a full-document walk.
 import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from 'prosemirror-state';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
@@ -27,7 +31,8 @@ import {
   systemRowStarts,
 } from './mathClickMap';
 import { openRegionStart, splitSystemRows, wholeDisplaySource } from './mathSyntax';
-import { isMathRuntimeReady, normalizeFresh, surfacePaths } from './mathRuntime';
+import { isMathRuntimeReady, normalizeFresh, surfacePaths, type NotationDef } from './mathRuntime';
+import { notationDefsFromSource, notationScopeKey } from './notationScope';
 
 const MARK = editorSchema.marks.mathExpr;
 
@@ -62,6 +67,10 @@ interface PluginState {
   /** The `from` of a span to keep RENDERED despite the caret touching it (set by a single click; cleared by
    *  the next transaction). `null` = normal reveal-on-touch. */
   suppress: number | null;
+  /** The notebook-wide notation registry (the config notation-home's defs), applied at render time. */
+  scope: NotationDef[];
+  /** A fingerprint of `scope` for decoration keys — changing a definition re-renders dependent math. */
+  scopeKey: string;
 }
 
 const KEY = new PluginKey<PluginState>('mathLivePreview');
@@ -120,6 +129,20 @@ function computeSpans(doc: PMNode): Span[] {
     spans.push(...merged);
   });
   return spans;
+}
+
+/** The notebook-wide NOTATION registry: the defs of every `config` block of family `notation`, in document
+ *  order (= definition order, the frozen-prior-scope rule). Render-only; the source stays literal content.
+ *  ONE scope layer for now (the notebook home); a per-region cascade (section/space/global) layers on top
+ *  later — that step needs the canonical units (the parent chain) in the plugin, not just the flat PM doc. */
+function computeNotationScope(doc: PMNode): NotationDef[] {
+  const defs: NotationDef[] = [];
+  doc.forEach((block) => {
+    if (block.type.name !== 'config') return;
+    if ((block.attrs.configFamily as string | null) !== 'notation') return;
+    defs.push(...notationDefsFromSource(block.textContent));
+  });
+  return defs;
 }
 
 /** PRECISE CLICK (F3): if the click landed on a `data-path` sub-term (tagged by `toKatexDisplay`'s
@@ -184,13 +207,18 @@ function precisePlace(
  *  rendered, suppress flag); double click → caret just inside (reveal). DISPLAY (`display:true`, centered): the
  *  render stays ALWAYS visible; a click maps to the precise sub-term (F3) — single → caret there, double →
  *  select it — falling back to reveal-at-start off a tagged node. `spanFrom` is the source start (the block
- *  content start, the position of the first `$`). */
-function renderWidget(expr: MathExpression, display: boolean, spanFrom: number) {
+ *  content start, the position of the first `$`). `scope` is the document notation registry applied at render. */
+function renderWidget(
+  expr: MathExpression,
+  display: boolean,
+  spanFrom: number,
+  scope: NotationDef[],
+) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = display ? 'math-render math-render-display' : 'math-render';
     el.contentEditable = 'false';
-    renderMathInto(expr, el, { display });
+    renderMathInto(expr, el, { display, scope });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       if (display) {
@@ -236,7 +264,7 @@ function transientRowExpr(surface: string): MathExpression {
  *  sub-term of the clicked row (F3) — single → caret there, double → select it. Each row carries `data-row=i`
  *  so the handler locates the row (and its surface) without DOM-index math. `rowStarts[i]` is the doc position
  *  of `rows[i]`'s first char (from `systemRowStarts`, which accounts for skipped blank/leading lines). */
-function renderSystemWidget(rows: string[], rowStarts: number[]) {
+function renderSystemWidget(rows: string[], rowStarts: number[], scope: NotationDef[]) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = 'math-render math-render-display equations';
@@ -249,7 +277,7 @@ function renderSystemWidget(rows: string[], rowStarts: number[]) {
       rel.className = 'row-relation';
       const body = document.createElement('span');
       body.className = 'row-body';
-      renderMathInto(transientRowExpr(surface), body, { display: true });
+      renderMathInto(transientRowExpr(surface), body, { display: true, scope });
       row.append(rel, body);
       el.append(row);
     });
@@ -307,12 +335,28 @@ function openRegionDeco(state: EditorState): Decoration | null {
 export const mathLivePreview = new Plugin<PluginState>({
   key: KEY,
   state: {
-    init: (_config, state) => ({ spans: computeSpans(state.doc), suppress: null }),
+    init: (_config, state) => {
+      const scope = computeNotationScope(state.doc);
+      return {
+        spans: computeSpans(state.doc),
+        suppress: null,
+        scope,
+        scopeKey: notationScopeKey(scope),
+      };
+    },
     apply: (tr, prev, _old, newState) => {
       const meta = tr.getMeta(KEY) as number | null | undefined;
       const suppress = meta !== undefined ? meta : null; // set by a single click; any other tr clears it
-      const spans = tr.docChanged ? computeSpans(newState.doc) : prev.spans;
-      return { spans, suppress };
+      if (!tr.docChanged) {
+        return { spans: prev.spans, suppress, scope: prev.scope, scopeKey: prev.scopeKey };
+      }
+      const scope = computeNotationScope(newState.doc);
+      return {
+        spans: computeSpans(newState.doc),
+        suppress,
+        scope,
+        scopeKey: notationScopeKey(scope),
+      };
     },
   },
   props: {
@@ -332,14 +376,14 @@ export const mathLivePreview = new Plugin<PluginState>({
             Decoration.widget(
               span.to,
               isSystem
-                ? renderSystemWidget(span.rows!, span.rowStarts ?? [])
-                : renderWidget(span.expr, true, span.from),
+                ? renderSystemWidget(span.rows!, span.rowStarts ?? [], ps.scope)
+                : renderWidget(span.expr, true, span.from, ps.scope),
               {
                 side: 1,
                 marks: [],
                 key: isSystem
-                  ? `maths:${isMathRuntimeReady() ? 1 : 0}:${span.rows!.join('\n')}`
-                  : `mathd:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}`,
+                  ? `maths:${isMathRuntimeReady() ? 1 : 0}:${span.rows!.join('\n')}:${ps.scopeKey}`
+                  : `mathd:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}:${ps.scopeKey}`,
                 ignoreSelection: true,
               },
             ),
@@ -350,13 +394,13 @@ export const mathLivePreview = new Plugin<PluginState>({
         if (touches && ps.suppress !== span.from) continue; // inline: reveal raw on touch
         decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
         decos.push(
-          Decoration.widget(span.from, renderWidget(span.expr, false, span.from), {
+          Decoration.widget(span.from, renderWidget(span.expr, false, span.from, ps.scope), {
             side: -1,
             // No marks: a widget defaults to inheriting the marks at its position, so for two ADJACENT `$…$`
             // spans the second equation's KaTeX would render INSIDE the first's `mathExpr` (`.math-src`) span
             // and pick up the source font/color. `marks: []` keeps the rendered math a clean, unstyled sibling.
             marks: [],
-            key: `math:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}`,
+            key: `math:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}:${ps.scopeKey}`,
             ignoreSelection: true,
           }),
         );

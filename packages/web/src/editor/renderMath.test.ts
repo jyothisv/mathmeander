@@ -1,6 +1,7 @@
-// renderMathInto branch coverage (§2.2 + runtime-down + partial). KaTeX and the WASM runtime are stubbed
-// (node has no DOM and no WASM init), so this exercises the FALLBACK/affordance logic — the real parse +
-// KaTeX/MathML transpile is covered by the e2e suite (the real-WASM boundary needs a browser).
+// renderMathInto branch coverage (§2.2 + runtime-down + partial + notation scope). KaTeX and the WASM
+// runtime are stubbed (node has no DOM and no WASM init), so this exercises the FALLBACK/affordance logic
+// and the scope routing — the real parse + KaTeX/MathML transpile is covered by the e2e suite (the
+// real-WASM boundary needs a browser).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ render: vi.fn(), ready: true }));
@@ -9,6 +10,10 @@ vi.mock('./mathRuntime', () => ({
   isMathRuntimeReady: () => h.ready,
   toKatex: (s: string) => s,
   toKatexDisplay: (s: string) => `D:${s}`, // the `\htmlData`-tagged transpile (distinct from toKatex)
+  // The notation-scoped render path (notation-as-register), used when a non-empty scope is passed.
+  // Distinct markers (`S:` / `SD:`) so a test can tell the scoped path was taken.
+  toKatexScoped: (s: string) => `S:${s}`,
+  toKatexScopedDisplay: (s: string) => `SD:${s}`,
 }));
 
 import type { MathExpression } from '@mathmeander/schema';
@@ -93,7 +98,7 @@ describe('renderMathInto', () => {
     expect(into.has('math-partial')).toBe(false);
   });
 
-  it('display → toKatexDisplay (tagged) with trust SCOPED to \\htmlData only', () => {
+  it('display (no scope) → toKatexDisplay (tagged) with trust SCOPED to \\htmlData only', () => {
     const into = fakeInto();
     renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), into as never, {
       display: true,
@@ -109,7 +114,7 @@ describe('renderMathInto', () => {
     expect(opts.trust({ command: '\\includegraphics' })).toBe(false);
   });
 
-  it('inline → toKatex (untagged) with trust:false (no trusted command emitted)', () => {
+  it('inline (no scope) → toKatex (untagged) with trust:false (no trusted command emitted)', () => {
     const into = fakeInto();
     renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), into as never, {
       display: false,
@@ -117,6 +122,36 @@ describe('renderMathInto', () => {
     const [input, , opts] = h.render.mock.calls[0]!;
     expect(input).toBe('x^2'); // toKatex — the cheaper untagged transpile for inline
     expect(opts).toMatchObject({ displayMode: false, trust: false });
+  });
+
+  it('with a non-empty scope → routes through the scoped transpile (notation-as-register)', () => {
+    const scope = [{ trigger: 'Z*', expansion: 'ZZ^*' }];
+    const inlineInto = fakeInto();
+    renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), inlineInto as never, {
+      display: false,
+      scope,
+    });
+    expect(h.render.mock.calls[0]![0]).toBe('S:x^2'); // toKatexScoped
+    h.render.mockClear();
+    const displayInto = fakeInto();
+    renderMathInto(
+      expr({ parse_status: 'renderable', surface_text: 'x^2' }),
+      displayInto as never,
+      {
+        display: true,
+        scope,
+      },
+    );
+    expect(h.render.mock.calls[0]![0]).toBe('SD:x^2'); // toKatexScopedDisplay
+  });
+
+  it('empty scope → behaves like no scope (plain transpile)', () => {
+    const into = fakeInto();
+    renderMathInto(expr({ parse_status: 'renderable', surface_text: 'x^2' }), into as never, {
+      display: false,
+      scope: [],
+    });
+    expect(h.render.mock.calls[0]![0]).toBe('x^2'); // toKatex, not the scoped path
   });
 
   it('partially_resolved → renders AND flags the partial affordance', () => {

@@ -6,7 +6,14 @@
 // units), so non-BMP glyphs anchor correctly. 2c-1 is FLAT PROSE only; see `isFlatProse`.
 import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
-import type { Inline, MathContent, MathExpression, Unit, UnitType } from '@mathmeander/schema';
+import type {
+  ConfigFamily,
+  Inline,
+  MathContent,
+  MathExpression,
+  Unit,
+  UnitType,
+} from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { splitSystemRows, wholeDisplaySource } from './mathSyntax';
 import { HEADING_PREFIX_RE, headingPrefix } from './headingSyntax';
@@ -62,8 +69,14 @@ export function isEditable(content: MathContent): boolean {
   return content.units.every((u) => {
     const parent = u.parent_unit_id;
     if (parent === undefined || parent === null) {
-      // Top level: prose, display math, a system container, or a §B section heading.
-      if (u.content.kind === 'equations' || u.content.kind === 'math' || u.content.kind === 'heading')
+      // Top level: prose, display math, a system container, a §B section heading, or the notation home
+      // (a config block — top-level only; section-level config is deferred and fails closed below).
+      if (
+        u.content.kind === 'equations' ||
+        u.content.kind === 'math' ||
+        u.content.kind === 'heading' ||
+        u.content.kind === 'config'
+      )
         return true;
       return isRepresentableProse(u.content);
     }
@@ -287,6 +300,17 @@ export function projectToDoc(content: MathContent): Node {
           ),
         );
         walk(u.id, hd);
+      } else if (u.content.kind === 'config') {
+        // The notation home: a dedicated `config` node holding the declarative `source` as plain text
+        // (multi-line rides as one text node — the node is `code: true`, so `\n` is preserved). No inline
+        // pipeline (the source is never marks/math/references); mathLivePreview reads it to build the scope.
+        const c = u.content as { kind: 'config'; family: ConfigFamily; source: string };
+        blocks.push(
+          editorSchema.nodes.config.create(
+            { unitId: u.id, configFamily: c.family, parentId },
+            c.source.length > 0 ? [editorSchema.text(c.source)] : [],
+          ),
+        );
       } else {
         // Plain prose. `unitType` mirrors the unit's §6.0 type for display + as the source for the
         // set_unit_type delta (typeNeeds); it never rides the prose `save_content` delta (the flush ignores it).
@@ -306,7 +330,7 @@ export function projectToDoc(content: MathContent): Node {
   // (whose source is hidden when blurred — so without this there'd be no plain line to click/type below it).
   // The trailing placeholder has a null unitId, so the flush skips it until the user types.
   const last = blocks[blocks.length - 1];
-  if (!last || pureDisplayExpr(last)) {
+  if (!last || pureDisplayExpr(last) || last.type.name === 'config') {
     blocks.push(editorSchema.nodes.prose.create({ unitId: null }));
   }
   return editorSchema.nodes.doc.create(null, blocks);
@@ -429,6 +453,24 @@ function newMathUnit(
     provenance_id: uuidv7(), // placeholder; overwritten server-side for new units
     // A system row carries its parent `equations` container; a top-level equation omits it (None).
     ...(parentUnitId ? { parent_unit_id: parentUnitId } : {}),
+  };
+}
+
+function newConfigUnit(
+  id: string,
+  objectId: string,
+  position: number,
+  family: ConfigFamily,
+  source: string,
+): Unit {
+  return {
+    id, // a pre-created home's id (or, on paste, the flush-minted id) — keeps the block anchored after save
+    object_id: objectId,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: { kind: 'config', family, source },
+    provenance_id: uuidv7(), // placeholder; overwritten server-side for new units
   };
 }
 
@@ -657,6 +699,31 @@ export function flushToContent(
   };
 
   doc.forEach((block) => {
+    if (block.type.name === 'config') {
+      // The notation home → a `Config` unit (top-level only for the initial cut). `source` is the node's
+      // plain text (multi-line preserved — the node is `code: true`); `configFamily` rides as the canonical
+      // `family`. Pre-created server-side, so it normally hits the EDIT path; a brand-new config block (e.g. a
+      // paste) keeps its stamped/own id. No kind-flip case: a config node only ever carries a config unit's id.
+      const cfgUnitId = block.attrs.unitId as string | null;
+      const cfgPrev = cfgUnitId ? priorById.get(cfgUnitId) : undefined;
+      const family = ((block.attrs.configFamily as string | null) ?? 'notation') as ConfigFamily;
+      const content: Unit['content'] = { kind: 'config', family, source: block.textContent };
+      if (cfgPrev && cfgPrev.content.kind === 'config') {
+        seen.add(cfgPrev.id);
+        const position = nextPos(cfgPrev.parent_unit_id ?? null);
+        const next: Unit = { ...cfgPrev, position, content };
+        if (
+          next.position !== cfgPrev.position ||
+          contentKeyOf(next.content) !== contentKeyOf(cfgPrev.content)
+        )
+          upserts.push(next);
+      } else {
+        const position = nextPos(null); // top-level
+        const id = cfgPrev ? uuidv7() : (cfgUnitId ?? uuidv7());
+        upserts.push(newConfigUnit(id, prior.object_id, position, family, block.textContent));
+      }
+      return;
+    }
     if (block.type.name !== 'prose') return;
     const unitId = block.attrs.unitId as string | null;
     const prev = unitId ? priorById.get(unitId) : undefined;
@@ -741,7 +808,10 @@ export function flushToContent(
     .filter(
       (u) =>
         !seen.has(u.id) &&
-        (u.content.kind === 'prose' || u.content.kind === 'math' || u.content.kind === 'equations'),
+        (u.content.kind === 'prose' ||
+          u.content.kind === 'math' ||
+          u.content.kind === 'equations' ||
+          u.content.kind === 'config'),
     )
     .map((u) => u.id);
   return { upserts, deletes };
@@ -834,7 +904,8 @@ export function structuralNeeds(doc: Node, server: MathContent): StructuralNeed[
     const srv = serverById.get(unitId);
     if (!srv) return; // not on the server yet
     const wantHeading = (block.attrs.heading as boolean) ?? false;
-    if (wantHeading !== (srv.content.kind === 'heading')) toggles.push({ op: 'toggle_heading', unitId });
+    if (wantHeading !== (srv.content.kind === 'heading'))
+      toggles.push({ op: 'toggle_heading', unitId });
     if (wantParent !== (srv.parent_unit_id ?? null))
       reparents.push({ op: 'reparent', unitId, newParentId: wantParent, newPosition });
   });
