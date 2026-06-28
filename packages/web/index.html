@@ -190,6 +190,11 @@
         opacity: 0;
         transition: opacity 0.1s ease;
       }
+      /* The glyph is pseudo-content so the handle holds NO in-band text (clean textContent/copy; never
+         scrambles a block-start math render that shares the position). */
+      .day-editor .mm-block-handle::before {
+        content: '⋮⋮';
+      }
       .day-editor .ProseMirror p:hover .mm-block-handle,
       .day-editor .ProseMirror p.unit-active .mm-block-handle {
         opacity: 1;

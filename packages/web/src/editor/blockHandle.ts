@@ -54,7 +54,9 @@ function openMenu(view: EditorView, anchor: HTMLElement, blockStart: number): vo
 function handleWidget(view: EditorView, getPos: () => number | undefined): HTMLElement {
   const el = document.createElement('span');
   el.className = 'mm-block-handle';
-  el.textContent = '⋮⋮';
+  // The ⋮⋮ glyph is CSS pseudo-content (`.mm-block-handle::before`), NOT literal text: an empty,
+  // out-of-flow span keeps `textContent`/copy clean (no `⋮⋮The…`) and never interleaves with the math
+  // render widget that shares the block-start position. The span is still the click target for the menu.
   el.setAttribute('contenteditable', 'false');
   el.setAttribute('aria-label', 'block actions');
   el.addEventListener('mousedown', (e) => {

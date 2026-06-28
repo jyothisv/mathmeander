@@ -437,8 +437,16 @@ export async function persistObjectGraph(
         return;
       }
 
-      // ── materialize-copy (fresh object, no gate) | single-object gated write ──
+      // ── materialize-copy (fresh object; GATE THE SOURCE) | single-object gated write ──
       if (outcome.new_objects.length > 0) {
+        // The copy is a fresh object, but §6.4 still requires the SOURCE revision to match what the client
+        // read — else a stale client copies a since-changed source with no 409. `objectId` is the SOURCE here
+        // (the route passes it); FOR UPDATE makes the gate race-safe within the copy's transaction.
+        const gate = await client.query(
+          `SELECT 1 FROM objects WHERE id = $1 AND revision = $2 FOR UPDATE`,
+          [objectId, opts.expectedRevision],
+        );
+        if (gate.rowCount !== 1) throw new RevisionConflict();
         for (const created of outcome.new_objects) await insertObjectRow(client, created);
         await replaceContentUnits(client, outcome.content.object_id, outcome.content.units);
       } else {

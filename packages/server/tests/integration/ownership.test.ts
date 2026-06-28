@@ -126,6 +126,25 @@ describe('§9.y ownership: re-home', () => {
     expect(await unitObjectId(h.rootId)).toBe(h.hostId); // nothing moved
   });
 
+  test('materialize: a stale source gate → 409 (no orphan copy); the current revision copies', async () => {
+    const h = await seedTheoremHost(stack, token);
+    const { newObjectId } = await rehome(h.hostId, h.rootId); // a materializable `theorem` object, rev 1
+    const materialize = (sourceId: string, rev: number) =>
+      stack.app.inject({
+        method: 'POST',
+        url: `/api/objects/${sourceId}/ops/materialize`,
+        headers: bearer(token),
+        payload: { expected_revision: rev },
+      });
+    // §6.4: copying a SINCE-CHANGED source must 409 — pre-fix the materialize branch skipped the revision
+    // gate and copied silently. A wrong expected_revision stands in for "the source moved since you read it".
+    expect((await materialize(newObjectId, 99)).statusCode).toBe(409);
+    expect(await objectCount()).toBe(2); // host + theorem; the rejected copy left no orphan
+    // At the current revision the copy succeeds (a fresh object).
+    expect((await materialize(newObjectId, 1)).statusCode).toBe(200);
+    expect(await objectCount()).toBe(3); // + the materialized copy
+  });
+
   test('composite-FK edges (link source + unit/expr handles) re-point to the new object', async () => {
     const h = await seedTheoremHost(stack, token);
     const space = await spaceOf(h.hostId);

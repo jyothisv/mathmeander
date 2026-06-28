@@ -401,9 +401,9 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
         unit_id_map: sourceContent.units.map((u): UnitIdRemap => ({ from: u.id, to: uuidv7() })),
       };
       const result = materializeObject(input, opCtx, now);
-      // The new object is fresh — persist keys off outcome.content.object_id, no revision gate.
-      const objectId = result.ok ? result.value.content.object_id : id;
-      return finish(deps, reply, objectId, ctx.spaceId, result, provenance, expected_revision, now);
+      // Persist inserts the copy under outcome.content.object_id, but we GATE THE SOURCE (`id`) on its
+      // revision (§6.4) so copying a since-changed source 409s — persistObjectGraph uses this id for the gate.
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, expected_revision, now);
     },
   );
 
