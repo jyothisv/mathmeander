@@ -244,6 +244,21 @@ describe('flushToContent delta', () => {
     expect(roundTripIsClean(c)).toBe(true);
   });
 
+  it('an inline Reference atom round-trips WITH its link_id (the derived edge id)', () => {
+    const c = content([
+      prose('u1', 0, 'see x', [
+        {
+          kind: 'reference',
+          span: { start: 4, end: 4 },
+          text: 'x',
+          target: { kind: 'object', object_id: '0197675f-71f4-7000-8000-0000000000f1' },
+          link_id: '0197675f-71f4-7000-8000-0000000000f2',
+        },
+      ]),
+    ]);
+    expect(roundTripIsClean(c)).toBe(true);
+  });
+
   it('does not re-upsert a unit whose server content keys differ in ORDER (wire vs local)', () => {
     // The server's zod-parsed content can serialize as {text, inline, kind}; the editor builds
     // {kind, text, inline}. Change-detection must be key-order-INDEPENDENT — otherwise a just-saved

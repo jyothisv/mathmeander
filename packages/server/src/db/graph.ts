@@ -427,6 +427,11 @@ export async function persistObjectGraph(
   try {
     await withTransaction(db, async (client) => {
       await upsertProvenance(client, opts.provenance);
+      // The single-object path delete-all+reinserts EVERY unit (replaceContentUnits); once a unit is
+      // NAMED, the (deferrable) handles→content_units FK would block that delete-all mid-statement. Defer
+      // so the reinsert (same ids) re-satisfies it — and an upserted handle's target — at COMMIT. (The
+      // two-object branches below defer themselves; a redundant SET here is harmless.)
+      await client.query('SET CONSTRAINTS ALL DEFERRED');
 
       if (outcome.host_content != null) {
         await persistRehome(client, objectId, outcome, opts);
@@ -465,6 +470,10 @@ export async function persistObjectGraph(
         ]);
       }
       for (const tagging of outcome.taggings_propagated) await upsertTagging(client, tagging);
+      for (const handle of outcome.handles_upserted) await upsertHandle(client, handle);
+      if (outcome.handles_removed.length > 0) {
+        await client.query(`DELETE FROM handles WHERE id = ANY($1)`, [outcome.handles_removed]);
+      }
       await insertObjectVersion(client, outcome.version_snapshot);
     });
   } catch (err) {
@@ -710,7 +719,7 @@ async function replaceContentUnits(
 export async function persistContentDelta(
   db: pg.Pool,
   objectId: string,
-  delta: { upserts: Unit[]; deletes: string[] },
+  delta: { upserts: Unit[]; deletes: string[]; linksUpserted?: Link[]; linksStaled?: string[] },
   opts: {
     provenance: Provenance;
     expectedRevision: number;
@@ -736,7 +745,35 @@ export async function persistContentDelta(
           touched,
         ]);
       }
+      // A GENUINELY removed unit's authored name dies with it: drop its handles so the deferred
+      // handles→content_units FK holds at COMMIT (a reordered unit is reinserted same-id, so it is in
+      // `upserts`, NOT `deletes` — its name survives).
+      if (delta.deletes.length > 0) {
+        await client.query(`DELETE FROM handles WHERE target_unit_id = ANY($1)`, [delta.deletes]);
+      }
       for (const u of parentsFirst(delta.upserts)) await insertContentUnit(client, u);
+
+      // §6.1b CITATION EDGES — the core derives them from the saved content (mention atoms); persist them
+      // (in-doc citations were previously dropped on this path, leaving an empty edge graph). Same writes as
+      // persistObjectGraph.
+      for (const link of delta.linksUpserted ?? []) await upsertLink(client, link);
+      if ((delta.linksStaled ?? []).length > 0) {
+        await client.query(`UPDATE links SET status = 'stale' WHERE id = ANY($1)`, [delta.linksStaled]);
+      }
+      // EDGE CLEANUP ON DELETE: a deleted unit on EITHER end of a `from_content` citation would trip the
+      // deferred links→content_units composite FK at COMMIT (23503 → 422 wedge). The core STALES a deleted
+      // SOURCE's outbound link (keeps the row) and we delete its target's inbound row — both still reference
+      // the gone unit — so cleanup must be SYMMETRIC (source AND target). Scope to `from_content` so a
+      // DELIBERATE / cross-object edge is NOT silently dropped (§2.2): it instead BLOCKS the delete (422), a
+      // surfaced keystone refusal. (Only `from_content` cites exist via the editor; deliberate edges are
+      // import-only.) The citing atom of a removed derived edge remains and degrades to its fallback text.
+      // Runs AFTER the upserts so a cite to a just-deleted unit is cleaned up too.
+      if (delta.deletes.length > 0) {
+        await client.query(
+          `DELETE FROM links WHERE from_content AND (source_unit_id = ANY($1) OR target_unit_id = ANY($1))`,
+          [delta.deletes],
+        );
+      }
       await insertObjectVersion(client, opts.versionSnapshot);
     });
   } catch (err) {
@@ -790,6 +827,32 @@ async function upsertLink(client: pg.PoolClient, l: Link): Promise<void> {
       l.content_locator == null ? null : JSON.stringify(l.content_locator),
       l.provenance_id,
       l.created_at,
+    ],
+  );
+}
+
+/** Upsert a handle row (§6.3b authored name). Keyed by `id` (stable per named unit), so a renamed
+ *  unit updates in place. The composite `(target_unit_id, target_object_id)` FK is deferrable, so this
+ *  is valid at COMMIT even amid a same-transaction content delete-then-reinsert of the target unit. */
+async function upsertHandle(client: pg.PoolClient, h: Handle): Promise<void> {
+  await client.query(
+    `INSERT INTO handles
+       (id, space_id, name, target_object_id, target_unit_id, target_expression_id, status, scope,
+        provenance_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name, status = EXCLUDED.status, scope = EXCLUDED.scope,
+       provenance_id = EXCLUDED.provenance_id`,
+    [
+      h.id,
+      h.space_id,
+      h.name,
+      h.target_object_id,
+      h.target_unit_id ?? null,
+      h.target_expression_id ?? null,
+      h.status,
+      h.scope,
+      h.provenance_id,
     ],
   );
 }

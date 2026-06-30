@@ -18,6 +18,15 @@ import { editorSchema } from './schema';
 import { splitSystemRows, wholeDisplaySource } from './mathSyntax';
 import { HEADING_PREFIX_RE, headingPrefix } from './headingSyntax';
 import { isMathRuntimeReady, normalizeFresh } from './mathRuntime';
+import type { Name } from './names';
+
+/** A loaded handle to project onto a typed block's `names` attr (§6.3b): the unit, the handle id, the
+ *  name source. `target_unit_id` null (an expression/object handle) is skipped. */
+export interface ProjectedHandle {
+  target_unit_id: string | null;
+  id: string;
+  name: string;
+}
 
 // ── code-point helpers (NOT String.length, which counts UTF-16 units) ──
 const cps = (s: string): string[] => Array.from(s);
@@ -220,6 +229,8 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
           : editorSchema.nodes.reference.create({
               text: (a as { text: string }).text,
               target: (a as { target?: unknown }).target ?? null,
+              linkId: (a as { link_id?: string }).link_id ?? null,
+              targetHandleId: (a as { target_handle_id?: string }).target_handle_id ?? null,
             }),
       );
     }
@@ -244,7 +255,17 @@ function inlineToNodes(text: string, inline: Inline[]): Node[] {
  *  `display:true` `mathExpr` span — so it is authored/edited exactly like inline math (live-preview renders it
  *  centered; the seam maps it back to a `Math` unit). An empty day yields a single empty prose block (a cursor
  *  home) whose null `unitId` flush skips. */
-export function projectToDoc(content: MathContent): Node {
+export function projectToDoc(content: MathContent, handles: ProjectedHandle[] = []): Node {
+  // A typed unit's authored names (§6.3b) ride the `names` ATTR (chrome — the title widget renders them),
+  // never the body. Group by unit, sorted by id (primary first).
+  const namesByUnit = new Map<string, Name[]>();
+  for (const h of handles) {
+    if (!h.target_unit_id || !h.name) continue;
+    const arr = namesByUnit.get(h.target_unit_id) ?? [];
+    arr.push({ id: h.id, name: h.name });
+    namesByUnit.set(h.target_unit_id, arr);
+  }
+  for (const arr of namesByUnit.values()) arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   // Children indexed by parent, each sorted by position. The doc is a FLAT list of blocks in DOCUMENT
   // ORDER — a pre-order DFS over the section tree (§B): a heading is emitted, then its body + subsections
   // recurse. Every unit is ONE block (the title lives on the heading), so the flat consumers are unchanged
@@ -295,7 +316,16 @@ export function projectToDoc(content: MathContent): Node {
         const prefix = headingPrefix(hd);
         blocks.push(
           editorSchema.nodes.prose.create(
-            { unitId: u.id, unitType: u.type ?? null, rowIds: [], parentId, heading: true },
+            // A typed heading can ALSO be named (§6.3b) — carry its names like the prose branch, else the
+            // name axis sees the handle gone on load and DELETES it (set_handle('')).
+            {
+              unitId: u.id,
+              unitType: u.type ?? null,
+              rowIds: [],
+              parentId,
+              heading: true,
+              names: u.type != null ? (namesByUnit.get(u.id) ?? []) : [],
+            },
             inlineToNodes(prefix + c.text, shiftInline(c.inline, cpLen(prefix))),
           ),
         );
@@ -315,10 +345,11 @@ export function projectToDoc(content: MathContent): Node {
         // Plain prose. `unitType` mirrors the unit's §6.0 type for display + as the source for the
         // set_unit_type delta (typeNeeds); it never rides the prose `save_content` delta (the flush ignores it).
         const c = u.content as { kind: 'prose'; text: string; inline: Inline[] };
+        const names = u.type != null ? (namesByUnit.get(u.id) ?? []) : [];
         blocks.push(
           editorSchema.nodes.prose.create(
-            { unitId: u.id, unitType: u.type ?? null, rowIds: [], parentId },
-            inlineToNodes(c.text, c.inline),
+            { unitId: u.id, unitType: u.type ?? null, rowIds: [], parentId, names },
+            inlineToNodes(c.text, c.inline), // body is canonical — the name is chrome, not content
           ),
         );
       }
@@ -391,6 +422,11 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
         span: { start: offset, end: offset },
         text: node.attrs.text as string,
         ...(node.attrs.target == null ? {} : { target: node.attrs.target }),
+        ...(node.attrs.linkId == null ? {} : { link_id: node.attrs.linkId as string }),
+        // §6.3b: which authored name this cite chose (display-only; the edge still targets the unit).
+        ...(node.attrs.targetHandleId == null
+          ? {}
+          : { target_handle_id: node.attrs.targetHandleId as string }),
       });
     }
   });
@@ -409,6 +445,8 @@ function blockToProse(block: Node): { text: string; inline: Inline[] } {
       };
     }
   }
+  // §6.3b: authored names are CHROME (the `names` attr → the set_handle axis), never body content — so the
+  // prose flush leaves the statement untouched (there is no marker to strip).
   return { text, inline: canonicalInline(inline) };
 }
 
@@ -862,6 +900,83 @@ export function typeIntents(doc: Node, baseline: MathContent): TypeNeed[] {
     const had = base ? (base.type ?? null) : null; // not in baseline → treat as null (a pending set)
     if (want !== had) out.push({ unitId, type: want });
   });
+  return out;
+}
+
+// ── §6.3b name axis (the FOURTH op-axis, after content / type / structure): authored epithets ──
+
+/** The doc's authored names as projection handles (`{ target_unit_id, id, name }`) — used to re-derive the
+ *  `names` attr on a merge reproject (the name-axis analog of keepTypes/keepStruct). */
+export function docProjectedHandles(doc: Node): ProjectedHandle[] {
+  const out: ProjectedHandle[] = [];
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return;
+    for (const n of (block.attrs.names as Name[]) ?? []) {
+      if (n.name) out.push({ target_unit_id: unitId, id: n.id, name: n.name });
+    }
+  });
+  return out;
+}
+
+/** My pending name INTENTS vs the server's HANDLE baseline (`serverNames`: handleId → name, from the loaded
+ *  handles) — the name-axis analog of `typeIntents`/`structuralIntents`, for the draft-equality check.
+ *  `MathContent` carries no name data, so we diff against `serverNames`, NOT the empty content (else every
+ *  named doc would look "pending" and never discard a stale draft). Any doc name that's new/changed vs the
+ *  baseline, OR a baseline handle the doc dropped, is a pending intent — so a name-only edit keeps the draft. */
+export function nameIntents(doc: Node, serverNames: Map<string, string>): NameNeed[] {
+  const out: NameNeed[] = [];
+  const docIds = new Set<string>();
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return;
+    for (const n of (block.attrs.names as Name[]) ?? []) {
+      if (!n.name) continue;
+      docIds.add(n.id);
+      if (serverNames.get(n.id) !== n.name) out.push({ unitId, handleId: n.id, name: n.name }); // new/changed
+    }
+  });
+  for (const [handleId, name] of serverNames) {
+    if (name && !docIds.has(handleId)) out.push({ unitId: '', handleId, name: '' }); // dropped vs baseline
+  }
+  return out;
+}
+
+/** A single pending name change, keyed by the HANDLE id (a unit may have several). `name: ''` = drop it. */
+export type NameNeed = { unitId: string; handleId: string; name: string };
+
+/** The SENDABLE name delta (multi-handle) — the name-axis analog of `typeNeeds`. Diff each block's `names`
+ *  attr against `sent` (handleId → {unitId, name}, the running baseline seeded from the loaded handles):
+ *  a name on a PERSISTED unit whose `sent` value differs → an upsert; a `sent` handle that no longer
+ *  appears in any block's `names` (an alias removed) whose unit is still on the server → a clear (`''`).
+ *  A not-yet-persisted unit is SKIPPED (a handle needs a persisted target); a unit that's gone entirely is
+ *  skipped (persistContentDelta cascaded its handles). The name NEVER rides the prose `save_content`. */
+export function nameNeeds(
+  doc: Node,
+  server: MathContent,
+  sent: Map<string, { unitId: string; name: string }>,
+): NameNeed[] {
+  const onServer = new Set(server.units.map((u) => u.id));
+  const out: NameNeed[] = [];
+  const liveIds = new Set<string>();
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return;
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return;
+    for (const n of (block.attrs.names as Name[]) ?? []) {
+      if (!n.name) continue; // an empty entry is no name
+      liveIds.add(n.id);
+      if (onServer.has(unitId) && sent.get(n.id)?.name !== n.name) {
+        out.push({ unitId, handleId: n.id, name: n.name });
+      }
+    }
+  });
+  for (const [handleId, { unitId, name }] of sent) {
+    if (liveIds.has(handleId) || !onServer.has(unitId) || !name) continue;
+    out.push({ unitId, handleId, name: '' }); // an alias the user removed → clear its handle
+  }
   return out;
 }
 

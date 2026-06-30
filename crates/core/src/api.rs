@@ -17,7 +17,7 @@ use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
     DissolveObjectInput, InsertEquationsInput, InsertReferenceInput, MaterializeObjectInput,
     MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput,
-    ResolveOccurrenceInput, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ResolveOccurrenceInput, RewriteSurfaceInput, SetHandleInput, SetUnitTypeInput, SplitUnitInput,
     ToggleExpressionPlacementInput, ToggleHeadingInput,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
@@ -329,6 +329,19 @@ pub fn set_unit_type(
         let ctx: OpContext = parse_input("op context", ctx_json)?;
         let now = parse_now(now_iso)?;
         Ok(crate::ops::set_unit_type(content, &input, &ctx, now)?)
+    })();
+    OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Name (or clear the name of) a unit — write the authored epithet/definiendum as a `Handle`
+/// (§6.3b) → `OpOutcomeResult` JSON (the new/dropped handle rides `handles_upserted`/`handles_removed`).
+pub fn set_handle(content_json: &str, input_json: &str, ctx_json: &str, now_iso: &str) -> String {
+    let result = (|| {
+        let content: MathContent = parse_input("content", content_json)?;
+        let input: SetHandleInput = parse_input("set_handle input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::set_handle(content, &input, &ctx, now)?)
     })();
     OpOutcomeResult::from_result(result).to_json()
 }

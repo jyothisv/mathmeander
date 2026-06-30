@@ -37,6 +37,8 @@ function sameIds(a: string[], b: string[]): boolean {
 export const idStamper = new Plugin({
   appendTransaction(_trs, _oldState, newState) {
     const seen = new Set<string>();
+    const seenLinks = new Set<string>(); // reference edge ids — a separate id space from units/rows
+    const seenNameIds = new Set<string>(); // §6.3b authored-name handle ids — its own id space
     let tr: ReturnType<typeof newState.tr.setNodeAttribute> | null = null;
     newState.doc.descendants((node, pos) => {
       // Identity-bearing blocks: prose blocks (display equations + systems are prose blocks too) AND config
@@ -72,6 +74,38 @@ export const idStamper = new Plugin({
         }
         if (!sameIds(cur, next)) {
           tr = (tr ?? newState.tr).setNodeAttribute(pos, 'rowIds', next);
+        }
+
+        // (4) reference linkIds — each mention atom carries its from_content edge's CLIENT-minted id
+        // (§6.1b); the core derives the Link from it and mints none. Fill a null (a pasted / unstamped
+        // mention) and re-mint a DUPLICATE (a copied mention must not alias one edge → copy-mints-fresh,
+        // mirroring rowIds). A reference child sits at `pos + 1 + off` (block content starts at pos+1).
+        node.forEach((child, off) => {
+          if (child.type.name !== 'reference') return;
+          let lid = child.attrs.linkId as string | null;
+          if (lid == null || seenLinks.has(lid)) {
+            lid = uuidv7();
+            tr = (tr ?? newState.tr).setNodeAttribute(pos + 1 + off, 'linkId', lid);
+          }
+          seenLinks.add(lid);
+        });
+
+        // (5) authored-name handle ids (§6.3b) — each `names[i].id` IS a Handle.id; fill a null and re-mint
+        // a DUPLICATE (a copied named block must not alias the source's handle → copy-mints-fresh, like
+        // rowIds/links). Its own id space (`seenNameIds`).
+        const curNames = (node.attrs.names as { id: string; name: string }[] | undefined) ?? [];
+        if (curNames.length > 0) {
+          let changed = false;
+          const nextNames = curNames.map((n) => {
+            let nid = n.id;
+            if (nid == null || seenNameIds.has(nid)) {
+              nid = uuidv7();
+              changed = true;
+            }
+            seenNameIds.add(nid);
+            return nid === n.id ? n : { ...n, id: nid };
+          });
+          if (changed) tr = (tr ?? newState.tr).setNodeAttribute(pos, 'names', nextNames);
         }
       }
       return false;

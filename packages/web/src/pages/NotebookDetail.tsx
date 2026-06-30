@@ -25,6 +25,9 @@ export function NotebookDetailPage() {
   const { object, graph } = query.data;
   const contentById = new Map<string, MathContent>(graph.content.map((c) => [c.object_id, c]));
   const notebookContent = contentById.get(object.id);
+  const notebookHandles = graph.handles.flatMap((h) =>
+    h.target_unit_id ? [{ target_unit_id: h.target_unit_id, id: h.id, name: h.name }] : [],
+  );
 
   return (
     <main>
@@ -38,6 +41,7 @@ export function NotebookDetailPage() {
           key={object.id}
           objectId={object.id}
           content={notebookContent}
+          handles={notebookHandles}
           surface={surface}
         />
       ) : notebookContent ? (

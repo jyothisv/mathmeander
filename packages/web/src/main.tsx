@@ -6,6 +6,7 @@ import 'katex/dist/katex.min.css';
 import './editor/editor.css';
 import { router } from './router';
 import { initMathRuntime } from './editor/mathRuntime';
+import { initNumberingRuntime } from './editor/numberingRuntime';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
@@ -21,10 +22,12 @@ function mount(): void {
   );
 }
 
-// Instantiate the WASM math runtime before mount so the editor can parse/render math synchronously. On
-// FAILURE, mount anyway: prose editing is unaffected and math degrades to source-only (renderMath/
-// mathRecognize guard on isMathRuntimeReady) — never a silently-broken editor that crashes on first math use.
-void initMathRuntime().then(mount, (err: unknown) => {
-  console.error('Math runtime failed to load — math will display as source only.', err);
+// Instantiate both WASM runtimes before mount: MATH (parse/render) + NUMBERING (live block designations
+// for citations). On failure of either, mount anyway — each degrades gracefully (math → source-only;
+// citations → their stored fallback text) rather than crashing the editor.
+void Promise.allSettled([initMathRuntime(), initNumberingRuntime()]).then((results) => {
+  results.forEach((r) => {
+    if (r.status === 'rejected') console.error('A WASM runtime failed to load — degrading.', r.reason);
+  });
   mount();
 });

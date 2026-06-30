@@ -37,7 +37,7 @@ use crate::ops::{
     DissolveObjectInput, EquationRowInput, ExpressionIdRemap, InsertEquationsInput,
     InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent, MergeUnitsInput,
     OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput, ResolveOccurrenceInput,
-    ResolveTarget, RewriteSurfaceInput, SetUnitTypeInput, SplitUnitInput,
+    ResolveTarget, RewriteSurfaceInput, SetHandleInput, SetUnitTypeInput, SplitUnitInput,
     ToggleExpressionPlacementInput, ToggleHeadingInput, UnitIdRemap,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
@@ -125,6 +125,7 @@ pub fn artifact_json() -> String {
     );
     defs.insert("UnitIdRemap", inline_schema_for::<UnitIdRemap>());
     defs.insert("SetUnitTypeInput", inline_schema_for::<SetUnitTypeInput>());
+    defs.insert("SetHandleInput", inline_schema_for::<SetHandleInput>());
     defs.insert("SplitUnitInput", inline_schema_for::<SplitUnitInput>());
     defs.insert("MergeUnitsInput", inline_schema_for::<MergeUnitsInput>());
     defs.insert(
@@ -653,6 +654,12 @@ pub fn conformance_json() -> String {
         { "type": "ReferenceTarget",
           "value": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a1" }, "valid": true },
         { "type": "ReferenceTarget", "value": { "kind": "object" }, "valid": false },
+        { "type": "ReferenceTarget",
+          "value": { "kind": "unit", "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+                     "unit_id": "0197675f-71f4-7000-8000-0000000000b3" }, "valid": true },
+        { "type": "ReferenceTarget",
+          "value": { "kind": "unit", "object_id": "0197675f-71f4-7000-8000-0000000000a1" },
+          "valid": false, "note": "unit arm requires unit_id" },
 
         // ── Inline ──
         { "type": "Inline",
@@ -667,6 +674,18 @@ pub fn conformance_json() -> String {
         { "type": "Inline",
           "value": { "kind": "reference", "span": { "start": 0, "end": 0 }, "text": "BW" },
           "valid": true, "note": "reference target optional (unresolved)" },
+        { "type": "Inline",
+          "value": { "kind": "reference", "span": { "start": 0, "end": 0 }, "text": "BW",
+                     "target": { "kind": "object", "object_id": "0197675f-71f4-7000-8000-0000000000a1" },
+                     "link_id": "0197675f-71f4-7000-8000-0000000000b2" },
+          "valid": true, "note": "reference carries its derived link's id (client-minted)" },
+        { "type": "Inline",
+          "value": { "kind": "reference", "span": { "start": 0, "end": 0 }, "text": "open set",
+                     "target": { "kind": "unit",
+                                 "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+                                 "unit_id": "0197675f-71f4-7000-8000-0000000000b1" },
+                     "target_handle_id": "0197675f-71f4-7000-8000-00000000000c" },
+          "valid": true, "note": "§6.3b: the citation pins which authored NAME (handle) it chose" },
         { "type": "Inline", "value": { "kind": "mark", "span": { "start": 0, "end": 4 } }, "valid": false,
           "note": "style missing" },
         { "type": "Inline", "value": { "kind": "italic", "span": { "start": 0, "end": 4 } }, "valid": false,
@@ -946,7 +965,8 @@ pub fn conformance_json() -> String {
           "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
                      "expression_id_remap": [], "version_snapshot": sample_object_version(),
                      "new_objects": [], "taggings_propagated": [],
-                     "host_content": null, "host_version_snapshot": null, "objects_removed": [] },
+                     "host_content": null, "host_version_snapshot": null, "objects_removed": [],
+                     "handles_upserted": [], "handles_removed": [] },
           "valid": true },
         // Two-object write (`rehome_subtree`): the host channels are populated alongside the new
         // object's `content`/`version_snapshot`.
@@ -955,7 +975,8 @@ pub fn conformance_json() -> String {
                      "expression_id_remap": [], "version_snapshot": sample_object_version(),
                      "new_objects": [], "taggings_propagated": [],
                      "host_content": sample_math_content(),
-                     "host_version_snapshot": sample_object_version(), "objects_removed": [] },
+                     "host_version_snapshot": sample_object_version(), "objects_removed": [],
+                     "handles_upserted": [], "handles_removed": [] },
           "valid": true },
         { "type": "OpOutcome",
           "value": { "content": sample_math_content(), "links_upserted": [], "links_staled": [],
@@ -979,6 +1000,23 @@ pub fn conformance_json() -> String {
           "note": "group is a content kind, never a unit type (§6.0b)" },
         { "type": "SetUnitTypeInput", "value": { "expected_revision": 2 }, "valid": false,
           "note": "unit_id missing" },
+
+        // ── SetHandleInput (name a unit; empty name = clear) ──
+        { "type": "SetHandleInput",
+          "value": { "expected_revision": 2, "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+                     "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+                     "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "name": "Cauchy–Schwarz", "scope": "object" }, "valid": true },
+        { "type": "SetHandleInput",
+          "value": { "expected_revision": 2, "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+                     "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+                     "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "name": "", "scope": "object" }, "valid": true, "note": "empty name = clear" },
+        { "type": "SetHandleInput",
+          "value": { "expected_revision": 2, "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+                     "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+                     "name": "Cauchy–Schwarz", "scope": "object" }, "valid": false,
+          "note": "target_unit_id missing" },
 
         // ── SplitUnitInput / MergeUnitsInput ──
         { "type": "SplitUnitInput",
@@ -1281,7 +1319,8 @@ pub fn conformance_json() -> String {
                      "links_staled": [], "expression_id_remap": [],
                      "version_snapshot": sample_object_version(), "new_objects": [],
                      "taggings_propagated": [], "host_content": null,
-                     "host_version_snapshot": null, "objects_removed": [] } }, "valid": true },
+                     "host_version_snapshot": null, "objects_removed": [],
+                     "handles_upserted": [], "handles_removed": [] } }, "valid": true },
         { "type": "OpOutcomeResult",
           "value": { "ok": false,
                      "error": { "kind": "validation", "code": "unit_not_found", "unit_id": "u-1" } },
@@ -1413,6 +1452,7 @@ mod tests {
                 "SetUnitTypeInput" => {
                     serde_json::from_value::<SetUnitTypeInput>(value.clone()).is_ok()
                 }
+                "SetHandleInput" => serde_json::from_value::<SetHandleInput>(value.clone()).is_ok(),
                 "SplitUnitInput" => serde_json::from_value::<SplitUnitInput>(value.clone()).is_ok(),
                 "MergeUnitsInput" => {
                     serde_json::from_value::<MergeUnitsInput>(value.clone()).is_ok()

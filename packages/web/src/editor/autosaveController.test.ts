@@ -333,6 +333,10 @@ function makeHarness(opts: {
     },
     docStructuralNeeds: (server) => doc.docStructuralNeeds(server),
     docStructuralIntents: (baseline) => doc.docStructuralIntents(baseline),
+    // Name axis (§6.3b): these tests don't exercise it — `docNameNeeds` returns [] so `drainNames` is a
+    // no-op (and `setHandle` is never reached).
+    setHandle: () => Promise.resolve(prior.current),
+    docNameNeeds: () => [],
     setStatus: (fn) => {
       state = fn(state);
     },

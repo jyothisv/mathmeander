@@ -95,16 +95,87 @@
         padding: 1.5rem 0.85rem 0.65rem;
         margin: 0.7rem 0;
       }
-      .day-editor .ProseMirror p[data-unit-type]::before {
-        content: attr(data-unit-type);
+      /* §6.3b TITLE BAR (typeTitle widget) — replaces the old `::before` label. An out-of-band widget in the
+         reserved top row: the label + computed number, then the authored name(s). Double-click → edit. */
+      .day-editor .mm-title {
         position: absolute;
-        top: 0.45rem;
+        top: 0.4rem;
         left: 0.85rem;
+        right: 0.85rem;
+        display: flex;
+        align-items: baseline;
+        gap: 0.5em;
+        user-select: none;
+        cursor: text;
+        line-height: 1;
+      }
+      .day-editor .mm-title-label {
         font-size: 0.62rem;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.07em;
         color: rgba(110, 110, 150, 0.95);
+        white-space: nowrap;
+      }
+      .day-editor .mm-title-names {
+        font-size: 0.86rem;
+        font-weight: 600;
+        font-style: italic;
+        color: rgba(60, 60, 90, 0.92);
+      }
+      /* Double-click a name → it becomes an inline input IN PLACE (no popover). A single name = one field;
+         ＋ adds an alias inline, ✕ removes. Minimal + modern; the bar just grows as aliases are added. */
+      .day-editor .mm-title-name {
+        cursor: text;
+      }
+      .day-editor .mm-title-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.1em;
+      }
+      /* The input is styled IDENTICALLY to the displayed name (.mm-title-names: 0.86rem italic 600, same
+         color) with NO box — so double-click only reveals a caret + the ✕/＋, the name text never jumps. */
+      .day-editor .mm-title-input {
+        font: inherit;
+        font-size: 0.86rem;
+        font-style: italic;
+        font-weight: 600;
+        color: rgba(60, 60, 90, 0.92);
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        outline: none;
+      }
+      .day-editor .mm-title-input:focus {
+        /* a whisper of an editing cue — a faint underline, never a filled box */
+        border-bottom: 1px dotted rgba(125, 125, 165, 0.55);
+      }
+      .day-editor .mm-title-rm,
+      .day-editor .mm-title-add {
+        font: inherit;
+        font-size: 0.72rem;
+        line-height: 1;
+        background: none;
+        border: none;
+        color: rgba(110, 110, 150, 0.7);
+        cursor: pointer;
+        padding: 0 0.15rem;
+        border-radius: 4px;
+      }
+      /* ✕ stays out of the way for a single name — appears when you hover the chip; ＋ is always subtly there. */
+      .day-editor .mm-title-rm {
+        opacity: 0;
+        transition: opacity 0.1s ease;
+      }
+      .day-editor .mm-title-chip:hover .mm-title-rm,
+      .day-editor .mm-title-input:focus + .mm-title-rm {
+        opacity: 1;
+      }
+      .day-editor .mm-title-rm:hover,
+      .day-editor .mm-title-add:hover {
+        background: rgba(125, 125, 165, 0.14);
+        color: rgba(110, 110, 150, 1);
       }
       /* A typed unit is a multi-paragraph container; when the caret is inside, hint how to leave it (the
          other exit is a 2nd consecutive blank line). pointer-events:none so it never eats a click. */

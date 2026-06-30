@@ -17,6 +17,7 @@ import {
   type Transaction,
 } from 'prosemirror-state';
 import type { Node, ResolvedPos } from 'prosemirror-model';
+import { v7 as uuidv7 } from 'uuid';
 import type { UnitType } from '@mathmeander/schema';
 import { editorSchema } from './schema';
 import { wholeDisplaySource } from './mathSyntax';
@@ -39,7 +40,12 @@ export const CUE_MAP: Record<string, UnitType> = {
 // A cue fires at a LINE start: either the block start (`^`) or right after a within-unit break. In the text
 // `prosemirror-inputrules` matches against, every leaf inline node (a `hard_break`, math/reference atom) is
 // the object-replacement char `￼`; so `(?:^|￼)` = "at a line start". Mid-line `Def:` never fires.
-export const CUE_RE = new RegExp(`(?:^|\\ufffc)(${Object.keys(CUE_MAP).join('|')})[.:]\\s$`);
+// An optional `[name]` (§6.3b authored epithet/definiendum, `Thm[Cauchy–Schwarz].`) is captured into group 2:
+// `[^￼]*?` lazily, closing on the `]` that the cue terminator `[.:]` immediately follows — so a name with
+// nested brackets (`Def[C([0,1])]:`) round-trips (the inner `]` isn't followed by `.`/`:`, so it's kept).
+export const CUE_RE = new RegExp(
+  `(?:^|\\ufffc)(${Object.keys(CUE_MAP).join('|')})(?:\\[([^\\ufffc]*?)\\])?[.:]\\s$`,
+);
 
 const proseType = editorSchema.nodes.prose;
 const hardBreak = () => editorSchema.nodes.hard_break.create();
@@ -60,24 +66,34 @@ export function applyCue(
   if (!type) return null;
   const $start = state.doc.resolve(start);
   if ($start.parent.type.name !== 'prose') return null;
+  if ($start.parent.attrs.heading) return null; // a heading title → the cue is literal text (mirrors
+  // applyHeadingCue/applyDisplayCue) — never type a heading, which would make an invalid heading+type block.
+  // An optional `Thm[name].` epithet/definiendum (§6.3b): captured into the `names` ATTR (chrome, shown in
+  // the title widget) — NOT the body. The whole cue (incl. `[name]`) is stripped; the name never enters the
+  // prose. Empty `[]` carries no name. The id IS the Handle.id (client-minted; idStamper dedups on paste).
+  const nm = match[2] != null && match[2].length > 0 ? match[2] : null;
+  const names = nm ? [{ id: uuidv7(), name: nm }] : [];
 
   // The match is anchored to a line start: `^` (block start) leaves match[0] beginning with the cue word;
   // a within-line leaf leaves it beginning with `￼` (the object-replacement char). Discriminate on that —
   // NOT on parentOffset, which is also 0 when a leaf ATOM sits at the block start (a mid-line cue, no rule).
   if (match[0].charCodeAt(0) !== 0xfffc) {
     if ($start.parentOffset !== 0) return null; // matched `^` mid-block (a >500-char line) → not a cue
-    // unit start → set/re-type the whole unit; strip exactly the cue text (never the following content).
+    // unit start → set/re-type the whole unit; strip the cue text (incl. any `[name]`), keeping the body.
     const blockPos = $start.before();
-    return state.tr.delete(start, end).setNodeAttribute(blockPos, 'unitType', type);
+    const tr = state.tr.delete(start, end).setNodeAttribute(blockPos, 'unitType', type);
+    if (names.length) tr.setNodeAttribute(blockPos, 'names', names);
+    return tr;
   }
 
   // preceded by a leaf → only a hard_break is a line start; an atom (math/reference) is mid-line → no cue.
   const lead = $start.nodeAfter;
   if (!lead || lead.type.name !== 'hard_break') return null;
   const tr = state.tr.delete(start, end); // remove the break + the cue text, rejoining at `start`
-  // The new typed unit stays in the current block's section (inherit `parentId`; §B).
+  // The new typed unit stays in the current block's section (inherit `parentId`; §B); its `names` carry the
+  // captured epithet (chrome — the title widget renders it).
   const parentId = ($start.parent.attrs.parentId as string | null) ?? null;
-  tr.split(start, 1, [{ type: proseType, attrs: { unitId: null, unitType: type, parentId } }]);
+  tr.split(start, 1, [{ type: proseType, attrs: { unitId: null, unitType: type, parentId, names } }]);
   const $after = tr.doc.resolve(tr.mapping.map(start, 1));
   return tr.setSelection(Selection.near($after, 1));
 }
@@ -557,7 +573,14 @@ export const clearTypeAtStart: Command = (state, dispatch) => {
   const { $cursor } = state.selection as TextSelection;
   if (!$cursor || $cursor.parent.type.name !== 'prose') return false;
   if ($cursor.parentOffset !== 0 || $cursor.parent.attrs.unitType == null) return false;
-  if (dispatch) dispatch(state.tr.setNodeAttribute($cursor.before(), 'unitType', null));
+  if (dispatch) {
+    // §6.3b: a name belongs to a TYPED block — peeling the type also clears the names (the title vanishes
+    // anyway), so the name axis drops the now-orphaned handles instead of leaving them alive server-side.
+    const pos = $cursor.before();
+    const tr = state.tr.setNodeAttribute(pos, 'unitType', null);
+    if ((($cursor.parent.attrs.names as unknown[]) ?? []).length > 0) tr.setNodeAttribute(pos, 'names', []);
+    dispatch(tr);
+  }
   return true;
 };
 

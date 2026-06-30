@@ -245,6 +245,10 @@ export function JournalDayPage() {
   const { object, graph } = query.data;
   const contentById: ContentById = new Map(graph.content.map((c) => [c.object_id, c]));
   const dayContent = contentById.get(object.id);
+  // §6.3b authored names → the title chrome on their typed blocks (unit-target handles only).
+  const dayHandles = graph.handles.flatMap((h) =>
+    h.target_unit_id ? [{ target_unit_id: h.target_unit_id, id: h.id, name: h.name }] : [],
+  );
 
   return (
     <main>
@@ -255,7 +259,13 @@ export function JournalDayPage() {
       {dayContent && isEditable(dayContent) ? (
         // Flat prose + top-level display-math days are EDITABLE (slice 2c-1 + structured-math increment 1).
         // Keyed by object id so a new day remounts the editor cleanly.
-        <DayEditor key={object.id} objectId={object.id} content={dayContent} surface={surface} />
+        <DayEditor
+          key={object.id}
+          objectId={object.id}
+          content={dayContent}
+          handles={dayHandles}
+          surface={surface}
+        />
       ) : dayContent ? (
         // Days with nested structure / embeds / groups still render read-only until later increments.
         <MathContentView content={dayContent} contentById={contentById} />

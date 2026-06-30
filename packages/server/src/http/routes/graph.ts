@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { v7 as uuidv7 } from 'uuid';
 import {
   SetUnitTypeInputSchema,
+  SetHandleInputSchema,
   ReparentUnitInputSchema,
   ToggleHeadingInputSchema,
   SplitUnitInputSchema,
@@ -29,6 +30,7 @@ import {
   type Provenance,
   type ResolveOccurrenceInput,
   type RewriteSurfaceInput,
+  type SetHandleInput,
   type SetUnitTypeInput,
   type ReparentUnitInput,
   type ToggleHeadingInput,
@@ -53,6 +55,7 @@ import {
   rewriteSurface,
   saveContent,
   setUnitType,
+  setHandle,
   toggleHeading,
   splitUnit,
   toggleExpressionPlacement,
@@ -116,6 +119,26 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
       const result = setUnitType(content, input, opCtx, now);
+      return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
+    },
+  );
+
+  // ── set_handle (§6.3b authored name; a separate axis from save_content, like set_unit_type) ──
+  app.post(
+    '/api/objects/:id/ops/set-handle',
+    { schema: { body: SetHandleInputSchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      // Trust the SESSION's space, never the client's claim (the body's space_id is overridden). The
+      // client-minted `handle_id` is trusted (like every other id) — a unit may carry MANY handles (§6.3b
+      // aliases), each its own stable id, upserted/cleared independently.
+      const input: SetHandleInput = { ...(req.body as SetHandleInput), space_id: ctx.spaceId };
+      const content = await loadContent(deps.db, ctx.spaceId, id);
+      if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const result = setHandle(content, input, opCtx, now);
       return finish(deps, reply, id, ctx.spaceId, result, provenance, input.expected_revision, now);
     },
   );
@@ -190,7 +213,14 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
         ({ won } = await persistContentDelta(
           deps.db,
           id,
-          { upserts, deletes: body.deletes },
+          {
+            upserts,
+            deletes: body.deletes,
+            // §6.1b: the citation edges the core derived/staled from this content — persist them (in-doc
+            // cites previously wrote no edge), so backlinks/graph/export see them.
+            linksUpserted: result.value.links_upserted,
+            linksStaled: result.value.links_staled,
+          },
           {
             provenance,
             expectedRevision: body.expected_revision,

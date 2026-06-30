@@ -20,6 +20,7 @@ bootstrap:
     cargo build --workspace
     just build-addon
     just build-math-wasm
+    just build-core-wasm
     just codegen-check
     @echo "✓ bootstrap complete — run 'just dev' → http://localhost:5173"
 
@@ -33,7 +34,7 @@ down:
     docker compose down
 
 # Dev servers (infra + addon first, explicitly — no implicit ordering surprises).
-dev: up build-addon build-math-wasm
+dev: up build-addon build-math-wasm build-core-wasm
     pnpm -r --parallel --stream dev
 
 # ── Build ────────────────────────────────────────────────────────────────────
@@ -50,6 +51,11 @@ build-addon:
 # Mirrors build-addon (the napi seam) for the browser. Needs wasm-pack (cargo install wasm-pack).
 build-math-wasm:
     wasm-pack build crates/surface-wasm --target web --out-dir ../../packages/web/src/wasm --no-pack
+
+# The client numbering runtime: the core's `project_display_labels` → WASM (same out-dir + gitignore as
+# build-math-wasm). Lets the editor number blocks locally/offline without reimplementing numbering in TS.
+build-core-wasm:
+    wasm-pack build crates/core-wasm --target web --out-dir ../../packages/web/src/wasm --no-pack
 
 build-addon-release:
     pnpm --filter @mathmeander/core-node build:release
@@ -93,13 +99,13 @@ test-rust:
 
 # build-math-wasm too: the web vitest/typecheck import the wasm glue, whose output is gitignored (the
 # napi addon's .d.ts is committed, so build-addon needs no such gate; the wasm's is not).
-test-node: build-addon build-math-wasm
+test-node: build-addon build-math-wasm build-core-wasm
     pnpm -r --no-bail --filter '!@mathmeander/e2e' test
 
 test-integration: build-addon up
     pnpm --filter @mathmeander/server test:integration
 
-e2e: build-addon build-math-wasm up
+e2e: build-addon build-math-wasm build-core-wasm up
     pnpm --filter @mathmeander/e2e test
 
 # ── Lint ─────────────────────────────────────────────────────────────────────
@@ -111,7 +117,7 @@ lint-rust:
     cargo clippy --workspace --all-targets -- -D warnings
 
 # build-math-wasm first: `pnpm typecheck` checks packages/web, which imports the (gitignored) wasm glue.
-lint-ts: build-math-wasm
+lint-ts: build-math-wasm build-core-wasm
     pnpm lint
     pnpm format
     pnpm typecheck

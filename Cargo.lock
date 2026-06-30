@@ -394,6 +394,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mathmeander-core-wasm"
+version = "0.1.0"
+dependencies = [
+ "mathmeander-core",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "mathmeander-schema-gen"
 version = "0.1.0"
 dependencies = [

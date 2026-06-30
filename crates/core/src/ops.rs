@@ -40,13 +40,14 @@ use mathmeander_surface::{SurfaceEdit, rewrite_with_remap};
 
 use crate::error::ValidationError;
 use crate::ids::{
-    ExpressionId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, TagId, TaggingId, UnitId,
+    ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, SpaceId, TagId,
+    TaggingId, UnitId,
 };
 use crate::model::{
-    CanonicalObject, CharSpan, ContentLocator, DeclaredBy, EmbedTarget, Inline, Link, LinkStatus,
-    LinkType, MathExpression, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
-    OccurrenceTarget, RowRelation, Tagging, TargetSelector, Unit, UnitContent, UnitStatus,
-    UnitType,
+    CanonicalObject, CharSpan, ContentLocator, DeclaredBy, EmbedTarget, Handle, HandleScope,
+    HandleStatus, Inline, Link, LinkStatus, LinkType, MathExpression, ObjectStatus, ObjectType,
+    ObjectVersion, Occurrence, OccurrenceTarget, ReferenceTarget, RowRelation, Tagging,
+    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::patch::Patch;
 use crate::validate::{
@@ -132,6 +133,12 @@ pub struct OpOutcome {
     /// Objects that DISAPPEAR with this write (`dissolve_object` folds an object's content back
     /// into its host and removes the object). Empty otherwise.
     pub objects_removed: Vec<ObjectId>,
+    /// Handle rows to insert/update — a unit's authored name (§6.3b). Only `set_handle` fills this;
+    /// the glue upserts by `Handle.id`. Empty otherwise.
+    pub handles_upserted: Vec<Handle>,
+    /// Handles to drop — a cleared name (`set_handle` with an empty name). Reported as an id ONLY,
+    /// never also in `handles_upserted`. Empty otherwise.
+    pub handles_removed: Vec<HandleId>,
 }
 
 impl OpOutcome {
@@ -150,6 +157,8 @@ impl OpOutcome {
             host_content: None,
             host_version_snapshot: None,
             objects_removed: Vec::new(),
+            handles_upserted: Vec::new(),
+            handles_removed: Vec::new(),
         }
     }
 }
@@ -193,6 +202,23 @@ pub struct SetUnitTypeInput {
     pub unit_id: UnitId,
     #[serde(default, skip_serializing_if = "Patch::is_absent")]
     pub unit_type: Patch<UnitType>,
+}
+
+/// `set_handle` payload — name (or clear the name of) an intra-object UNIT (§6.3b). One handle per
+/// call; an empty `name` (after trim) CLEARS it. `target_object_id` is the edited object and
+/// `target_expression_id` is always `None` here (unit grain only — expression handles ride the math
+/// layer). `handle_id` is glue-minted and STABLE across re-sets of the same unit's name (the glue
+/// upserts by it); `space_id`/`scope` are glue-supplied. The handle's provenance is `ctx`'s, like an
+/// emitted Link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct SetHandleInput {
+    pub expected_revision: u32,
+    pub handle_id: HandleId,
+    pub space_id: SpaceId,
+    pub target_unit_id: UnitId,
+    pub name: String,
+    pub scope: HandleScope,
 }
 
 /// `split_unit` payload — split a prose unit's text at char offset `at` into two siblings.
@@ -451,6 +477,44 @@ pub fn set_unit_type(
     }
     content.revision = content.revision.saturating_add(1);
     Ok(OpOutcome::new(content, ctx, now))
+}
+
+/// Name (or clear the name of) a unit — write the authored epithet/definiendum as a `Handle`
+/// (§6.3b), the model home numbering already resolves into `UnitLabel.name`. A separate axis from
+/// `save_content` (like `set_unit_type`): the name never rides the content delta. An empty `name`
+/// CLEARS (the handle is dropped, never silently re-emptied). The citation stores the unit id and
+/// displays this name's CURRENT string — rename → every cite updates, with no stored name string.
+pub fn set_handle(
+    mut content: MathContent,
+    input: &SetHandleInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<OpOutcome, ValidationError> {
+    // The target must be a unit of THIS object (composite FK `(unit, object)`, §6.1a).
+    if !content.units.iter().any(|u| u.id == input.target_unit_id) {
+        return Err(ValidationError::UnitNotFound {
+            unit_id: input.target_unit_id.to_string(),
+        });
+    }
+    content.revision = content.revision.saturating_add(1);
+    let object_id = content.object_id;
+    let mut outcome = OpOutcome::new(content, ctx, now);
+    if input.name.trim().is_empty() {
+        outcome.handles_removed.push(input.handle_id);
+    } else {
+        outcome.handles_upserted.push(Handle {
+            id: input.handle_id,
+            space_id: input.space_id,
+            name: input.name.clone(),
+            target_object_id: object_id,
+            target_unit_id: Some(input.target_unit_id),
+            target_expression_id: None,
+            status: HandleStatus::Active,
+            scope: input.scope,
+            provenance_id: ctx.provenance_id,
+        });
+    }
+    Ok(outcome)
 }
 
 /// Move a unit (e.g. a section `Heading`) to a new parent + position WITHIN the same object — the missing
@@ -917,7 +981,102 @@ pub fn save_content(
     };
     validate_content_well_formed(&result)?;
     result.revision = result.revision.saturating_add(1);
-    Ok(OpOutcome::new(result, ctx, now))
+
+    // Derive/reconcile the `from_content` reference edges (§6.1b) for the units this delta TOUCHED.
+    // A mention atom carries its edge's stable, CLIENT-minted `link_id` (the core mints none), so the
+    // edge is keyed by id: every link-bearing reference in an upserted unit is upserted; an existing
+    // ProseSpan reference-edge of a touched unit (upserted OR deleted) whose id is no longer present is
+    // staled. Untouched units' edges are left alone; occurrence (`ExpressionSpan`) and deliberate
+    // (`from_content = false`) edges are never reconciled here.
+    let object_id = prior.object_id;
+    // The unit ids that SURVIVE this delta — a same-object cite whose target is absent was deleted, so its
+    // derived edge must be UNRESOLVED (not a dangling unit-target that 422s the glue's FK on re-edit, §6.1b).
+    let existing: HashSet<UnitId> = result.units.iter().map(|u| u.id).collect();
+    let mut links_upserted: Vec<Link> = Vec::new();
+    let mut desired_ids: HashSet<LinkId> = HashSet::new();
+    for u in upserts {
+        let inline = match &u.content {
+            UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => {
+                inline.as_slice()
+            }
+            _ => continue,
+        };
+        for el in inline {
+            if let Inline::Reference {
+                span,
+                text,
+                target,
+                link_id: Some(lid),
+                // Display-only (the chosen authored name) — the derived edge targets the unit, §6.3b.
+                target_handle_id: _,
+            } = el
+            {
+                // A RESOLVED mention is an object edge (optionally refined to a unit/block); an
+                // UNRESOLVED one carries its surface as `unresolved_text` (validate_link requires
+                // exactly one of {object, unresolved_text}).
+                let (target_object_id, target_unit_id) = match target.as_ref() {
+                    Some(ReferenceTarget::Object { object_id }) => (Some(*object_id), None),
+                    // A SAME-object cite whose target unit was DELETED → UNRESOLVED (falls through to the
+                    // `unresolved_text` arm below): no dangling FK, surfaced for review. The citing atom
+                    // keeps its `target` (the editor display already degrades to the stored fallback text).
+                    Some(ReferenceTarget::Unit { object_id, unit_id })
+                        if *object_id == result.object_id && !existing.contains(unit_id) =>
+                    {
+                        (None, None)
+                    }
+                    Some(ReferenceTarget::Unit { object_id, unit_id }) => {
+                        (Some(*object_id), Some(*unit_id))
+                    }
+                    None => (None, None),
+                };
+                let link = Link {
+                    id: *lid,
+                    source_object_id: object_id,
+                    target_object_id,
+                    target_unit_id,
+                    unresolved_text: if target_object_id.is_none() {
+                        Some(text.clone())
+                    } else {
+                        None
+                    },
+                    target_selector: None,
+                    link_type: LinkType::Related,
+                    status: LinkStatus::Active,
+                    from_content: true,
+                    source_unit_id: Some(u.id),
+                    content_locator: Some(ContentLocator::ProseSpan {
+                        start: span.start,
+                        end: span.end,
+                    }),
+                    provenance_id: ctx.provenance_id,
+                    created_at: now,
+                };
+                validate_link(&link)?;
+                desired_ids.insert(*lid);
+                links_upserted.push(link);
+            }
+        }
+    }
+    let affected: HashSet<UnitId> = upsert_ids
+        .iter()
+        .copied()
+        .chain(delete_set.iter().copied())
+        .collect();
+    let links_staled: Vec<LinkId> = current_links
+        .iter()
+        .filter(|l| {
+            l.from_content
+                && matches!(l.content_locator, Some(ContentLocator::ProseSpan { .. }))
+                && l.source_unit_id.is_some_and(|sid| affected.contains(&sid))
+                && !desired_ids.contains(&l.id)
+        })
+        .map(|l| l.id)
+        .collect();
+
+    let mut outcome = OpOutcome::new(result, ctx, now);
+    outcome.links_upserted = links_upserted;
+    outcome.links_staled = links_staled;
+    Ok(outcome)
 }
 
 /// The §6.3a keystone for a `save_content` mutation of a display `Math` unit — guards both an in-place
@@ -1696,6 +1855,8 @@ pub fn materialize_object(
         host_content: None, // single-object write (the source is untouched)
         host_version_snapshot: None,
         objects_removed: Vec::new(),
+        handles_upserted: Vec::new(),
+        handles_removed: Vec::new(),
     })
 }
 
@@ -1843,6 +2004,8 @@ pub fn rehome_subtree(
         host_content: Some(host),
         host_version_snapshot: Some(host_version),
         objects_removed: Vec::new(),
+        handles_upserted: Vec::new(),
+        handles_removed: Vec::new(),
     })
 }
 

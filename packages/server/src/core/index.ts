@@ -12,6 +12,7 @@ import {
   parseAndMigrateObject as addonParseAndMigrateObject,
   currentSchemaVersion as addonCurrentSchemaVersion,
   setUnitType as addonSetUnitType,
+  setHandle as addonSetHandle,
   reparentUnit as addonReparentUnit,
   toggleHeading as addonToggleHeading,
   splitUnit as addonSplitUnit,
@@ -50,6 +51,7 @@ import {
   type MathContent,
   type OpContext,
   type OpOutcomeResult,
+  type SetHandleInput,
   type SetUnitTypeInput,
   type ReparentUnitInput,
   type ToggleHeadingInput,
@@ -187,6 +189,25 @@ export function setUnitType(
   return OpOutcomeResultSchema.parse(
     JSON.parse(
       addonSetUnitType(
+        JSON.stringify(content),
+        JSON.stringify(input),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+/** Name (or clear the name of) a unit — write the authored epithet/definiendum as a `Handle` (§6.3b). */
+export function setHandle(
+  content: MathContent,
+  input: SetHandleInput,
+  ctx: OpContext,
+  now: Date,
+): OpOutcomeResult {
+  return OpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonSetHandle(
         JSON.stringify(content),
         JSON.stringify(input),
         JSON.stringify(ctx),

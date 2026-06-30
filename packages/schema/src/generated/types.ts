@@ -77,6 +77,7 @@ import {
   ResolveTargetSchema,
   RewriteSurfaceInputSchema,
   RowRelationSchema,
+  SetHandleInputSchema,
   SetUnitTypeInputSchema,
   SplitUnitInputSchema,
   SurfaceFormatSchema,
@@ -168,6 +169,7 @@ export type ResolveOccurrenceInput = z.infer<typeof ResolveOccurrenceInputSchema
 export type ResolveTarget = z.infer<typeof ResolveTargetSchema>;
 export type RewriteSurfaceInput = z.infer<typeof RewriteSurfaceInputSchema>;
 export type RowRelation = z.infer<typeof RowRelationSchema>;
+export type SetHandleInput = z.infer<typeof SetHandleInputSchema>;
 export type SetUnitTypeInput = z.infer<typeof SetUnitTypeInputSchema>;
 export type SplitUnitInput = z.infer<typeof SplitUnitInputSchema>;
 export type SurfaceFormat = z.infer<typeof SurfaceFormatSchema>;

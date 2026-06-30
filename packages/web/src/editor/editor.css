@@ -32,3 +32,22 @@
   font-size: 0.92rem;
   line-height: 1.5;
 }
+
+/* Citations (referenceLivePreview). A `reference` atom resolves its target and renders the live
+ * designation ("Theorem 1") as a link via a widget (`.reference-link`); `.reference` is the atom's stored
+ * fallback text (an unresolvable / cross-document target); `.reference-hidden` hides the atom while the
+ * widget is shown. Both read as links. */
+.reference,
+.reference-link {
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.reference:hover,
+.reference-link:hover {
+  text-decoration: underline;
+}
+
+.reference-hidden {
+  display: none;
+}

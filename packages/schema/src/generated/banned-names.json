@@ -73,6 +73,7 @@
   "ResolveTarget",
   "RewriteSurfaceInput",
   "RowRelation",
+  "SetHandleInput",
   "SetUnitTypeInput",
   "SplitUnitInput",
   "SurfaceFormat",

@@ -65,6 +65,16 @@ extracted into the editable name slot. The bracket is the _declaration shortcut_
 slot is the _durable editable home_. For definitions the bracket is optional, since the
 definiendum may also be recognized from the emphasized body term (see point 3 above).
 
+The bracket is **forgiving**: once `[` opens, everything up to the closing `]` is the name —
+`.`, commas, parens, spaces, and `$…$` are all allowed (`Def[C([0,1])]:`, `Thm[Cauchy–Schwarz
+(1821).]:`), and the recognizer fires only on the closing `]`, never on punctuation _inside_.
+**Multiple aliases are NOT parsed from punctuation** in the bracket — comma / slash / parens
+collide with mathematical names (`ℤ/nℤ`, `C([0,1])`, `(X, τ)`) and with clarifiers
+(`(in a topological space)`), so the bracket carries ONE name. A definition's synonyms come
+from **bold phrases** in the statement ("a **Turing machine** (**TM**)" → two aliases),
+collected propose-confirm (never silently — §2.5/§3.9); a theorem's extra aliases come from an
+explicit add-alias affordance on the name slot.
+
 ## 3. Citing — gesture, target, display
 
 **Resolution model** (extends authoring-numbering-citations.md): a citation is a zero-width

@@ -7,7 +7,7 @@
 // is the behaviour-preservation safety net.
 import type { MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { planMerge, type Delta } from './merge';
-import type { StructuralIntent, StructuralNeed, TypeNeed } from './projection';
+import type { NameNeed, StructuralIntent, StructuralNeed, TypeNeed } from './projection';
 import { classifyFlushError } from './errorClass';
 import type { SaveState } from './saveStatus';
 
@@ -52,6 +52,15 @@ export interface AutosavePorts {
   /** The SENDABLE structural delta vs `server` (= `structuralNeeds` over the live doc): toggle_heading /
    *  reparent ops for persisted units whose heading-ness or parent diverges. What `drainStructure` sends. */
   docStructuralNeeds(server: MathContent): StructuralNeed[];
+  /** Issue the §6.3b `set_handle` op for one HANDLE (`name: ''` clears) at `expectedRevision`; resolves to
+   *  the canonical content echo; throws ApiError. The fourth op-axis, after content + type + structure. */
+  setHandle(handleId: string, unitId: string, name: string, expectedRevision: number): Promise<MathContent>;
+  /** The SENDABLE name delta (= `nameNeeds`): persisted units whose `names` attr diverges from `sent`
+   *  (the last-persisted name per HANDLE id). What `drainNames` can `set_handle` now. */
+  docNameNeeds(server: MathContent, sent: Map<string, { unitId: string; name: string }>): NameNeed[];
+  /** The handles already on the server at load (the baseline, keyed by HANDLE id) — seeds the running
+   *  `sent` map so `drainNames` only fires on a real change. */
+  initialNames?: Record<string, { unitId: string; name: string }>;
   /** My pending structural INTENTS vs `baseline` (= `structuralIntents`): incl. brand-new blocks. The
    *  keepStruct reproject overlay + the dirty/draft decision (a pending section gesture keeps the draft). */
   docStructuralIntents(baseline: MathContent): StructuralIntent[];
@@ -93,6 +102,11 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   const MAX_TYPE_RETRIES = ports.maxTypeRetries ?? 3;
   const MAX_STRUCT_RETRIES = ports.maxStructRetries ?? 3;
   const setStatus = ports.setStatus;
+  // The running NAME baseline (last name persisted per HANDLE id → {unitId, name}), seeded from the loaded
+  // handles. `drainNames` diffs the doc's `names` attrs against this; on a successful set_handle it advances.
+  const sentNames = new Map<string, { unitId: string; name: string }>(
+    Object.entries(ports.initialNames ?? {}),
+  );
 
   let busy = false; // single in-progress guard across the whole flush → merge / resolve chain
   let conflict = false; // a 409 we couldn't merge — auto-save paused until the user resolves
@@ -117,7 +131,8 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     // INTENTS, not just sendable needs: an empty cued block (un-persistable) stays dirty/drafted, not lost.
     const typesLeft = ports.docTypeIntents(prior.current).length > 0;
     const structLeft = ports.docStructuralIntents(prior.current).length > 0;
-    const stillDirty = proseLeft || typesLeft || structLeft;
+    const namesLeft = ports.docNameNeeds(prior.current, sentNames).length > 0;
+    const stillDirty = proseLeft || typesLeft || structLeft || namesLeft;
     if (!proseLeft) semanticLatch = null; // prose is synced → any prose latch is now stale
     if (stillDirty) ports.persistDraft();
     else ports.clearDraft();
@@ -296,6 +311,36 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     return 'conflict';
   };
 
+  /** Apply pending NAME changes (§6.3b) via `set_handle`, AFTER content/structure/type. A name is a
+   *  low-stakes, idempotent overlay on a persisted unit, so this is the SIMPLEST drain: apply each need
+   *  sequentially at the current revision (each op bumps it), advancing the `sent` baseline; on ANY error
+   *  (transient OR a race) DEFER — the draft keeps the `[name]` marker and the next flush re-drains (after
+   *  the content merge re-anchors the revision). The name NEVER rides the prose delta (the flush strips the
+   *  marker). The CALLER owns `busy`. */
+  const drainNames = async (): Promise<'done' | 'deferred'> => {
+    const needs = ports.docNameNeeds(prior.current, sentNames);
+    if (needs.length === 0) return 'done';
+    try {
+      for (const need of needs) {
+        const content = await ports.setHandle(
+          need.handleId,
+          need.unitId,
+          need.name,
+          prior.current.revision,
+        );
+        if (disposed) return 'done';
+        prior.current = content;
+        ports.seedCache(content);
+        if (need.name) sentNames.set(need.handleId, { unitId: need.unitId, name: need.name });
+        else sentNames.delete(need.handleId);
+      }
+      return 'done';
+    } catch {
+      if (disposed) return 'done';
+      return 'deferred'; // transient OR a revision race — the draft keeps the marker; next flush retries
+    }
+  };
+
   /** Shared success tail of flush + runMerge: drain pending STRUCTURE, then TYPES, then settle the status
    *  (unless a drain ended in a conflict, which already set it). Structure FIRST: a unit must become a
    *  heading before a child reparents under it (§B parent-capability), and a reparent's target only exists
@@ -321,7 +366,9 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     }
     const typeOutcome = await drainTypes();
     if (typeOutcome === 'conflict') return;
-    const deferred = structOutcome === 'deferred' || typeOutcome === 'deferred';
+    const nameOutcome = await drainNames();
+    const deferred =
+      structOutcome === 'deferred' || typeOutcome === 'deferred' || nameOutcome === 'deferred';
     settleAfterFlush(proseLatched ? true : deferred ? ports.isOnline() : false);
   };
 

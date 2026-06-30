@@ -53,6 +53,12 @@ export const editorSchema = new Schema({
         rowIds: { default: [] },
         parentId: { default: null },
         heading: { default: false },
+        // §6.3b authored names: this typed block's epithet(s)/definiend(a) as `{ id, name }[]` — `id` IS
+        // the `Handle.id` (client-minted, stable across edits, re-minted on paste like `rowIds`); `names[0]`
+        // (min-by-id) is the primary, the rest are aliases. CHROME, never body content: rendered in the
+        // title widget (typeTitle), flushed via the set_handle axis (nameNeeds), never the prose delta. Off
+        // the DOM (like `rowIds`).
+        names: { default: [] },
       },
       toDOM: (node) => [
         'p',
@@ -75,6 +81,7 @@ export const editorSchema = new Schema({
           getAttrs: (dom) => ({
             unitType: (dom as HTMLElement).getAttribute('data-unit-type') || null,
             heading: (dom as HTMLElement).getAttribute('data-heading') === 'true',
+            // `names` deliberately omitted → `[]` default (paste mints fresh handle ids; copy-mints-fresh).
             // parentId deliberately omitted → stays at its `null` default (paste lands top-level).
           }),
         },
@@ -140,7 +147,18 @@ export const editorSchema = new Schema({
       inline: true,
       atom: true,
       selectable: true,
-      attrs: { text: { default: '' }, target: { default: null } },
+      // `linkId` is the CLIENT-minted identity of the `from_content` Link this mention derives (§6.1b);
+      // it rides the atom so the core reconciles the edge by id, never minting one. Internal — not in
+      // toDOM (a pasted reference is re-stamped fresh by idStamper → copy-mints-fresh for the edge).
+      // `targetHandleId` (§6.3b) = which authored NAME this citation chose; its CURRENT string is
+      // displayed (referenceLivePreview), so a rename updates the cite. `null` = cite by number/primary.
+      // Internal (like linkId) — not in toDOM; copy-mints-fresh re-derives it.
+      attrs: {
+        text: { default: '' },
+        target: { default: null },
+        linkId: { default: null },
+        targetHandleId: { default: null },
+      },
       toDOM: (node) => ['span', { class: 'reference' }, (node.attrs.text as string) ?? ''],
     },
   },

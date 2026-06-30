@@ -12,6 +12,7 @@ import {
   type ObjectPatch,
   type OpOutcome,
   type RewriteSurfaceInput,
+  type SetHandleInput,
   type ToggleExpressionPlacementInput,
   type Unit,
   type UnitType,
@@ -115,6 +116,20 @@ export async function listObjects(): Promise<CanonicalObject[]> {
   return (await request('GET', '/api/objects', ListEnvelope)).items;
 }
 
+/** A citable target for the `@`-picker — id + display name + kind. Sourced from `listObjects` today
+ *  (name = the object title); a richer batched endpoint (aliases + computed designators) is a later
+ *  enrichment, so callers depend on this seam, not on the object shape. */
+export interface Citable {
+  id: string;
+  label: string;
+  type: string;
+}
+
+export async function listCitables(): Promise<Citable[]> {
+  const objs = await listObjects();
+  return objs.map((o) => ({ id: o.id, label: o.title ?? '', type: o.type }));
+}
+
 export async function patchObject(id: string, patch: ObjectPatch): Promise<CanonicalObject> {
   return (await request('PATCH', `/api/objects/${id}`, ObjectEnvelope, patch)).object;
 }
@@ -206,6 +221,25 @@ export async function setUnitType(
   return (
     await request('POST', `/api/objects/${objectId}/ops/set-unit-type`, OpOutcomeEnvelope, body)
   ).outcome;
+}
+
+/** `set_handle` (§6.3b): write one authored name/alias (`name: ''` clears it). `handle_id` is the
+ *  client-minted handle identity (a unit may have several → aliases); `space_id` is overridden by the
+ *  session, so the client sends a placeholder. A stale `expected_revision` → 409 (same gate as content). */
+export async function setHandle(
+  objectId: string,
+  body: { expected_revision: number; handle_id: string; target_unit_id: string; name: string },
+): Promise<OpOutcome> {
+  const input: SetHandleInput = {
+    expected_revision: body.expected_revision,
+    handle_id: body.handle_id,
+    space_id: body.target_unit_id, // placeholder; the server injects the session space
+    target_unit_id: body.target_unit_id,
+    name: body.name,
+    scope: 'object',
+  };
+  return (await request('POST', `/api/objects/${objectId}/ops/set-handle`, OpOutcomeEnvelope, input))
+    .outcome;
 }
 
 /** `toggle_expression_placement` (§6.3a, the "$$/$" gesture): PROMOTE an inline expression to a display

@@ -40,6 +40,25 @@ describe('idStamper', () => {
     expect(out.child(1).attrs.unitId).toBe('b');
   });
 
+  it('reference linkIds: fills a null and re-mints a duplicate (copy-mints-fresh)', () => {
+    const ref = (linkId: string | null) =>
+      editorSchema.nodes.reference.create({ text: 'x', target: null, linkId });
+    const block = editorSchema.nodes.prose.create({ unitId: 'u1' }, [
+      ref('dup'),
+      ref('dup'),
+      ref(null),
+    ]);
+    const out = stamp(editorSchema.nodes.doc.create(null, [block]));
+    const links: Array<string | null> = [];
+    out.child(0).forEach((c) => {
+      if (c.type.name === 'reference') links.push(c.attrs.linkId as string | null);
+    });
+    expect(links[0]).toBe('dup'); // first occurrence keeps its id
+    expect(links[1]).not.toBe('dup'); // duplicate re-minted
+    expect(links[2]).toBeTruthy(); // null filled
+    expect(new Set(links).size).toBe(3); // all distinct
+  });
+
   it('three blocks all sharing one id → three distinct ids (first kept)', () => {
     const out = stamp(build(['x', 'x', 'x']));
     const ids = [out.child(0).attrs.unitId, out.child(1).attrs.unitId, out.child(2).attrs.unitId];

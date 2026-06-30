@@ -103,6 +103,18 @@ pub fn set_unit_type(
     mathmeander_core::api::set_unit_type(&content_json, &input_json, &ctx_json, &now_iso)
 }
 
+/// Name (or clear the name of) a unit — write the authored epithet/definiendum as a `Handle`
+/// (§6.3b) → `OpOutcomeResult` JSON.
+#[napi]
+pub fn set_handle(
+    content_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::set_handle(&content_json, &input_json, &ctx_json, &now_iso)
+}
+
 /// Move a unit (+ its subtree) to a new parent/position — the §B intra-object section move →
 /// `OpOutcomeResult` JSON.
 #[napi]

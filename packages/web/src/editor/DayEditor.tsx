@@ -7,7 +7,8 @@
 // auto-save pauses). We NEVER silently lose or clobber content. PM is a frontend adapter only (§6.0a).
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { EditorState } from 'prosemirror-state';
+import { useNavigate } from '@tanstack/react-router';
+import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { Node } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
@@ -19,6 +20,7 @@ import {
   saveContent,
   saveContentBeacon,
   setUnitType,
+  setHandle,
   reparentUnit,
   toggleHeading,
 } from '../api/client';
@@ -31,6 +33,10 @@ import {
   typeIntents,
   structuralNeeds,
   structuralIntents,
+  nameNeeds,
+  nameIntents,
+  docProjectedHandles,
+  type ProjectedHandle,
   type StructuralIntent,
   type TypeNeed,
 } from './projection';
@@ -54,9 +60,12 @@ import {
 import { idStamper } from './idStamper';
 import { activeUnit } from './activeUnit';
 import { blockHandle } from './blockHandle';
+import { citePicker } from './citePicker';
 import { mathRecognize } from './mathRecognize';
 import { markRecognize } from './markRecognize';
 import { markLivePreview } from './markLivePreview';
+import { referenceLivePreview } from './referenceLivePreview';
+import { typeTitle } from './typeTitle';
 import { headingRecognize } from './headingRecognize';
 import { headingResection } from './headingResection';
 import { headingLivePreview } from './headingLivePreview';
@@ -93,20 +102,37 @@ const baseKeymapNoLineKeys: typeof baseKeymap = { ...baseKeymap };
 delete baseKeymapNoLineKeys['Ctrl-a'];
 delete baseKeymapNoLineKeys['Ctrl-e'];
 
+/** The doc position (start offset) of the top-level prose block carrying `unitId`, or null. Used to
+ *  scroll to a same-document block when its citation is clicked. */
+function posOfUnit(doc: Node, unitId: string): number | null {
+  let found: number | null = null;
+  doc.forEach((block, offset) => {
+    if (found === null && block.type.name === 'prose' && block.attrs.unitId === unitId) found = offset;
+  });
+  return found;
+}
+
 /** Does the restored draft still differ from the server content? (The one PM-touching restore bit.)
  *  An unparseable draft is treated as "equal" so decideRestore DISCARDS it rather than restoring junk. */
-function draftEqualsServer(draft: EditorDraft, server: MathContent): boolean {
+function draftEqualsServer(
+  draft: EditorDraft,
+  server: MathContent,
+  serverNames: Map<string, string>,
+): boolean {
   try {
     const doc = Node.fromJSON(editorSchema, draft.doc as Parameters<typeof Node.fromJSON>[1]);
     const { upserts, deletes } = flushToContent(doc, server);
     // A draft dirty ONLY by a pending type INTENT (incl. an unpersisted cued-but-empty block) must NOT be
     // judged equal — else it'd be discarded on restore, losing the cue. `typeIntents` (vs the server),
-    // unlike `typeNeeds`, does not skip not-yet-persisted blocks. Type is a separate axis (§2c-2).
+    // unlike `typeNeeds`, does not skip not-yet-persisted blocks. Type is a separate axis (§2c-2). Names are
+    // the FOURTH axis (§6.3b) — a name-only edit is chrome (empty content delta), so it must be checked vs
+    // the server HANDLE baseline too, else the draft is discarded and the name lost on reload (review M1).
     return (
       upserts.length === 0 &&
       deletes.length === 0 &&
       typeIntents(doc, server).length === 0 &&
-      structuralIntents(doc, server).length === 0 // a pending §B section gesture also keeps the draft
+      structuralIntents(doc, server).length === 0 && // a pending §B section gesture also keeps the draft
+      nameIntents(doc, serverNames).length === 0
     );
   } catch {
     return true;
@@ -125,14 +151,22 @@ export interface EditorSurface {
 export function DayEditor({
   objectId,
   content,
+  handles,
   surface,
 }: {
   objectId: string;
   content: MathContent;
+  /** The object's authored names (§6.3b) — projected onto each typed block's `names` attr (title chrome). */
+  handles: ProjectedHandle[];
   surface: EditorSurface;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
+  // Latest-navigate ref: the mount effect runs once, but a `reference` click must use the current
+  // router navigate (SPA nav to the cited object).
+  const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   // Conflict-resolution handlers, set by the effect and called from the conflict buttons' onClick.
   const conflictRef = useRef<{ takeTheirs: () => void; keepMine: () => void } | null>(null);
   const [status, setStatus] = useState<SaveState>(() => ({
@@ -186,16 +220,29 @@ export function DayEditor({
      *  structure) never silently drops a type OR a section move the user just made (§2c-2 / §B). */
     const reproject = (c: MathContent, keepTypes: TypeNeed[], keepStruct: StructuralIntent[]) => {
       if (!view) return;
+      // Re-derive the doc's CURRENT names so a merge reproject doesn't drop a name the user just authored
+      // (the name-axis analog of keepTypes/keepStruct). projectToDoc only attaches names for units already
+      // TYPED on the server, so a name on a freshly-typed-but-unsaved block needs the OVERLAY below — like
+      // keepTypes restoring an un-persisted type (review M2).
+      const keepNames = docProjectedHandles(view.state.doc);
       const tr = view.state.tr
-        .replaceWith(0, view.state.doc.content.size, projectToDoc(c).content)
+        .replaceWith(0, view.state.doc.content.size, projectToDoc(c, keepNames).content)
         .setMeta('addToHistory', false);
-      if (keepTypes.length > 0 || keepStruct.length > 0) {
+      if (keepTypes.length > 0 || keepStruct.length > 0 || keepNames.length > 0) {
         const wantType = new Map(keepTypes.map((t) => [t.unitId, t.type]));
         const wantStruct = new Map(keepStruct.map((s) => [s.unitId, s]));
+        const wantNames = new Map<string, { id: string; name: string }[]>();
+        for (const h of keepNames) {
+          if (!h.target_unit_id) continue;
+          const arr = wantNames.get(h.target_unit_id) ?? [];
+          arr.push({ id: h.id, name: h.name });
+          wantNames.set(h.target_unit_id, arr);
+        }
         tr.doc.descendants((node, pos) => {
           if (node.type.name !== 'prose') return;
           const id = node.attrs.unitId as string;
           if (wantType.has(id)) tr.setNodeAttribute(pos, 'unitType', wantType.get(id) ?? null);
+          if (wantNames.has(id)) tr.setNodeAttribute(pos, 'names', wantNames.get(id) ?? []);
           const s = wantStruct.get(id);
           if (s) {
             tr.setNodeAttribute(pos, 'heading', s.heading);
@@ -250,6 +297,19 @@ export function DayEditor({
         ).then((o) => o.content),
       docStructuralNeeds: (server) => (view ? structuralNeeds(view.state.doc, server) : []),
       docStructuralIntents: (baseline) => (view ? structuralIntents(view.state.doc, baseline) : []),
+      setHandle: (handleId, unitId, name, expectedRevision) =>
+        setHandle(objectId, {
+          expected_revision: expectedRevision,
+          handle_id: handleId,
+          target_unit_id: unitId,
+          name,
+        }).then((o) => o.content),
+      docNameNeeds: (server, sent) => (view ? nameNeeds(view.state.doc, server, sent) : []),
+      initialNames: Object.fromEntries(
+        handles
+          .filter((h) => h.target_unit_id)
+          .map((h) => [h.id, { unitId: h.target_unit_id as string, name: h.name }]),
+      ),
       setStatus: setIf,
       cancelScheduledFlush: () => {
         if (timer != null) {
@@ -281,6 +341,9 @@ export function DayEditor({
           plugins: [
             history(),
             keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Shift-Mod-z': redo }),
+            // `@`-citation picker — BEFORE the Enter/Arrow keymaps so it pre-empts them while the
+            // picker is open (Enter/↑/↓/Esc drive the popover); otherwise those keys fall through.
+            citePicker({ selfObjectId: objectId }),
             // Backspace: at the start of a TYPED unit → clear type (peel); at the start of a PLAIN unit →
             // merge into the previous unit; next to a `$…$` equation → a controlled single-char delete
             // (mathBackspace) so native deletion next to the rendered math's hidden source can't destroy the
@@ -355,9 +418,11 @@ export function DayEditor({
             mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr (skips headings)
             markRecognize, // scan `**…**`/`*…*`/`~~…~~`/`` `…` `` → the styled mark (after math; math wins)
             headingLivePreview, // hide the `#` prefix when the caret is out of the heading; dim it when in
+            typeTitle, // §6.3b: the title bar — label + number + names, double-click to edit
             headingFold, // collapse/expand a section (chevron widget hides descendants; view-only)
             mathLivePreview, // render KaTeX over a marked span (inline on caret-out; display always, centered)
             markLivePreview, // hide the markdown delimiters when the caret is out; reveal on touch (like math)
+            referenceLivePreview({ selfObjectId: objectId }), // citations resolve their target → live "Theorem 1" link
             activeUnit,
             blockHandle, // a ⋮⋮ hover handle in the left gutter; click → Move up / Move down menu
           ],
@@ -394,6 +459,35 @@ export function DayEditor({
           view.dispatch(tr);
           return true;
         },
+        // Click a `reference` atom → a SAME-document block target scrolls to the block in place; any
+        // other target (an object, or a unit in another object) SPA-navigates to the target object.
+        handleClickOn(_view, _pos, node) {
+          if (!view) return false;
+          if (node.type.name !== 'reference') return false;
+          const target = node.attrs.target as {
+            kind?: string;
+            object_id?: string;
+            unit_id?: string;
+          } | null;
+          if (!target) return false;
+          if (target.kind === 'unit' && target.object_id === objectId && target.unit_id) {
+            const at = posOfUnit(view.state.doc, target.unit_id);
+            if (at != null) {
+              const sel = TextSelection.near(view.state.doc.resolve(at + 1), 1);
+              view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+              view.focus();
+              return true;
+            }
+          }
+          if (target.object_id) {
+            void navigateRef.current({
+              to: '/objects/$objectId',
+              params: { objectId: target.object_id },
+            });
+            return true;
+          }
+          return false;
+        },
         dispatchTransaction(tr) {
           if (!view) return;
           view.updateState(view.state.apply(tr));
@@ -423,7 +517,10 @@ export function DayEditor({
     void (async () => {
       const draft = await getDraft(objectId);
       if (cancelled) return;
-      const verdict = decideRestore(draft, content, draftEqualsServer);
+      // The server's name baseline (handleId → name) from the loaded handles — so a pending name-only edit
+      // keeps the draft (§6.3b, review M1). Names aren't in `content`, hence the separate map.
+      const serverNames = new Map(handles.map((h) => [h.id, h.name]));
+      const verdict = decideRestore(draft, content, (d, s) => draftEqualsServer(d, s, serverNames));
       if ((verdict.action === 'restore' || verdict.action === 'conflict') && draft) {
         try {
           buildView(
@@ -444,7 +541,7 @@ export function DayEditor({
       } else if (draft) {
         void clearDraft(objectId); // discard (equal / impossible-future) — safe to clear
       }
-      buildView(projectToDoc(content), false);
+      buildView(projectToDoc(content, handles), false);
     })();
 
     // Exit flush: best-effort keepalive PUT + a guaranteed local draft, when the page is going away.

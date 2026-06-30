@@ -445,13 +445,22 @@ pub enum EmbedTarget {
     Object { object_id: ObjectId },
 }
 
-/// Resolution target of a prose `Reference` marker (§6.0). Slice 1 resolves the OBJECT
-/// arm only; `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.
+/// Resolution target of a prose `Reference` marker (§6.0): a whole `Object`, or a specific `Unit`
+/// (block) within one. `notation`/`source` arms are reserved (slices 2/3). Absent while unresolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReferenceTarget {
-    Object { object_id: ObjectId },
+    Object {
+        object_id: ObjectId,
+    },
+    /// A block within an object — the citation grain for "the definition of an open set" /
+    /// "Theorem 3.2". `unit_id` is globally unique (so it survives any future re-homing); `object_id`
+    /// is its current home (a resolution hint and the derived Link's `target_object_id`).
+    Unit {
+        object_id: ObjectId,
+        unit_id: UnitId,
+    },
 }
 
 /// An inline element of prose (§6.0): minimal formatting, inline math, or a mention.
@@ -486,6 +495,17 @@ pub enum Inline {
         /// resolved edge lives in `links` (§6.1b).
         text: String,
         target: Option<ReferenceTarget>,
+        /// Identity of the `from_content` `Link` this mention derives — CLIENT-minted (like unit
+        /// ids; the core mints none), so it is STABLE across content edits and the edge is
+        /// reconciled by id, not by position. `None` = not yet stamped (no edge derived).
+        /// `save_content` derives/reconciles the edge from this and the `target`.
+        link_id: Option<LinkId>,
+        /// Which AUTHORED NAME this mention chose (§6.3b) — the `Handle` whose CURRENT string the
+        /// citation displays (rename → the citation updates; identity-not-characters, §3). `None` =
+        /// cite by number / the unit's primary name. Display-only: the derived `Link` still targets
+        /// the unit, so `save_content` ignores this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_handle_id: Option<HandleId>,
     },
 }
 

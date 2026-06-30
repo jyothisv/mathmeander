@@ -46,6 +46,32 @@ function proseUnit(objectId: string, position: number, text: string, id = uuidv7
   };
 }
 
+/** A prose unit citing `citedId` (same object) via a zero-width reference atom carrying `linkId` — the
+ *  editor's `@`-cite shape; `save_content` derives the `from_content` edge from it. */
+function citeUnit(objectId: string, citedId: string, linkId: string, position: number): Unit {
+  return {
+    id: uuidv7(),
+    object_id: objectId,
+    position,
+    status: 'rough',
+    declared_by: 'user',
+    content: {
+      kind: 'prose',
+      text: 'see ',
+      inline: [
+        {
+          kind: 'reference',
+          span: { start: 4, end: 4 },
+          text: 'the theorem',
+          target: { kind: 'unit', object_id: objectId, unit_id: citedId },
+          link_id: linkId,
+        },
+      ],
+    },
+    provenance_id: uuidv7(),
+  };
+}
+
 /** A rough display-math unit (the editable-equation shape the editor flushes, §6.3a). The expr is
  *  fresh: zero occurrences, no inbound anchor — so the relaxed `save_content` accepts create + edit. */
 function mathUnit(
@@ -269,7 +295,27 @@ describe('save_content: prose authoring', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('refuses to delete a unit that a link still references (DB constraint → 422)', async () => {
+  it('save_content with a citation PERSISTS the derived link edge (review M4)', async () => {
+    const dayId = await newDay();
+    const cited = proseUnit(dayId, 0, 'the cited theorem');
+    const linkId = uuidv7();
+    const res = await save(dayId, {
+      expected_revision: 1,
+      upserts: [cited, citeUnit(dayId, cited.id, linkId, 1)],
+      deletes: [],
+    });
+    expect(res.statusCode).toBe(200);
+    // The core derives the `from_content` edge from the mention atom; persistContentDelta now WRITES it
+    // (in-doc citations previously left the links table empty).
+    const link = await stack.db.query<{ target_unit_id: string }>(
+      `SELECT target_unit_id FROM links WHERE id = $1`,
+      [linkId],
+    );
+    expect(link.rowCount).toBe(1);
+    expect(link.rows[0]!.target_unit_id).toBe(cited.id);
+  });
+
+  it('refuses to delete a unit with a DELIBERATE inbound link (422 — not silently dropped, review C1)', async () => {
     const dayId = await newDay();
     const r1 = await save(dayId, {
       expected_revision: 1,
@@ -278,23 +324,61 @@ describe('save_content: prose authoring', () => {
     });
     const unit = (r1.json() as { outcome: { content: { units: Unit[] } } }).outcome.content
       .units[0]!;
-
-    // A deliberate inbound edge onto the unit (target-side, unit-refined). Reuse the unit's own
-    // provenance so the link's NOT-NULL provenance FK is satisfied without seeding a second row.
+    // A DELIBERATE (from_content=false) inbound edge — e.g. imported. The `from_content`-scoped cleanup
+    // LEAVES it, so the delete is REFUSED (a surfaced keystone, not a silent §2.2 drop).
     await stack.db.query(
       `INSERT INTO links (id, source_object_id, target_object_id, target_unit_id, type, status,
                           from_content, provenance_id, created_at)
        VALUES ($1,$2,$3,$4,'related','active',false,$5,now())`,
       [uuidv7(), dayId, dayId, unit.id, unit.provenance_id],
     );
-
-    // Deleting the still-referenced unit trips the deferred composite FK at COMMIT (pg 23503) →
-    // ContentConstraintError → 422 content_save_invalid — a client error, not a 500. The whole tx
-    // rolls back, so the unit survives (atomicity).
     const res = await save(dayId, { expected_revision: 2, upserts: [], deletes: [unit.id] });
     expect(res.statusCode).toBe(422);
     expect((res.json() as { error: { code: string } }).error.code).toBe('content_save_invalid');
     expect(await unitCount(dayId)).toBe(1);
+  });
+
+  it('deleting a CITED unit removes its derived inbound edge and SUCCEEDS (review M4/C1)', async () => {
+    const dayId = await newDay();
+    const cited = proseUnit(dayId, 0, 'the cited theorem');
+    const linkId = uuidv7();
+    await save(dayId, { expected_revision: 1, upserts: [cited, citeUnit(dayId, cited.id, linkId, 1)], deletes: [] });
+    // Delete the CITED unit → the derived (from_content) inbound edge is removed; the delete commits.
+    const res = await save(dayId, { expected_revision: 2, upserts: [], deletes: [cited.id] });
+    expect(res.statusCode).toBe(200);
+    expect((await stack.db.query(`SELECT 1 FROM links WHERE id = $1`, [linkId])).rowCount).toBe(0);
+  });
+
+  it('deleting a CITING unit removes its outbound edge and SUCCEEDS (review C1 — source side)', async () => {
+    const dayId = await newDay();
+    const cited = proseUnit(dayId, 0, 'the cited theorem');
+    const linkId = uuidv7();
+    const citing = citeUnit(dayId, cited.id, linkId, 1);
+    await save(dayId, { expected_revision: 1, upserts: [cited, citing], deletes: [] });
+    // Delete the CITING unit → the core STALES its outbound edge; the SYMMETRIC source-side cleanup removes
+    // it (previously the staled row still referenced the deleted source → 23503 → 422 wedge).
+    const res = await save(dayId, { expected_revision: 2, upserts: [], deletes: [citing.id] });
+    expect(res.statusCode).toBe(200);
+    expect((await stack.db.query(`SELECT 1 FROM links WHERE id = $1`, [linkId])).rowCount).toBe(0);
+  });
+
+  it('editing a citer after its target was deleted SUCCEEDS — re-derived edge is UNRESOLVED (review C2)', async () => {
+    const dayId = await newDay();
+    const cited = proseUnit(dayId, 0, 'the cited theorem');
+    const linkId = uuidv7();
+    const citing = citeUnit(dayId, cited.id, linkId, 1);
+    await save(dayId, { expected_revision: 1, upserts: [cited, citing], deletes: [] });
+    await save(dayId, { expected_revision: 2, upserts: [], deletes: [cited.id] }); // delete the target
+    // Re-save the citer (its atom still targets the gone unit): previously this re-derived a dangling
+    // target_unit_id → 422 wedge. C2: the core downgrades it to UNRESOLVED → the save commits.
+    const res = await save(dayId, { expected_revision: 3, upserts: [citing], deletes: [] });
+    expect(res.statusCode).toBe(200);
+    const link = await stack.db.query<{ target_unit_id: string | null }>(
+      `SELECT target_unit_id FROM links WHERE id = $1`,
+      [linkId],
+    );
+    expect(link.rowCount).toBe(1);
+    expect(link.rows[0]!.target_unit_id).toBeNull(); // unresolved — no dangling FK
   });
 });
 

@@ -939,6 +939,24 @@
     "valid": false
   },
   {
+    "type": "ReferenceTarget",
+    "value": {
+      "kind": "unit",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+      "unit_id": "0197675f-71f4-7000-8000-0000000000b3"
+    },
+    "valid": true
+  },
+  {
+    "type": "ReferenceTarget",
+    "value": {
+      "kind": "unit",
+      "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+    },
+    "valid": false,
+    "note": "unit arm requires unit_id"
+  },
+  {
     "type": "Inline",
     "value": {
       "kind": "mark",
@@ -999,6 +1017,43 @@
     },
     "valid": true,
     "note": "reference target optional (unresolved)"
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "reference",
+      "span": {
+        "start": 0,
+        "end": 0
+      },
+      "text": "BW",
+      "target": {
+        "kind": "object",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1"
+      },
+      "link_id": "0197675f-71f4-7000-8000-0000000000b2"
+    },
+    "valid": true,
+    "note": "reference carries its derived link's id (client-minted)"
+  },
+  {
+    "type": "Inline",
+    "value": {
+      "kind": "reference",
+      "span": {
+        "start": 0,
+        "end": 0
+      },
+      "text": "open set",
+      "target": {
+        "kind": "unit",
+        "object_id": "0197675f-71f4-7000-8000-0000000000a1",
+        "unit_id": "0197675f-71f4-7000-8000-0000000000b1"
+      },
+      "target_handle_id": "0197675f-71f4-7000-8000-00000000000c"
+    },
+    "valid": true,
+    "note": "§6.3b: the citation pins which authored NAME (handle) it chose"
   },
   {
     "type": "Inline",
@@ -1842,7 +1897,9 @@
       "taggings_propagated": [],
       "host_content": null,
       "host_version_snapshot": null,
-      "objects_removed": []
+      "objects_removed": [],
+      "handles_upserted": [],
+      "handles_removed": []
     },
     "valid": true
   },
@@ -1960,7 +2017,9 @@
         "provenance_id": "0197675f-71f4-7000-8000-0000000000d1",
         "created_at": "2026-06-12T00:00:00Z"
       },
-      "objects_removed": []
+      "objects_removed": [],
+      "handles_upserted": [],
+      "handles_removed": []
     },
     "valid": true
   },
@@ -2063,6 +2122,43 @@
     },
     "valid": false,
     "note": "unit_id missing"
+  },
+  {
+    "type": "SetHandleInput",
+    "value": {
+      "expected_revision": 2,
+      "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "name": "Cauchy–Schwarz",
+      "scope": "object"
+    },
+    "valid": true
+  },
+  {
+    "type": "SetHandleInput",
+    "value": {
+      "expected_revision": 2,
+      "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "name": "",
+      "scope": "object"
+    },
+    "valid": true,
+    "note": "empty name = clear"
+  },
+  {
+    "type": "SetHandleInput",
+    "value": {
+      "expected_revision": 2,
+      "handle_id": "0197675f-71f4-7000-8000-00000000000c",
+      "space_id": "0197675f-71f4-7000-8000-0000000000e1",
+      "name": "Cauchy–Schwarz",
+      "scope": "object"
+    },
+    "valid": false,
+    "note": "target_unit_id missing"
   },
   {
     "type": "SplitUnitInput",
@@ -3697,7 +3793,9 @@
         "taggings_propagated": [],
         "host_content": null,
         "host_version_snapshot": null,
-        "objects_removed": []
+        "objects_removed": [],
+        "handles_upserted": [],
+        "handles_removed": []
       }
     },
     "valid": true

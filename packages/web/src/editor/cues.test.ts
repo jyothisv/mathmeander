@@ -176,6 +176,64 @@ describe('applyCue — unit start re-types; soft-line start spawns a typed unit'
   });
 });
 
+describe('applyCue — `X[name].` captures an authored name into the `names` attr (§6.3b)', () => {
+  it('strips the cue + name from the BODY and sets `names` (chrome, not body content)', () => {
+    const text = 'Thm[Cauchy–Schwarz].';
+    const s = stateWith(text, { cursor: text.length });
+    const m = CUE_RE.exec(`${text} `)!;
+    expect(m[2]).toBe('Cauchy–Schwarz');
+    const next = s.apply(applyCue(s, m, 1, 1 + text.length)!);
+    expect(next.doc.firstChild!.attrs.unitType).toBe('theorem');
+    expect(next.doc.firstChild!.textContent).toBe(''); // the name never enters the body
+    const names = next.doc.firstChild!.attrs.names as { id: string; name: string }[];
+    expect(names.map((n) => n.name)).toEqual(['Cauchy–Schwarz']);
+    expect(names[0]!.id).toMatch(/[0-9a-f-]{36}/); // a client-minted handle id
+  });
+
+  it('captures a NESTED-bracket name (`Def[C([0,1])]:`)', () => {
+    const text = 'Def[C([0,1])]:';
+    const s = stateWith(text, { cursor: text.length });
+    const m = CUE_RE.exec(`${text} `)!;
+    expect(m[2]).toBe('C([0,1])');
+    const next = s.apply(applyCue(s, m, 1, 1 + text.length)!);
+    expect(next.doc.firstChild!.attrs.unitType).toBe('definition');
+    expect(next.doc.firstChild!.textContent).toBe('');
+    expect((next.doc.firstChild!.attrs.names as { name: string }[])[0]!.name).toBe('C([0,1])');
+  });
+
+  it('a PLAIN cue (no brackets) leaves `names` empty', () => {
+    const s = stateWith('Thm.', { cursor: 4 });
+    const next = s.apply(applyCue(s, CUE_RE.exec('Thm. ')!, 1, 5)!);
+    expect(next.doc.firstChild!.attrs.names).toEqual([]);
+  });
+
+  it('returns null inside a HEADING (the cue is literal there — review MINOR4)', () => {
+    const block = editorSchema.nodes.prose.create(
+      { unitId: 'h1', heading: true },
+      editorSchema.text('Thm.'),
+    );
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const s = EditorState.create({ schema: editorSchema, doc });
+    expect(applyCue(s, CUE_RE.exec('Thm. ')!, 1, 5)).toBeNull();
+  });
+});
+
+describe('clearTypeAtStart — peeling the type also clears names (review MINOR2)', () => {
+  it('empties the `names` attr so the orphaned handles get dropped', () => {
+    const block = editorSchema.nodes.prose.create(
+      { unitId: 't1', unitType: 'theorem', names: [{ id: 'g1', name: 'Cauchy–Schwarz' }] },
+      editorSchema.text('x'),
+    );
+    const doc = editorSchema.nodes.doc.create(null, [block]);
+    const base = EditorState.create({ schema: editorSchema, doc });
+    const s = base.apply(base.tr.setSelection(TextSelection.create(base.doc, 1))); // caret at block start
+    const { ran, next } = capture(clearTypeAtStart, s);
+    expect(ran).toBe(true);
+    expect(next!.doc.firstChild!.attrs.unitType).toBeNull();
+    expect(next!.doc.firstChild!.attrs.names).toEqual([]);
+  });
+});
+
 describe('enterParagraph — the paragraph model', () => {
   it('plain, non-empty line → a soft line break (stays one unit)', () => {
     const { ran, next } = capture(enterParagraph, stateAtEnd([{ lines: ['abc'] }], 0));
