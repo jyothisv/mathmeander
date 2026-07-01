@@ -61,16 +61,21 @@ class ProseView {
   }
 
   /** Rebuild the chrome ONLY when its data actually changed (a stable signature) — so a pure caret move never
-   *  rebuilds it, and mid-edit typing (which dispatches no transaction) never rips focus out of a name input. */
+   *  rebuilds it, and mid-edit typing (which dispatches no transaction) never rips focus out of a name input.
+   *  The sig MUST include `unitId`: PM can positionally REUSE this desc for a different unit (a merge/delete),
+   *  and two adjacent same-type/unnumbered/unnamed blocks would otherwise share a sig — the stale titleWidget
+   *  would keep the old unit's id in its double-click closure and a name edit would hit the wrong block. While
+   *  a name is being EDITED, the sig drops number/names so a concurrent-write reproject (which changes them)
+   *  can't destroy the live `<input>`; the identity + focus still gate a genuine change. */
   private renderChrome(decos: readonly Decoration[]): void {
     const title = readSpec<TitleData>(decos, 'title');
     const fold = readSpec<FoldData>(decos, 'fold');
-    const sig =
-      (title
-        ? `t:${title.type}:${title.number}:${title.editing ? `e${title.editing.focusId}` : ''}:${title.names
-            .map((n) => `${n.id}=${n.name}`)
-            .join('|')}`
-        : '') + (fold ? `;f:${fold.id}:${fold.folded}` : '');
+    const titleSig = title
+      ? title.editing
+        ? `e:${title.unitId}:${title.editing.focusId}`
+        : `t:${title.unitId}:${title.type}:${title.number}:${title.names.map((n) => `${n.id}=${n.name}`).join('|')}`
+      : '';
+    const sig = titleSig + (fold ? `;f:${fold.id}:${fold.folded}` : '');
     if (sig === this.sig) return;
     this.sig = sig;
     this.chrome.replaceChildren();
@@ -79,7 +84,6 @@ class ProseView {
         titleWidget(title.unitId, title.type, title.number, title.names, title.editing)(this.view),
       );
     if (fold) this.chrome.appendChild(foldChevron(fold.id, fold.folded)(this.view));
-    this.dom.classList.toggle('mm-has-chrome', !!(title || fold));
   }
 
   update(node: PMNode, decos: readonly Decoration[]): boolean {

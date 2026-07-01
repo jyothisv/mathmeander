@@ -1,9 +1,10 @@
 // Regression guards for the "block-start chrome must be out-of-band" invariant (PM #1061): a persistent
 // contentEditable=false widget at a block's START position (offset+1) corrupts text typed there — a
-// block-OPENING `$…$` equation is never recognized. blockHandle was moved to a hover overlay; typeTitle
-// (typed blocks) and foldChevron (folded headings) keep a block-start widget but must SUPPRESS it while the
-// caret sits at the block start. The plain-block case is covered by journal-math.spec.ts; these cover the
-// TYPED-block and FOLDED-heading cases the earlier suite missed.
+// block-OPENING `$…$` equation is never recognized. The fix moves all block chrome OUT of band: blockHandle
+// is a hover overlay, and the typed-unit title bar + the section-fold chevron now render inside the prose
+// NodeView's chrome (a sibling of contentDOM — see proseView.ts), so no widget sits at the caret position.
+// The plain-block case is covered by journal-math.spec.ts; these cover the TYPED-block and FOLDED-heading
+// cases the earlier suite missed.
 import { expect, test } from '@playwright/test';
 
 function todayLocalISO(): string {
