@@ -130,6 +130,12 @@ check-core-purity:
 lint-migrations:
     node scripts/lint-migrations.mjs
 
+# Apply formatting (the write-mode companion to the fmt checks in `lint`): Rust via rustfmt, everything
+# else via prettier. Run this to fix what `cargo fmt --check` / `pnpm format` would flag.
+fmt:
+    cargo fmt
+    pnpm format:fix
+
 # ── Auth helper ──────────────────────────────────────────────────────────────
 
 # Mint a dev IdP token for curl/scripting (dev-idp must be running).
