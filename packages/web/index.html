@@ -252,13 +252,27 @@
       .day-editor .mm-fold-toggle.is-folded {
         opacity: 1;
       }
+      .day-editor .mm-fold-toggle::before {
+        content: '▾'; /* expanded */
+      }
+      .day-editor .mm-fold-toggle.is-folded::before {
+        content: '▸'; /* collapsed */
+      }
       /* Notion-style per-block handle: a ⋮⋮ grip in the gutter, revealed on hover. Click → the Move up /
          Move down menu. It is a SINGLE hover-tracked overlay in <body> (position: fixed, JS-positioned by
          blockHandle.ts) — NOT a per-block widget in the content — so it never sits at a block-start caret
          position (which scrambled block-opening math; see blockHandle.ts / PM issue #1061). */
+      /* The prose NodeView's content wrapper (holds the inline content; chrome renders as its sibling,
+         outside it). Inline so the paragraph lays out exactly as before the NodeView. */
+      .day-editor .ProseMirror .mm-content {
+        display: inline;
+      }
       .mm-block-handle {
         position: fixed;
         z-index: 40;
+        transform: translateY(
+          -50%
+        ); /* `top` is the block's vertical center → this centers the grip on it */
         cursor: grab;
         user-select: none;
         color: rgba(110, 110, 150, 0.55);

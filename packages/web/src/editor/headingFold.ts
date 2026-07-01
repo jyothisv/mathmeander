@@ -82,16 +82,23 @@ export function foldedHiddenPositions(doc: PMNode, folded: Set<string>): number[
   return hidden.sort((a, b) => a - b);
 }
 
-/** The chevron widget DOM factory for a foldable heading (▸ folded / ▾ expanded). mousedown toggles the
- *  fold (preventing the default caret move); when FOLDING with the caret inside the subtree, the caret is
- *  relocated onto the heading so it isn't stranded in hidden content. */
-function foldChevron(id: string, isFolded: boolean): (view: EditorView) => HTMLElement {
+/** The per-heading fold data the prose NodeView renders (a chevron in its chrome row, out of band). */
+export interface FoldData {
+  id: string;
+  folded: boolean;
+}
+
+/** The chevron element factory for a foldable heading (▸ folded / ▾ expanded), rendered by the prose NodeView
+ *  into its chrome row. mousedown toggles the fold (preventing the default caret move); when FOLDING with the
+ *  caret inside the subtree, the caret is relocated onto the heading so it isn't stranded in hidden content. */
+export function foldChevron(id: string, isFolded: boolean): (view: EditorView) => HTMLElement {
   return (view) => {
     const el = document.createElement('span');
     // `is-folded` lets CSS keep a FOLDED section's chevron always visible, while an unfolded one's chevron
     // shows only on hover (a quiet-at-rest affordance).
+    // The glyph is CSS pseudo-content (`.mm-fold-toggle::before`), NOT literal text — so this chrome holds no
+    // in-band text in the block's DOM `textContent` (mirrors the ⋮⋮ handle + the title label).
     el.className = isFolded ? 'mm-fold-toggle is-folded' : 'mm-fold-toggle';
-    el.textContent = isFolded ? '▸' : '▾';
     el.setAttribute('contenteditable', 'false');
     el.setAttribute('aria-label', isFolded ? 'expand section' : 'collapse section');
     el.addEventListener('mousedown', (e) => {
@@ -127,11 +134,15 @@ function buildDecorations(doc: PMNode, folded: Set<string>): DecorationSet {
     const descendants = descendantBlocks(doc, id, byId);
     if (descendants.length === 0) return; // a leaf heading isn't foldable — no chevron
     const isFolded = folded.has(id);
+    // OUT OF BAND: carry the fold data on a node decoration; the prose NodeView renders the chevron in its
+    // chrome row, OUTSIDE the editable content (a block-start chevron widget scrambled block-opening typing).
     decos.push(
-      Decoration.widget(offset + 1, foldChevron(id, isFolded), {
-        side: -1,
-        key: `fold:${id}:${isFolded}`,
-      }),
+      Decoration.node(
+        offset,
+        offset + block.nodeSize,
+        {},
+        { fold: { id, folded: isFolded } satisfies FoldData },
+      ),
     );
     if (isFolded) {
       for (const d of descendants) {

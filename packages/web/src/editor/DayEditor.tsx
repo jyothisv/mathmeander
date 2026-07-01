@@ -60,6 +60,7 @@ import {
 import { idStamper } from './idStamper';
 import { activeUnit } from './activeUnit';
 import { blockHandle } from './blockHandle';
+import { proseNodeView } from './proseView';
 import { citePicker } from './citePicker';
 import { mathRecognize } from './mathRecognize';
 import { markRecognize } from './markRecognize';
@@ -336,6 +337,9 @@ export function DayEditor({
 
     const buildView = (doc: Node, immediateSync: boolean) => {
       view = new EditorView(mount, {
+        // A NodeView for prose so per-block chrome (title bar / fold chevron) renders OUTSIDE the editable
+        // content (see proseView.ts) — the out-of-band fix for the block-start caret scramble.
+        nodeViews: { prose: proseNodeView },
         state: EditorState.create({
           schema: editorSchema,
           doc,

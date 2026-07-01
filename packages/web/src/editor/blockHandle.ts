@@ -13,10 +13,16 @@ import { moveBlock } from './moveBlock';
 
 let closeOpenMenu: (() => void) | null = null;
 
-/** Place the caret in the block at `blockStart`, then run `cmd` (which acts on the caret's block). */
+/** Place the caret in the block at `blockStart`, then run `cmd` (which acts on the caret's block). `blockStart`
+ *  was captured at hover and may be STALE by click time — a background 409-merge reproject can rebuild the doc
+ *  while the menu is open. Guard the resolve so a stale click is a no-op, never a RangeError or a wrong-block
+ *  move: bail if the position is now out of range or no longer inside a prose/config block. */
 function actOnBlock(view: EditorView, blockStart: number, cmd: ReturnType<typeof moveBlock>): void {
-  const sel = TextSelection.near(view.state.doc.resolve(blockStart + 1), 1);
-  view.dispatch(view.state.tr.setSelection(sel));
+  const { doc } = view.state;
+  if (blockStart + 1 > doc.content.size) return;
+  const $at = doc.resolve(blockStart + 1);
+  if ($at.parent.type.name !== 'prose' && $at.parent.type.name !== 'config') return;
+  view.dispatch(view.state.tr.setSelection(TextSelection.near($at, 1)));
   cmd(view.state, view.dispatch);
   view.focus();
 }
@@ -109,7 +115,7 @@ export const blockHandle = new Plugin({
       const rect = hit.dom.getBoundingClientRect();
       handle.style.display = 'block';
       handle.style.left = `${rect.left - 22}px`; // the gutter, left of the text
-      handle.style.top = `${rect.top + 2}px`; // aligned to the block's first line (Notion-style)
+      handle.style.top = `${rect.top + rect.height / 2}px`; // the block's vertical MIDDLE (CSS translateY(-50%))
       curBlockStart = hit.start;
     };
 

@@ -17,9 +17,18 @@ import { displayType } from './citePicker';
 import { renderNameSource } from './renderName';
 import type { Name } from './names';
 
-interface Editing {
+export interface Editing {
   unitId: string;
   focusId: string | null; // the name to focus on enter (null → the first / a fresh empty one)
+}
+/** The per-block title data the prose NodeView renders (out of band, in its chrome row). Carried on a
+ *  `Decoration.node` spec rather than a block-start widget (a widget there scrambles block-start typing). */
+export interface TitleData {
+  unitId: string;
+  type: string;
+  number: number | null;
+  names: Name[];
+  editing: Editing | null;
 }
 interface TitleState {
   numbers: Map<string, number | null>; // unitId → its computed number (null when the policy omits it)
@@ -170,8 +179,8 @@ function buildEditor(
   }, 0);
 }
 
-/** The title-bar widget for one typed block. */
-function titleWidget(
+/** The title-bar element builder for one typed block (rendered by the prose NodeView into its chrome row). */
+export function titleWidget(
   unitId: string,
   type: string,
   number: number | null,
@@ -251,13 +260,16 @@ export const typeTitle = new Plugin<TitleState>({
         const names = (block.attrs.names as Name[]) ?? [];
         const number = ps.numbers.get(unitId) ?? null;
         const editing = ps.editing && ps.editing.unitId === unitId ? ps.editing : null;
+        // OUT OF BAND: carry the title DATA on a node decoration; the prose NodeView renders it in its chrome
+        // row, OUTSIDE the editable content. (A block-start title WIDGET sat at the caret position and
+        // scrambled block-opening typing — a `$…$` equation never recognized; PM #1061.)
         decos.push(
-          Decoration.widget(offset + 1, titleWidget(unitId, type, number, names, editing), {
-            side: -1,
-            stopEvent: () => true, // the title is chrome — PM ignores its events (so the inputs work)
-            // re-render when the number, the names, or this block's edit-state change.
-            key: `title:${unitId}:${number}:${editing ? `edit:${editing.focusId}` : names.map((n) => `${n.id}=${n.name}`).join('|')}`,
-          }),
+          Decoration.node(
+            offset,
+            offset + block.nodeSize,
+            {},
+            { title: { unitId, type, number, names, editing } satisfies TitleData },
+          ),
         );
       });
       return decos.length ? DecorationSet.create(state.doc, decos) : null;
