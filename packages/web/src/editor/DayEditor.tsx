@@ -107,7 +107,8 @@ delete baseKeymapNoLineKeys['Ctrl-e'];
 function posOfUnit(doc: Node, unitId: string): number | null {
   let found: number | null = null;
   doc.forEach((block, offset) => {
-    if (found === null && block.type.name === 'prose' && block.attrs.unitId === unitId) found = offset;
+    if (found === null && block.type.name === 'prose' && block.attrs.unitId === unitId)
+      found = offset;
   });
   return found;
 }

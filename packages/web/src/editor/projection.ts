@@ -265,7 +265,8 @@ export function projectToDoc(content: MathContent, handles: ProjectedHandle[] = 
     arr.push({ id: h.id, name: h.name });
     namesByUnit.set(h.target_unit_id, arr);
   }
-  for (const arr of namesByUnit.values()) arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const arr of namesByUnit.values())
+    arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   // Children indexed by parent, each sorted by position. The doc is a FLAT list of blocks in DOCUMENT
   // ORDER — a pre-order DFS over the section tree (§B): a heading is emitted, then its body + subsections
   // recurse. Every unit is ONE block (the title lives on the heading), so the flat consumers are unchanged

@@ -54,7 +54,13 @@ function sameNames(a: Name[], b: Name[]): boolean {
 }
 
 /** Build the inline name EDITOR into `bar` (replacing the static names): one `<input>` per name + ＋/✕. */
-function buildEditor(view: EditorView, bar: HTMLElement, unitId: string, names: Name[], focusId: string | null): void {
+function buildEditor(
+  view: EditorView,
+  bar: HTMLElement,
+  unitId: string,
+  names: Name[],
+  focusId: string | null,
+): void {
   const rows: { id: string; input: HTMLInputElement }[] = [];
   let done = false;
   const finish = (write: boolean): void => {
@@ -66,7 +72,10 @@ function buildEditor(view: EditorView, bar: HTMLElement, unitId: string, names: 
         .map((r) => ({ id: r.id, name: r.input.value.trim() }))
         .filter((n) => n.name.length > 0);
       const pos = blockPosOf(view.state.doc, unitId);
-      const cur = (pos != null ? (view.state.doc.nodeAt(pos)?.attrs.names as Name[] | undefined) : undefined) ?? [];
+      const cur =
+        (pos != null
+          ? (view.state.doc.nodeAt(pos)?.attrs.names as Name[] | undefined)
+          : undefined) ?? [];
       // Only WRITE when the names actually changed — a no-op edit (select a title, click away) must not
       // dirty the doc (else a spurious "Unsaved → Saved" with nothing to save). `setMeta` alone (the exit)
       // doesn't change the doc, so it never triggers autosave.
@@ -162,7 +171,13 @@ function buildEditor(view: EditorView, bar: HTMLElement, unitId: string, names: 
 }
 
 /** The title-bar widget for one typed block. */
-function titleWidget(unitId: string, type: string, number: number | null, names: Name[], editing: Editing | null) {
+function titleWidget(
+  unitId: string,
+  type: string,
+  number: number | null,
+  names: Name[],
+  editing: Editing | null,
+) {
   return (view: EditorView): HTMLElement => {
     const bar = document.createElement('span');
     bar.className = 'mm-title';
@@ -170,7 +185,13 @@ function titleWidget(unitId: string, type: string, number: number | null, names:
 
     const label = document.createElement('span');
     label.className = 'mm-title-label';
-    label.textContent = number != null ? `${displayType(type)} ${number}` : displayType(type);
+    // The designation ("Theorem 1") is CHROME, not body content — render it as CSS pseudo-content
+    // (`::before { content: attr(data-label) }`) so it is NEVER part of the block's textContent/copy. An
+    // in-band `textContent` here leaks into the paragraph's text ("Theorem 1The statement…") and into copy.
+    label.setAttribute(
+      'data-label',
+      number != null ? `${displayType(type)} ${number}` : displayType(type),
+    );
     bar.appendChild(label);
 
     if (editing && editing.unitId === unitId) {

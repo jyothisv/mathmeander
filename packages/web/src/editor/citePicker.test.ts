@@ -126,7 +126,9 @@ describe('bestMatch — the alias a query selects within a unit', () => {
 
 describe('localBlocks', () => {
   /** A doc of prose blocks with the cursor placed in the LAST block. */
-  function docState(blocks: Array<{ unitId: string; unitType: string | null; text: string }>): EditorState {
+  function docState(
+    blocks: Array<{ unitId: string; unitType: string | null; text: string }>,
+  ): EditorState {
     const nodes = blocks.map((b) =>
       editorSchema.nodes.prose.create(
         { unitId: b.unitId, unitType: b.unitType },

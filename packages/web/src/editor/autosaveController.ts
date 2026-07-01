@@ -54,10 +54,18 @@ export interface AutosavePorts {
   docStructuralNeeds(server: MathContent): StructuralNeed[];
   /** Issue the §6.3b `set_handle` op for one HANDLE (`name: ''` clears) at `expectedRevision`; resolves to
    *  the canonical content echo; throws ApiError. The fourth op-axis, after content + type + structure. */
-  setHandle(handleId: string, unitId: string, name: string, expectedRevision: number): Promise<MathContent>;
+  setHandle(
+    handleId: string,
+    unitId: string,
+    name: string,
+    expectedRevision: number,
+  ): Promise<MathContent>;
   /** The SENDABLE name delta (= `nameNeeds`): persisted units whose `names` attr diverges from `sent`
    *  (the last-persisted name per HANDLE id). What `drainNames` can `set_handle` now. */
-  docNameNeeds(server: MathContent, sent: Map<string, { unitId: string; name: string }>): NameNeed[];
+  docNameNeeds(
+    server: MathContent,
+    sent: Map<string, { unitId: string; name: string }>,
+  ): NameNeed[];
   /** The handles already on the server at load (the baseline, keyed by HANDLE id) — seeds the running
    *  `sent` map so `drainNames` only fires on a real change. */
   initialNames?: Record<string, { unitId: string; name: string }>;

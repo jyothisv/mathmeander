@@ -93,7 +93,9 @@ export function applyCue(
   // The new typed unit stays in the current block's section (inherit `parentId`; §B); its `names` carry the
   // captured epithet (chrome — the title widget renders it).
   const parentId = ($start.parent.attrs.parentId as string | null) ?? null;
-  tr.split(start, 1, [{ type: proseType, attrs: { unitId: null, unitType: type, parentId, names } }]);
+  tr.split(start, 1, [
+    { type: proseType, attrs: { unitId: null, unitType: type, parentId, names } },
+  ]);
   const $after = tr.doc.resolve(tr.mapping.map(start, 1));
   return tr.setSelection(Selection.near($after, 1));
 }
@@ -578,7 +580,8 @@ export const clearTypeAtStart: Command = (state, dispatch) => {
     // anyway), so the name axis drops the now-orphaned handles instead of leaving them alive server-side.
     const pos = $cursor.before();
     const tr = state.tr.setNodeAttribute(pos, 'unitType', null);
-    if ((($cursor.parent.attrs.names as unknown[]) ?? []).length > 0) tr.setNodeAttribute(pos, 'names', []);
+    if ((($cursor.parent.attrs.names as unknown[]) ?? []).length > 0)
+      tr.setNodeAttribute(pos, 'names', []);
     dispatch(tr);
   }
   return true;

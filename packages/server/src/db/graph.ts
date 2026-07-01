@@ -758,7 +758,9 @@ export async function persistContentDelta(
       // persistObjectGraph.
       for (const link of delta.linksUpserted ?? []) await upsertLink(client, link);
       if ((delta.linksStaled ?? []).length > 0) {
-        await client.query(`UPDATE links SET status = 'stale' WHERE id = ANY($1)`, [delta.linksStaled]);
+        await client.query(`UPDATE links SET status = 'stale' WHERE id = ANY($1)`, [
+          delta.linksStaled,
+        ]);
       }
       // EDGE CLEANUP ON DELETE: a deleted unit on EITHER end of a `from_content` citation would trip the
       // deferred links→content_units composite FK at COMMIT (23503 → 422 wedge). The core STALES a deleted

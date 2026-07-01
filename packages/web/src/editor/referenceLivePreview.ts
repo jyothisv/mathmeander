@@ -124,7 +124,9 @@ export function referenceLivePreview(opts: { selfObjectId: string }): Plugin<Ref
             object_id?: string;
             unit_id?: string;
           } | null;
-          if (!(target?.kind === 'unit' && target.object_id === opts.selfObjectId && target.unit_id)) {
+          if (
+            !(target?.kind === 'unit' && target.object_id === opts.selfObjectId && target.unit_id)
+          ) {
             return; // not a same-doc unit → keep the atom's stored text (fallback)
           }
           const unitId = target.unit_id;

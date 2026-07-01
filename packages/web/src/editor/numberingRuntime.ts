@@ -57,6 +57,10 @@ export function displayLabels(
   policy: NumberingPolicyInput = DEFAULT_POLICY,
 ): UnitLabel[] {
   if (!loaded) return [];
-  const json = wasmDisplayLabels(JSON.stringify(blocks), JSON.stringify(handles), JSON.stringify(policy));
+  const json = wasmDisplayLabels(
+    JSON.stringify(blocks),
+    JSON.stringify(handles),
+    JSON.stringify(policy),
+  );
   return (JSON.parse(json) as { labels: UnitLabel[] }).labels;
 }

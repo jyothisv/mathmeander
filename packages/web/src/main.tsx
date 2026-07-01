@@ -27,7 +27,8 @@ function mount(): void {
 // citations → their stored fallback text) rather than crashing the editor.
 void Promise.allSettled([initMathRuntime(), initNumberingRuntime()]).then((results) => {
   results.forEach((r) => {
-    if (r.status === 'rejected') console.error('A WASM runtime failed to load — degrading.', r.reason);
+    if (r.status === 'rejected')
+      console.error('A WASM runtime failed to load — degrading.', r.reason);
   });
   mount();
 });

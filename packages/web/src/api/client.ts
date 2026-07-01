@@ -238,8 +238,9 @@ export async function setHandle(
     name: body.name,
     scope: 'object',
   };
-  return (await request('POST', `/api/objects/${objectId}/ops/set-handle`, OpOutcomeEnvelope, input))
-    .outcome;
+  return (
+    await request('POST', `/api/objects/${objectId}/ops/set-handle`, OpOutcomeEnvelope, input)
+  ).outcome;
 }
 
 /** `toggle_expression_placement` (§6.3a, the "$$/$" gesture): PROMOTE an inline expression to a display

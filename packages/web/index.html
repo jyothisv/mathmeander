@@ -117,6 +117,11 @@
         color: rgba(110, 110, 150, 0.95);
         white-space: nowrap;
       }
+      /* The designation text is pseudo-content so it holds NO in-band text (clean block textContent/copy —
+         never "Theorem 1The statement…"); blockHandle's ⋮⋮ uses the same trick. */
+      .day-editor .mm-title-label::before {
+        content: attr(data-label);
+      }
       .day-editor .mm-title-names {
         font-size: 0.86rem;
         font-weight: 600;
@@ -247,37 +252,22 @@
       .day-editor .mm-fold-toggle.is-folded {
         opacity: 1;
       }
-      /* Notion-style per-block handle: a ⋮⋮ grip in the gutter (farther left than the fold chevron), shown on
-         hover / when the block is active. Click → the Move up / Move down menu. */
-      .day-editor .mm-block-handle {
-        position: absolute;
-        left: -1.8rem;
-        top: 50%;
-        transform: translateY(-50%); /* vertically centered on the block */
+      /* Notion-style per-block handle: a ⋮⋮ grip in the gutter, revealed on hover. Click → the Move up /
+         Move down menu. It is a SINGLE hover-tracked overlay in <body> (position: fixed, JS-positioned by
+         blockHandle.ts) — NOT a per-block widget in the content — so it never sits at a block-start caret
+         position (which scrambled block-opening math; see blockHandle.ts / PM issue #1061). */
+      .mm-block-handle {
+        position: fixed;
+        z-index: 40;
         cursor: grab;
         user-select: none;
-        color: rgba(110, 110, 150, 0.45);
+        color: rgba(110, 110, 150, 0.55);
         font-size: 0.85em;
-        opacity: 0;
-        transition: opacity 0.1s ease;
+        line-height: 1.2;
+        padding: 0 0.15rem; /* a wider hover target that bridges the block↔handle gutter gap */
       }
-      /* The glyph is pseudo-content so the handle holds NO in-band text (clean textContent/copy; never
-         scrambles a block-start math render that shares the position). */
-      .day-editor .mm-block-handle::before {
-        content: '⋮⋮';
-      }
-      .day-editor .ProseMirror p:hover .mm-block-handle,
-      .day-editor .ProseMirror p.unit-active .mm-block-handle {
-        opacity: 1;
-      }
-      /* The config (notation) block renders as div.mm-config, NOT a <p> — the reveal rules above (scoped to
-         `p`) miss it, and without a positioning context the absolute handle lands in the wrong place. Give the
-         config block the same gutter affordance: a relative context + reveal the ⋮⋮ handle on hover. */
-      .day-editor .ProseMirror .mm-config {
-        position: relative;
-      }
-      .day-editor .ProseMirror .mm-config:hover .mm-block-handle {
-        opacity: 1;
+      .mm-block-handle:hover {
+        color: rgba(110, 110, 150, 0.9);
       }
       .mm-block-menu {
         position: absolute;

@@ -1,25 +1,17 @@
-// blockHandle: a ⋮⋮ handle widget per prose block (the gutter affordance). The menu interaction is DOM-level
-// (manual/e2e); here we lock that exactly one handle is produced per prose block.
+// blockHandle: a ⋮⋮ gutter handle. It is a HOVER-TRACKED OVERLAY in <body> (managed in the plugin's
+// `view()`), NOT a per-block widget decoration — a block-START widget sits at the caret position and hits a
+// browser-level ProseMirror caret bug (#1061) that SCRAMBLED text typed at a block start (a block-opening
+// `$…$` equation never recognized). The hover/positioning/menu are DOM-level (manual/e2e — see
+// e2e/tests/journal-math.spec.ts, which now passes block-start equations). Here we lock the design invariant
+// that prevents a regression back into the bug.
 import { describe, expect, it } from 'vitest';
-import { EditorState } from 'prosemirror-state';
-import type { DecorationSet } from 'prosemirror-view';
-import { editorSchema } from './schema';
 import { blockHandle } from './blockHandle';
 
-const prose = (id: string, text: string) =>
-  editorSchema.nodes.prose.create({ unitId: id }, text ? [editorSchema.text(text)] : undefined);
-
 describe('blockHandle', () => {
-  it('adds a handle widget to each prose block AND the config block', () => {
-    const doc = editorSchema.nodes.doc.create(null, [
-      editorSchema.nodes.config.create({ unitId: 'c0', configFamily: 'notation' }, [
-        editorSchema.text('Z* := ZZ^*'),
-      ]),
-      prose('a', 'A'),
-      prose('b', 'B'),
-    ]);
-    const state = EditorState.create({ schema: editorSchema, doc, plugins: [blockHandle] });
-    const decos = blockHandle.props.decorations!.call(blockHandle, state) as DecorationSet;
-    expect(decos.find().length).toBe(3); // a handle on the config block + the two prose blocks
+  it('injects NO document decoration — it is an out-of-flow overlay, never a block-start widget (PM #1061)', () => {
+    // A per-block `Decoration.widget(offset+1, …)` is exactly what corrupted block-start typing. Guard that
+    // the plugin exposes no `decorations` prop and instead drives everything from `view()` (the overlay).
+    expect(blockHandle.props?.decorations).toBeUndefined();
+    expect(typeof blockHandle.spec.view).toBe('function');
   });
 });

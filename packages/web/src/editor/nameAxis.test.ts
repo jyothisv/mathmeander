@@ -16,8 +16,16 @@ import {
 import { localBlocks } from './citePicker';
 import { EditorState, TextSelection } from 'prosemirror-state';
 
-function typed(unitId: string, type: string, names: { id: string; name: string }[], text = 'the statement') {
-  return editorSchema.nodes.prose.create({ unitId, unitType: type, names }, editorSchema.text(text));
+function typed(
+  unitId: string,
+  type: string,
+  names: { id: string; name: string }[],
+  text = 'the statement',
+) {
+  return editorSchema.nodes.prose.create(
+    { unitId, unitType: type, names },
+    editorSchema.text(text),
+  );
 }
 const server = (ids: string[]): MathContent =>
   ({ object_id: 'o', revision: 1, units: ids.map((id) => ({ id })) }) as unknown as MathContent;
@@ -90,10 +98,14 @@ describe('a reference round-trips its chosen targetHandleId', () => {
       targetHandleId: 'h9',
     });
     const doc = editorSchema.nodes.doc.create(null, [
-      editorSchema.nodes.prose.create({ unitId: 'p1', unitType: null }, [editorSchema.text('see '), ref]),
+      editorSchema.nodes.prose.create({ unitId: 'p1', unitType: null }, [
+        editorSchema.text('see '),
+        ref,
+      ]),
     ]);
     const flushed = flushToContent(doc, server([])).upserts.find((u) => u.id === 'p1');
-    const inline = (flushed?.content as { inline: { kind: string; target_handle_id?: string }[] }).inline;
+    const inline = (flushed?.content as { inline: { kind: string; target_handle_id?: string }[] })
+      .inline;
     const r = inline.find((i) => i.kind === 'reference');
     expect(r?.target_handle_id).toBe('h9');
 
@@ -177,7 +189,9 @@ describe('projectToDoc — a TYPED HEADING carries its names (review M3)', () =>
       provenance_id: 'p',
     } as unknown as Unit;
     const content: MathContent = { object_id: 'o', revision: 1, units: [heading] };
-    const block = projectToDoc(content, [{ target_unit_id: 'h1', id: 'g1', name: 'Pythagoras' }]).firstChild!;
+    const block = projectToDoc(content, [
+      { target_unit_id: 'h1', id: 'g1', name: 'Pythagoras' },
+    ]).firstChild!;
     expect(block.attrs.heading).toBe(true);
     expect((block.attrs.names as { name: string }[]).map((n) => n.name)).toEqual(['Pythagoras']);
   });

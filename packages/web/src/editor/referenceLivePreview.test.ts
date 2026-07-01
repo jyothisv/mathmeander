@@ -43,7 +43,10 @@ describe('docBlocks', () => {
 
   it('skips blocks without a stamped unitId', () => {
     const doc = editorSchema.nodes.doc.create(null, [
-      editorSchema.nodes.prose.create({ unitId: null, unitType: 'theorem' }, editorSchema.text('x')),
+      editorSchema.nodes.prose.create(
+        { unitId: null, unitType: 'theorem' },
+        editorSchema.text('x'),
+      ),
       prose({ unitId: 't1', unitType: 'theorem' }),
     ]);
     expect(docBlocks(doc).map((b) => b.id)).toEqual(['t1']);

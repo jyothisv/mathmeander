@@ -342,7 +342,11 @@ describe('save_content: prose authoring', () => {
     const dayId = await newDay();
     const cited = proseUnit(dayId, 0, 'the cited theorem');
     const linkId = uuidv7();
-    await save(dayId, { expected_revision: 1, upserts: [cited, citeUnit(dayId, cited.id, linkId, 1)], deletes: [] });
+    await save(dayId, {
+      expected_revision: 1,
+      upserts: [cited, citeUnit(dayId, cited.id, linkId, 1)],
+      deletes: [],
+    });
     // Delete the CITED unit → the derived (from_content) inbound edge is removed; the delete commits.
     const res = await save(dayId, { expected_revision: 2, upserts: [], deletes: [cited.id] });
     expect(res.statusCode).toBe(200);
@@ -367,11 +371,21 @@ describe('save_content: prose authoring', () => {
     const cited = proseUnit(dayId, 0, 'the cited theorem');
     const linkId = uuidv7();
     const citing = citeUnit(dayId, cited.id, linkId, 1);
-    await save(dayId, { expected_revision: 1, upserts: [cited, citing], deletes: [] });
+    const r1 = await save(dayId, { expected_revision: 1, upserts: [cited, citing], deletes: [] });
+    // Re-submit the SERVER-stamped unit (its minted provenance + intact reference atom), as the editor
+    // does — a raw re-send of the placeholder-provenance `citing` would trip the reconcile gate (a frozen
+    // facet changed → 422) before the C2 link logic ever runs. Mirrors the `edits one paragraph` test.
+    const persistedCiting = (
+      r1.json() as { outcome: { content: { units: Unit[] } } }
+    ).outcome.content.units.find((u) => u.id === citing.id)!;
     await save(dayId, { expected_revision: 2, upserts: [], deletes: [cited.id] }); // delete the target
     // Re-save the citer (its atom still targets the gone unit): previously this re-derived a dangling
     // target_unit_id → 422 wedge. C2: the core downgrades it to UNRESOLVED → the save commits.
-    const res = await save(dayId, { expected_revision: 3, upserts: [citing], deletes: [] });
+    const res = await save(dayId, {
+      expected_revision: 3,
+      upserts: [persistedCiting],
+      deletes: [],
+    });
     expect(res.statusCode).toBe(200);
     const link = await stack.db.query<{ target_unit_id: string | null }>(
       `SELECT target_unit_id FROM links WHERE id = $1`,

@@ -31,7 +31,10 @@ export interface BlockCandidate {
 
 /** The alias (within a unit) that a query selects: empty query → the primary (min-by-id); else the name
  *  with the EARLIEST case-insensitive substring match; no match → the primary; no names → `null` (by number). */
-export function bestMatch(c: BlockCandidate, query: string): { handleId: string; name: string } | null {
+export function bestMatch(
+  c: BlockCandidate,
+  query: string,
+): { handleId: string; name: string } | null {
   if (c.names.length === 0) return null;
   const primary = sortedNames(c.names)[0]!;
   if (query === '') return { handleId: primary.id, name: primary.name };
@@ -88,7 +91,9 @@ export function localBlocks(state: EditorState): BlockCandidate[] {
     const unitId = block.attrs.unitId as string | null;
     if (!type || !unitId || unitId === curId) return;
     const snippet = block.textContent.replace(/\s+/g, ' ').trim().slice(0, 60);
-    const names = sortedNames(((block.attrs.names as Name[]) ?? []).filter((n) => n.name.length > 0));
+    const names = sortedNames(
+      ((block.attrs.names as Name[]) ?? []).filter((n) => n.name.length > 0),
+    );
     out.push({ unitId, type, snippet, names });
   });
   return out;
