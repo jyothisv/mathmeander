@@ -148,6 +148,78 @@ describe('create → read', () => {
     expect(list.statusCode).toBe(200);
     expect(list.json().items).toHaveLength(2);
   });
+
+  it('the listing SKIPS annotation objects and carries a notebook slug (Desk links to the right surface)', async () => {
+    // A note whose sub-term gets a brace annotation: the annotation OBJECT (untitled, a decoration)
+    // must never appear in the listing — it flooded the Desk as "(untitled)".
+    const note = await createNote({ title: 'annotated' });
+    const noteId = note.json().object.id as string;
+    const unitId = uuidv7();
+    await stack.app.inject({
+      method: 'PUT',
+      url: `/api/objects/${noteId}/content`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: 1,
+        upserts: [
+          {
+            id: unitId,
+            object_id: noteId,
+            position: 0,
+            status: 'rough',
+            declared_by: 'user',
+            content: { kind: 'prose', text: 'the discriminant', inline: [] },
+            provenance_id: uuidv7(),
+          },
+        ],
+        deletes: [],
+      },
+    });
+    await stack.app.inject({
+      method: 'POST',
+      url: `/api/objects/${noteId}/annotations`,
+      headers: bearer(token),
+      payload: {
+        expected_revision: 2,
+        space_id: uuidv7(),
+        upserts: [
+          {
+            annotation_id: uuidv7(),
+            primitives: [{ kind: 'overbrace', label: { text: '', inline: [] }, gap: 'small' }],
+            targets: [
+              {
+                id: uuidv7(),
+                role: 'target',
+                position: 0,
+                target_unit_id: unitId,
+                extent: { kind: 'locator', locator: { kind: 'prose_span', start: 4, end: 16 } },
+              },
+            ],
+          },
+        ],
+        deletes: [],
+      },
+    });
+    // A notebook: listed WITH its slug so the Desk can route to /notebooks/$slug.
+    const nb = await stack.app.inject({
+      method: 'POST',
+      url: '/api/notebooks',
+      headers: bearer(token),
+      payload: { title: 'Artificial Life' },
+    });
+    expect([200, 201]).toContain(nb.statusCode);
+
+    const list = await stack.app.inject({
+      method: 'GET',
+      url: '/api/objects',
+      headers: bearer(token),
+    });
+    const items = list.json().items as { id: string; type: string; slug?: string }[];
+    expect(items.some((o) => o.type === 'annotation')).toBe(false); // decorations never listed
+    const notebook = items.find((o) => o.type === 'notebook');
+    expect(notebook?.slug).toBe('artificial-life');
+    expect(items.some((o) => o.id === noteId)).toBe(true); // the note itself is listed
+  });
 });
 
 describe('cross-space isolation (authorization by space, day one)', () => {

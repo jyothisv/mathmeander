@@ -104,7 +104,12 @@ export async function logout(): Promise<void> {
 // ── Objects (response shapes are the GENERATED CanonicalObject) ──
 
 const ObjectEnvelope = z.object({ object: CanonicalObjectSchema });
-const ListEnvelope = z.object({ items: z.array(CanonicalObjectSchema) });
+// A LISTED object additionally carries the identity its page route needs (a notebook's slug, a journal
+// day's date) — additive fields the Desk uses to link each entry to the RIGHT surface.
+const ListedExtrasSchema = z.object({ slug: z.string().optional(), date: z.string().optional() });
+const ListEnvelope = z.object({
+  items: z.array(z.intersection(CanonicalObjectSchema, ListedExtrasSchema)),
+});
 
 export async function createNote(input: {
   id: string;
@@ -119,7 +124,13 @@ export async function getObject(id: string): Promise<CanonicalObject> {
   return (await request('GET', `/api/objects/${id}`, ObjectEnvelope)).object;
 }
 
-export async function listObjects(): Promise<CanonicalObject[]> {
+/** A listing entry: the object + the route identity for surface types (notebook slug, journal date). */
+export type ListedObject = CanonicalObject & {
+  slug?: string | undefined;
+  date?: string | undefined;
+};
+
+export async function listObjects(): Promise<ListedObject[]> {
   return (await request('GET', '/api/objects', ListEnvelope)).items;
 }
 

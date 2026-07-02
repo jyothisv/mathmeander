@@ -83,16 +83,27 @@ export async function findObjectInSpace(
   return result.rows[0] ?? null;
 }
 
+/** An object row for the LISTING surfaces (Desk, @-picker), joined with the surface-identity details a
+ *  link needs: a notebook's `slug`, a journal day's `date` (null for other types). */
+export type ListedObjectRow = ObjectRow & { slug: string | null; date: string | null };
+
 export async function listObjectsInSpace(
   db: Queryable,
   spaceId: string,
   limit: number,
-): Promise<ObjectRow[]> {
-  const result = await db.query<ObjectRow>(
-    `SELECT id, type, title, raw_source, status, schema_version, revision,
-            provenance_id, space_id, created_at, updated_at
-     FROM objects WHERE space_id = $1
-     ORDER BY created_at DESC, id DESC
+): Promise<ListedObjectRow[]> {
+  // Reserved vocabulary with NO viewing surface is excluded: `annotation` objects are decorations (one
+  // per brace — they flooded the Desk as "(untitled)"), and source_excerpt/trail are not producible yet.
+  // A notebook/journal day IS listed, joined with the identity its page route needs (slug / date).
+  const result = await db.query<ListedObjectRow>(
+    `SELECT o.id, o.type, o.title, o.raw_source, o.status, o.schema_version, o.revision,
+            o.provenance_id, o.space_id, o.created_at, o.updated_at,
+            nd.slug, jd.date::text AS date
+     FROM objects o
+     LEFT JOIN notebook_detail nd ON nd.object_id = o.id
+     LEFT JOIN journal_day_detail jd ON jd.object_id = o.id
+     WHERE o.space_id = $1 AND o.type NOT IN ('annotation', 'source_excerpt', 'trail')
+     ORDER BY o.created_at DESC, o.id DESC
      LIMIT $2`,
     [spaceId, limit],
   );

@@ -68,7 +68,15 @@ export function registerObjectRoutes(app: FastifyInstance, deps: AppDeps): void 
     const ctx = await requireSession(deps, req);
     const limit = clampLimit((req.query as { limit?: string }).limit);
     const rows = await listObjectsInSpace(deps.db, ctx.spaceId, limit);
-    return { items: rows.map(readThroughCore) };
+    // Each item is the core-validated object PLUS the identity its page route needs (a notebook's slug,
+    // a journal day's date) — additive fields the Desk uses to link to the RIGHT surface.
+    return {
+      items: rows.map((row) => ({
+        ...readThroughCore(row),
+        ...(row.slug != null ? { slug: row.slug } : {}),
+        ...(row.date != null ? { date: row.date } : {}),
+      })),
+    };
   });
 
   app.get('/api/objects/:id', async (req) => {
