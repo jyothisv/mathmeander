@@ -5,8 +5,9 @@
 // stale-write 422) runs the additive merge (merge.ts); a same-unit clash surfaces a CONFLICT the user
 // resolves ("Load the latest" / "Keep mine"). The controller owns the state machine; the e2e merge suite
 // is the behaviour-preservation safety net.
-import type { MathContent, Unit, UnitType } from '@mathmeander/schema';
+import type { AnnotationDraft, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { planMerge, type Delta } from './merge';
+import { annotationSig } from './projection';
 import type { NameNeed, StructuralIntent, StructuralNeed, TypeNeed } from './projection';
 import { classifyFlushError } from './errorClass';
 import type { SaveState } from './saveStatus';
@@ -69,6 +70,21 @@ export interface AutosavePorts {
   /** The handles already on the server at load (the baseline, keyed by HANDLE id) — seeds the running
    *  `sent` map so `drainNames` only fires on a real change. */
   initialNames?: Record<string, { unitId: string; name: string }>;
+  /** POST the §6.2 annotation delta via `reconcile_annotations` (upserts + deletes). A SEPARATE aggregate:
+   *  no host-revision gate/bump and no content echo (resolves void; `expectedRevision` rides only for the
+   *  DTO). Optional — a surface without annotations omits it and the drain no-ops. The FIFTH op-axis. */
+  applyAnnotations?(
+    upserts: AnnotationDraft[],
+    deletes: string[],
+    expectedRevision: number,
+  ): Promise<void>;
+  /** The desired annotation set from the live doc (= `docAnnotationDrafts`). What `drainAnnotations` diffs
+   *  against the `sent` baseline to compute upserts + deletes. */
+  docAnnotationDrafts?(): AnnotationDraft[];
+  /** The server's annotation baseline at load (annotationId → draft SIG, via `serverAnnotationSigs`) — seeds
+   *  the running `sent` map so the drain fires only on a real change (and the empty doc doesn't spuriously
+   *  delete every loaded annotation). */
+  initialAnnotations?: Record<string, string>;
   /** My pending structural INTENTS vs `baseline` (= `structuralIntents`): incl. brand-new blocks. The
    *  keepStruct reproject overlay + the dirty/draft decision (a pending section gesture keeps the draft). */
   docStructuralIntents(baseline: MathContent): StructuralIntent[];
@@ -100,6 +116,9 @@ export interface AutosaveController {
   canFlushOnReconnect(): boolean;
   /** Restore-on-mount bridge: seed the dirty/conflict flags (DayEditor sets its own status payload). */
   noteRestored(opts: { conflict: boolean }): void;
+  /** Seed the ANNOTATION baseline (annotationId → sig) after the async annotation load resolves — so the
+   *  first drain doesn't redundantly re-upsert the annotations already on the server (§6.2). */
+  seedAnnotations(baseline: Record<string, string>): void;
   /** Mark the controller torn down — guards async continuations from writing after unmount. */
   dispose(): void;
 }
@@ -115,6 +134,9 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
   const sentNames = new Map<string, { unitId: string; name: string }>(
     Object.entries(ports.initialNames ?? {}),
   );
+  // The running ANNOTATION baseline (last sig persisted per annotationId), seeded from the loaded annotations.
+  // `drainAnnotations` diffs the doc's annotation drafts against this; on success it advances (§6.2).
+  const sentAnnotations = new Map<string, string>(Object.entries(ports.initialAnnotations ?? {}));
 
   let busy = false; // single in-progress guard across the whole flush → merge / resolve chain
   let conflict = false; // a 409 we couldn't merge — auto-save paused until the user resolves
@@ -140,7 +162,9 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     const typesLeft = ports.docTypeIntents(prior.current).length > 0;
     const structLeft = ports.docStructuralIntents(prior.current).length > 0;
     const namesLeft = ports.docNameNeeds(prior.current, sentNames).length > 0;
-    const stillDirty = proseLeft || typesLeft || structLeft || namesLeft;
+    const anno = pendingAnnotations();
+    const annosLeft = anno.upserts.length > 0 || anno.deletes.length > 0;
+    const stillDirty = proseLeft || typesLeft || structLeft || namesLeft || annosLeft;
     if (!proseLeft) semanticLatch = null; // prose is synced → any prose latch is now stale
     if (stillDirty) ports.persistDraft();
     else ports.clearDraft();
@@ -349,6 +373,48 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     }
   };
 
+  /** The annotation upserts/deletes SENDABLE now vs the `sent` baseline — the drain input AND the flush/dirty
+   *  gate (§6.2). Upserts = doc drafts whose sig moved AND whose bound unit is already on the server; deletes =
+   *  sent ids no longer in the doc. An upsert whose `target_unit_id` isn't yet persisted is SKIPPED here (the
+   *  `typeNeeds` skip-not-yet-persisted idiom) so `reconcile_annotations` never 422s on a missing unit — it
+   *  drains cleanly on a later flush once `save_content` created the unit. The doc stays dirty meanwhile via the
+   *  content delta that will create that unit. Pure. */
+  const pendingAnnotations = (): { upserts: AnnotationDraft[]; deletes: string[] } => {
+    if (!ports.docAnnotationDrafts) return { upserts: [], deletes: [] };
+    const drafts = ports.docAnnotationDrafts();
+    const desiredIds = new Set(drafts.map((d) => d.annotation_id));
+    const onServer = new Set(prior.current.units.map((u) => u.id));
+    const upserts = drafts.filter(
+      (d) =>
+        sentAnnotations.get(d.annotation_id) !== annotationSig(d) &&
+        d.targets.every((t) => onServer.has(t.target_unit_id)),
+    );
+    const deletes = [...sentAnnotations.keys()].filter((id) => !desiredIds.has(id));
+    return { upserts, deletes };
+  };
+
+  /** Apply pending ANNOTATION changes (§6.2) via `reconcile_annotations`, AFTER content/structure/type/name.
+   *  Annotations are a SEPARATE, self-healing aggregate with NO host-revision gate, so this is the SIMPLEST
+   *  drain (even simpler than names): send the diff, advance the `sent` baseline on success, and DEFER on ANY
+   *  error — a 422 for a target on a not-yet-persisted unit self-corrects on the next flush (the content drain
+   *  ran first, so by then the unit exists). A broken sub-anchor is not an error here: the server keeps it as
+   *  `stale`. The annotation NEVER rides the prose delta. The CALLER owns `busy`. */
+  const drainAnnotations = async (): Promise<'done' | 'deferred'> => {
+    if (!ports.applyAnnotations) return 'done';
+    const { upserts, deletes } = pendingAnnotations();
+    if (upserts.length === 0 && deletes.length === 0) return 'done';
+    try {
+      await ports.applyAnnotations(upserts, deletes, prior.current.revision);
+      if (disposed) return 'done';
+      for (const d of upserts) sentAnnotations.set(d.annotation_id, annotationSig(d));
+      for (const id of deletes) sentAnnotations.delete(id);
+      return 'done';
+    } catch {
+      if (disposed) return 'done';
+      return 'deferred'; // transient, a race, OR a not-yet-persisted target — the draft holds; next flush retries
+    }
+  };
+
   /** Shared success tail of flush + runMerge: drain pending STRUCTURE, then TYPES, then settle the status
    *  (unless a drain ended in a conflict, which already set it). Structure FIRST: a unit must become a
    *  heading before a child reparents under it (§B parent-capability), and a reparent's target only exists
@@ -375,6 +441,12 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     const typeOutcome = await drainTypes();
     if (typeOutcome === 'conflict') return;
     const nameOutcome = await drainNames();
+    // Annotations LAST: a self-healing separate aggregate that needs the bound units already persisted
+    // (content drained above) so a sub-term/phrase target resolves rather than 422-ing (§6.2). Its outcome is
+    // DELIBERATELY excluded from the content-`error` decision below: annotations never gate the host revision,
+    // so a deferred annotation is NOT a "Couldn't save" — it stays `dirty` (settleAfterFlush counts annosLeft)
+    // and retries quietly on the next flush. Only content/structure/type/name deferrals are real save errors.
+    await drainAnnotations();
     const deferred =
       structOutcome === 'deferred' || typeOutcome === 'deferred' || nameOutcome === 'deferred';
     settleAfterFlush(proseLatched ? true : deferred ? ports.isOnline() : false);
@@ -472,8 +544,10 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     const hasProse = upserts.length > 0 || deletes.length > 0;
     const hasTypeOps = ports.docTypeNeeds(prior.current).length > 0; // sendable set_unit_type now
     const hasStructOps = ports.docStructuralNeeds(prior.current).length > 0; // sendable toggle/reparent now
+    const anno = pendingAnnotations();
+    const hasAnnoOps = anno.upserts.length > 0 || anno.deletes.length > 0; // sendable reconcile_annotations now
 
-    if (!hasProse && !hasTypeOps && !hasStructOps) {
+    if (!hasProse && !hasTypeOps && !hasStructOps && !hasAnnoOps) {
       // No NETWORK work this cycle. But a pending unpersisted INTENT (a cued-but-empty block, or a section
       // gesture on a not-yet-persisted unit) must keep its draft so it survives a reload; else fully clean →
       // clear. A clean doc never flips `saving` either way.
@@ -597,6 +671,11 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     if (opts.conflict) conflict = true;
   };
 
+  const seedAnnotations = (baseline: Record<string, string>): void => {
+    sentAnnotations.clear();
+    for (const [id, sig] of Object.entries(baseline)) sentAnnotations.set(id, sig);
+  };
+
   const dispose = (): void => {
     disposed = true;
   };
@@ -608,6 +687,7 @@ export function createAutosaveController(ports: AutosavePorts): AutosaveControll
     noteEdit,
     canFlushOnReconnect,
     noteRestored,
+    seedAnnotations,
     dispose,
   };
 }

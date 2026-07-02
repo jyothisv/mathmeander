@@ -90,6 +90,20 @@ pub enum ExprKind {
     /// Explicit grouping `( .. )` — REMEMBERED (not flattened): both the slash/fraction
     /// rule and faithful round-trip depend on whether an operand was parenthesized.
     Group(Box<Expr>),
+    /// A SET literal `{a, b, c}` (`{}` = the empty set): comma-separated elements between
+    /// curly braces — first-class so a set is one addressable sub-term (annotation/click
+    /// anchors bind the whole set, §6.2), rendered `\{a, b, c\}`.
+    Set(Vec<Expr>),
+    /// A TUPLE literal: a BARE parenthesized list of ≥2 comma-separated elements
+    /// (`(a, b)`, `(Q, Sigma, delta)`) — first-class so a tuple is one addressable sub-term
+    /// (§6.2), and STRICTLY distinct from the other paren roles: `(a + b)` (one element, no
+    /// comma) stays `Group` (grouping semantics), and `f(x, y)` stays `Call` (head present).
+    Tuple(Vec<Expr>),
+    /// A TOP-LEVEL comma SEQUENCE — an enumeration with NO brackets (`a = L, R, S`,
+    /// `x = 1, y = 2`): the loosest-binding construct, formed only at the parse root where a
+    /// comma is not a bracket's element separator. Distinct from `Tuple` (parenthesized) so it
+    /// serializes verbatim (`a, b`, never `(a, b)`); each element is one addressable sub-term.
+    List(Vec<Expr>),
     /// Function application / structured form `head(args)`: `f(x)`, `sqrt(x)`, `cal(F)`,
     /// `mat(...)`. (`frac(a,b)` is parsed into `Frac` instead.)
     Call { head: Box<Expr>, args: Vec<Expr> },
@@ -165,6 +179,9 @@ impl Expr {
                 vec![]
             }
             ExprKind::Group(e) => vec![e.as_ref()],
+            ExprKind::Set(elems) | ExprKind::Tuple(elems) | ExprKind::List(elems) => {
+                elems.iter().collect()
+            }
             ExprKind::Call { head, args } => {
                 let mut v = vec![head.as_ref()];
                 v.extend(args.iter());

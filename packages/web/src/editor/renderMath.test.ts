@@ -4,7 +4,7 @@
 // real-WASM boundary needs a browser).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ render: vi.fn(), ready: true }));
+const h = vi.hoisted(() => ({ render: vi.fn(), ready: true, status: 'renderable' }));
 vi.mock('katex', () => ({ default: { render: h.render } }));
 vi.mock('./mathRuntime', () => ({
   isMathRuntimeReady: () => h.ready,
@@ -14,6 +14,9 @@ vi.mock('./mathRuntime', () => ({
   // Distinct markers (`S:` / `SD:`) so a test can tell the scoped path was taken.
   toKatexScoped: (s: string) => `S:${s}`,
   toKatexScopedDisplay: (s: string) => `SD:${s}`,
+  // The LIVE parse status (renderMathInto derives the invalid/partial affordances from the CURRENT
+  // grammar, never the stored `parse_status` — stale stored statuses must heal on render).
+  normalizeFresh: () => ({ parseStatus: h.status }),
 }));
 
 import type { MathExpression } from '@mathmeander/schema';
@@ -50,6 +53,7 @@ function expr(over: Partial<MathExpression>): MathExpression {
 
 beforeEach(() => {
   h.ready = true;
+  h.status = 'renderable';
   h.render.mockClear();
 });
 
@@ -67,6 +71,7 @@ describe('renderMathInto', () => {
 
   it('invalid → shows original_input verbatim with the warning affordance, never calls KaTeX', () => {
     const into = fakeInto();
+    h.status = 'invalid';
     renderMathInto(
       expr({ parse_status: 'invalid', surface_text: 'bad', original_input: 'bad' }),
       into as never,
@@ -156,6 +161,7 @@ describe('renderMathInto', () => {
 
   it('partially_resolved → renders AND flags the partial affordance', () => {
     const into = fakeInto();
+    h.status = 'partially_resolved';
     renderMathInto(
       expr({ parse_status: 'partially_resolved', surface_text: 'x^^' }),
       into as never,
@@ -165,6 +171,22 @@ describe('renderMathInto', () => {
     );
     expect(h.render).toHaveBeenCalledTimes(1);
     expect(into.has('math-partial')).toBe(true);
+    expect(into.has('math-invalid')).toBe(false);
+  });
+
+  it('a STALE stored parse_status heals: the live status wins over the persisted field', () => {
+    // An expression authored under an older grammar carries `partially_resolved` forever in the DB;
+    // once the current grammar parses it fully, the amber affordance must NOT show (the reported
+    // permanent underline on `tau = (Q, Sigma, delta)`).
+    const into = fakeInto();
+    h.status = 'renderable';
+    renderMathInto(
+      expr({ parse_status: 'partially_resolved', surface_text: 'tau = (Q, Sigma, delta)' }),
+      into as never,
+      { display: false },
+    );
+    expect(h.render).toHaveBeenCalledTimes(1);
+    expect(into.has('math-partial')).toBe(false);
     expect(into.has('math-invalid')).toBe(false);
   });
 });

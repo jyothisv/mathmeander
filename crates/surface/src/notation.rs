@@ -148,6 +148,24 @@ fn resolve_kind(
         | ExprKind::Text(_) => kind.clone(),
 
         ExprKind::Group(inner) => ExprKind::Group(boxed(inner, scope, budget, d)),
+        ExprKind::Tuple(elems) => ExprKind::Tuple(
+            elems
+                .iter()
+                .map(|el| resolve_bounded(el, scope, budget, d))
+                .collect(),
+        ),
+        ExprKind::List(elems) => ExprKind::List(
+            elems
+                .iter()
+                .map(|el| resolve_bounded(el, scope, budget, d))
+                .collect(),
+        ),
+        ExprKind::Set(elems) => ExprKind::Set(
+            elems
+                .iter()
+                .map(|el| resolve_bounded(el, scope, budget, d))
+                .collect(),
+        ),
         ExprKind::Call { head, args } => ExprKind::Call {
             head: boxed(head, scope, budget, d),
             args: args
@@ -276,6 +294,9 @@ mod tests {
             | ExprKind::Error(_)
             | ExprKind::Text(_) => 0,
             ExprKind::Group(inner) | ExprKind::Unary { operand: inner, .. } => node_count(inner),
+            ExprKind::Set(elems) | ExprKind::Tuple(elems) | ExprKind::List(elems) => {
+                elems.iter().map(node_count).sum()
+            }
             ExprKind::Call { head, args } => {
                 node_count(head) + args.iter().map(node_count).sum::<usize>()
             }

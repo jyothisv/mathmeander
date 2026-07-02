@@ -86,6 +86,10 @@ class ProseView {
     if (fold) this.chrome.appendChild(foldChevron(fold.id, fold.folded)(this.view));
   }
 
+  // NOTE (§6.2): annotation space is NOT reserved here. Block-level padding cannot make room for a brace on
+  // an INTERIOR line of a multi-line block, so the annotation reserve is a per-LINE spacer decoration owned by
+  // annoLivePreview (P2/P3) — never NodeView state.
+
   update(node: PMNode, decos: readonly Decoration[]): boolean {
     if (node.type.name !== 'prose') return false;
     this.syncAttrs(node);

@@ -97,6 +97,15 @@ fn rename_ident(e: &Expr, from: &str, to: &str) -> Expr {
         | ExprKind::Error(_)
         | ExprKind::Text(_) => e.clone(),
         ExprKind::Group(inner) => Expr::synthetic(ExprKind::Group(rec(inner))),
+        ExprKind::Tuple(elems) => Expr::synthetic(ExprKind::Tuple(
+            elems.iter().map(|el| rename_ident(el, from, to)).collect(),
+        )),
+        ExprKind::List(elems) => Expr::synthetic(ExprKind::List(
+            elems.iter().map(|el| rename_ident(el, from, to)).collect(),
+        )),
+        ExprKind::Set(elems) => Expr::synthetic(ExprKind::Set(
+            elems.iter().map(|el| rename_ident(el, from, to)).collect(),
+        )),
         ExprKind::Call { head, args } => Expr::synthetic(ExprKind::Call {
             head: rec(head),
             args: args.iter().map(|a| rename_ident(a, from, to)).collect(),

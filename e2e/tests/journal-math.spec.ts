@@ -52,8 +52,12 @@ test('inline $…$ renders with KaTeX once the caret leaves it, and persists acr
   await page.keyboard.type('Energy is $E = m c^2$ qed');
 
   await expect(page.locator('.day-editor .math-render .katex')).toBeVisible(); // rendered by KaTeX
-  // real-WASM boundary: the mathmeander source `c^2` was transpiled to LaTeX `c^{2}` (KaTeX MathML annotation).
-  await expect(page.locator('.day-editor .katex annotation').first()).toContainText('c^{2}');
+  // real-WASM boundary: `c^2` (mathmeander) transpiled to a LaTeX superscript (`{c}^{…}`). Inline math is now
+  // `\htmlData`-tagged per sub-term (§6.2), so the annotation carries the tags around that superscript, and the
+  // rendered DOM exposes a `data-path` per sub-term — which is what makes an inline sub-expression precise-
+  // clickable to annotate (parity with display math).
+  await expect(page.locator('.day-editor .katex annotation').first()).toContainText('{c}^{');
+  await expect(page.locator('.day-editor .math-render [data-path]').first()).toBeVisible();
   await expect(editor).toContainText('Energy is');
   await expect(editor).toContainText('qed');
 
@@ -166,7 +170,9 @@ test('Backspace after "$x$ " deletes only the trailing space, keeping the equati
   await expect(editor).toContainText('done');
 });
 
-test('double-click reveals the source; a single click does not', async ({ page }) => {
+test('render-first clicks: single + first dblclick stay rendered; a SECOND dblclick reveals the source', async ({
+  page,
+}) => {
   await openToday(page, `journal-math-dbl-${Date.now()}@mathmeander.local`);
   const editor = page.locator('.ProseMirror');
   const render = page.locator('.day-editor .math-render');
@@ -177,7 +183,15 @@ test('double-click reveals the source; a single click does not', async ({ page }
   await render.click(); // single click → stays rendered (caret placed beside it)
   await expect(render).toBeVisible();
 
-  await render.dblclick(); // double click → reveals the raw source
+  // First dblclick = STRUCTURAL selection (§6.2 render-first): the equation STAYS rendered and the
+  // annotate popover offers brace kinds for the clicked sub-term.
+  await render.dblclick();
+  await expect(render).toBeVisible();
+  await expect(page.locator('.mm-anno-popover')).toBeVisible();
+
+  // A SECOND dblclick (already structurally selected) reveals the raw source for editing — the guaranteed
+  // mouse path in (with ✎ source and keyboard walk-in as alternatives).
+  await render.dblclick();
   await expect(page.locator('.day-editor .math-render')).toHaveCount(0);
   await expect(editor).toContainText('$x^2$');
 });

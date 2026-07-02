@@ -53,12 +53,40 @@ pub fn parse_with_diagnostics(input: &str) -> (Expr, Vec<ParseError>) {
         byte_to_char,
     };
     let mut e = p.parse_expr(0);
+    // TOP-LEVEL comma SEQUENCE (`a = L, R, S` — an enumeration): a comma outside every bracket
+    // separates co-equal expressions into a `List`, the loosest-binding construct. Root-only by
+    // construction: inside `(…)`/`{…}` the bracket loops own their commas (Tuple/Set/Call
+    // elements) and `parse_expr` stops at a comma, so one only reaches here at the root.
+    // DEGENERATE commas never form a List (a bare `,`, a leading/trailing/double comma): a List
+    // with Empty elements would serialize `", "` for a 1-char slice and break the verbatim
+    // span property — those commas stay recovered `Error` fragments as before.
+    if !matches!(e.kind, ExprKind::Empty) && matches!(p.peek(), Some(Tok::Comma)) {
+        let mut elems = vec![e];
+        while matches!(p.peek(), Some(Tok::Comma))
+            && !matches!(
+                p.toks.get(p.pos + 1).map(|t| &t.tok),
+                None | Some(Tok::Comma) | Some(Tok::RParen) | Some(Tok::RBrace)
+            )
+        {
+            p.bump();
+            elems.push(p.parse_expr(0));
+        }
+        if elems.len() >= 2 {
+            let span = CharSpan {
+                start: elems.first().map_or(0, |x| x.span.start),
+                end: elems.last().map_or(0, |x| x.span.end),
+            };
+            e = Expr::new(ExprKind::List(elems), span);
+        } else {
+            e = elems.pop().expect("the head element is always present");
+        }
+    }
     // Absorb any leftover tokens (e.g. an unmatched ')') as recovered fragments. Stray
     // terminators are consumed explicitly here (parse_atom leaves them for an enclosing
     // group/call, so without this the loop could not make progress on a top-level ')').
     while let Some(tok) = p.peek().cloned() {
         let frag = match tok {
-            Tok::RParen | Tok::Comma => {
+            Tok::RParen | Tok::RBrace | Tok::Comma => {
                 let span = p.peek_span();
                 p.bump();
                 p.diag("unexpected close/comma", span);
@@ -201,11 +229,11 @@ impl Parser {
             Tok::Name(s) if grammar::is_word_relation(s) => Some(BP_REL),
             Tok::Name(s) if dictionary::is_product_word(s) => Some(BP_MUL), // `times` → ×
             // value-starts → juxtaposition (implicit multiplication)
-            Tok::Num(_) | Tok::Name(_) | Tok::Str(_) | Tok::LParen | Tok::Sym(_) => {
+            Tok::Num(_) | Tok::Name(_) | Tok::Str(_) | Tok::LParen | Tok::LBrace | Tok::Sym(_) => {
                 Some(BP_JUXTAPOSE)
             }
             // terminators / postfix scripts
-            Tok::RParen | Tok::Comma | Tok::Caret | Tok::Underscore => None,
+            Tok::RParen | Tok::RBrace | Tok::Comma | Tok::Caret | Tok::Underscore => None,
         }
     }
 
@@ -474,17 +502,82 @@ impl Parser {
             None => Expr::new(ExprKind::Empty, self.zero_at(self.last_end())),
             Some(Tok::LParen) => {
                 self.bump();
+                // A lone `(` sitting directly on a terminator (`(,` / `(}` / `(` at EOF) recovers as the
+                // VERBATIM symbol — a `Group(Empty)` here would SERIALIZE as `()`, silently inserting a
+                // paren the author never typed (the `{(, ], [}` → `{(), ], [}` bug). Mid-typing lenience is
+                // preserved below: a NON-empty unclosed group (`(a + b`) still auto-closes.
+                if !matches!(self.peek(), Some(Tok::RParen)) {
+                    let empty_inner = matches!(self.peek(), None | Some(Tok::Comma | Tok::RBrace));
+                    if empty_inner {
+                        self.diag("unclosed '('", self.peek_span());
+                        return Expr::new(ExprKind::Symbol("(".to_string()), self.node_span(start));
+                    }
+                }
                 let inner = if matches!(self.peek(), Some(Tok::RParen)) {
                     Expr::new(ExprKind::Empty, self.zero_at(self.mark()))
                 } else {
                     self.parse_expr(0)
                 };
+                // A comma after the first element makes this a BARE TUPLE `(e1, e2, …)` — first-class and
+                // strictly distinct from `Group` (one element, grouping semantics) and `Call` (a head owns
+                // its `(…)` and is parsed on the Name path, never here).
+                if matches!(self.peek(), Some(Tok::Comma)) {
+                    let mut elems = vec![inner];
+                    while matches!(self.peek(), Some(Tok::Comma)) {
+                        self.bump();
+                        elems.push(self.parse_expr(0));
+                    }
+                    if matches!(self.peek(), Some(Tok::RParen)) {
+                        self.bump();
+                    } else {
+                        self.diag("unclosed '('", self.peek_span());
+                    }
+                    return Expr::new(ExprKind::Tuple(elems), self.node_span(start));
+                }
                 if matches!(self.peek(), Some(Tok::RParen)) {
                     self.bump();
                 } else {
                     self.diag("unclosed '('", self.peek_span());
                 }
                 Expr::new(ExprKind::Group(Box::new(inner)), self.node_span(start))
+            }
+            // The SET literal `{a, b, c}` (`{}` = the empty set): comma-separated elements, mirroring
+            // `parse_call_args`. First-class so the whole set is ONE addressable sub-term (an annotation
+            // or precise click binds `{L, S, R}` itself, not loose `{`/`,`/`}` fragments).
+            Some(Tok::LBrace) => {
+                self.bump();
+                // A lone `{` sitting directly on a terminator recovers VERBATIM (mirrors the `(` rule):
+                // a `Set` here would auto-close to `{}` and swallow the enclosing list's separators.
+                if matches!(self.peek(), None | Some(Tok::Comma | Tok::RParen)) {
+                    self.diag("unclosed '{'", self.peek_span());
+                    return Expr::new(ExprKind::Symbol("{".to_string()), self.node_span(start));
+                }
+                let mut elems = Vec::new();
+                if matches!(self.peek(), Some(Tok::RBrace)) {
+                    self.bump();
+                } else {
+                    loop {
+                        elems.push(self.parse_expr(0));
+                        match self.peek() {
+                            Some(Tok::Comma) => {
+                                self.bump();
+                            }
+                            Some(Tok::RBrace) => {
+                                self.bump();
+                                break;
+                            }
+                            None => {
+                                self.diag("unclosed '{'", self.peek_span());
+                                break;
+                            }
+                            // parse_expr(0) stops only at ',' / ')' / '}' / EOF; bump defensively.
+                            Some(_) => {
+                                self.bump();
+                            }
+                        }
+                    }
+                }
+                Expr::new(ExprKind::Set(elems), self.node_span(start))
             }
             Some(Tok::Num(s)) => {
                 self.bump();
@@ -544,7 +637,7 @@ impl Parser {
             // Anchor at `last_end()` (not the terminator's byte): skipped whitespace before the
             // terminator would otherwise place this zero-width Empty past the parent's end (e.g.
             // `a+ )`), escaping the parent span — see the EOF arm above.
-            Some(Tok::RParen | Tok::Comma) => {
+            Some(Tok::RParen | Tok::RBrace | Tok::Comma) => {
                 Expr::new(ExprKind::Empty, self.zero_at(self.last_end()))
             }
             // A stray prefix operator where a value was expected → recover (consume it).
@@ -642,6 +735,8 @@ fn tok_text(t: &Tok) -> String {
         Tok::Underscore => "_".into(),
         Tok::LParen => "(".into(),
         Tok::RParen => ")".into(),
+        Tok::LBrace => "{".into(),
+        Tok::RBrace => "}".into(),
         Tok::Comma => ",".into(),
     }
 }

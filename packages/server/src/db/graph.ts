@@ -639,7 +639,7 @@ export async function seedContent(
   });
 }
 
-async function upsertProvenance(client: pg.PoolClient, p: Provenance): Promise<void> {
+export async function upsertProvenance(client: pg.PoolClient, p: Provenance): Promise<void> {
   await client.query(
     `INSERT INTO provenance (id, origin, created_by, occurred_at) VALUES ($1, $2, $3, $4)
      ON CONFLICT (id) DO NOTHING`,
@@ -647,7 +647,7 @@ async function upsertProvenance(client: pg.PoolClient, p: Provenance): Promise<v
   );
 }
 
-async function insertObjectRow(client: pg.PoolClient, o: CanonicalObject): Promise<void> {
+export async function insertObjectRow(client: pg.PoolClient, o: CanonicalObject): Promise<void> {
   await client.query(
     `INSERT INTO objects (id, type, title, raw_source, status, schema_version, revision,
                           provenance_id, space_id, created_at, updated_at)
@@ -750,6 +750,14 @@ export async function persistContentDelta(
       // `upserts`, NOT `deletes` — its name survives).
       if (delta.deletes.length > 0) {
         await client.query(`DELETE FROM handles WHERE target_unit_id = ANY($1)`, [delta.deletes]);
+        // A deleted unit's ANNOTATION BINDINGS die with it too — the deferred annotation_targets →
+        // content_units composite FK would otherwise trip at COMMIT (23503 → 422 → permanent autosave
+        // wedge; the same class as the handles/links cleanups around this). Only the TARGET rows go:
+        // the annotation OBJECT + detail survive, so the editor shows the orphan caption and the user
+        // decides its fate.
+        await client.query(`DELETE FROM annotation_targets WHERE target_unit_id = ANY($1)`, [
+          delta.deletes,
+        ]);
       }
       for (const u of parentsFirst(delta.upserts)) await insertContentUnit(client, u);
 

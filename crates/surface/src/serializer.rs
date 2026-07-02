@@ -115,6 +115,34 @@ fn emit(e: &Expr, out: &mut Out) {
             emit(inner, out);
             out.push(")");
         }
+        ExprKind::Tuple(elems) => {
+            out.push("(");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push(", ");
+                }
+                emit(el, out);
+            }
+            out.push(")");
+        }
+        ExprKind::List(elems) => {
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push(", ");
+                }
+                emit(el, out);
+            }
+        }
+        ExprKind::Set(elems) => {
+            out.push("{");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push(", ");
+                }
+                emit(el, out);
+            }
+            out.push("}");
+        }
         ExprKind::Call { head, args } => {
             emit(head, out);
             out.push("(");
@@ -142,7 +170,11 @@ fn emit(e: &Expr, out: &mut Out) {
         }
         ExprKind::Juxtapose(fs) => {
             for (i, f) in fs.iter().enumerate() {
-                if i > 0 {
+                // A PRIME hugs its base (`Sigma'`, `q'`) — the one juxtaposed factor that is
+                // never space-separated; `Sigma '` reads as a stray tick and breaks verbatim
+                // round-trips of primed names.
+                let is_prime = matches!(&f.kind, ExprKind::Symbol(s) if s == "'");
+                if i > 0 && !is_prime {
                     out.push(" ");
                 }
                 emit(f, out);

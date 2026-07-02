@@ -16,7 +16,14 @@
 //     re-renders the math that depends on it.
 //   • Cost: the marked-span list + the scope are cached in plugin state and recomputed only on a doc edit, so a
 //     pure caret move does O(#math spans) + an O(run) open-region scan — not a full-document walk.
-import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from 'prosemirror-state';
+import {
+  Plugin,
+  PluginKey,
+  Selection,
+  TextSelection,
+  type EditorState,
+  type Transaction,
+} from 'prosemirror-state';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
 import type { MathExpression } from '@mathmeander/schema';
@@ -31,6 +38,7 @@ import {
   systemRowStarts,
 } from './mathClickMap';
 import { openRegionStart, splitSystemRows, wholeDisplaySource } from './mathSyntax';
+import { tightRect } from './domGeom';
 import { isMathRuntimeReady, normalizeFresh, surfacePaths, type NotationDef } from './mathRuntime';
 import { notationDefsFromSource, notationScopeKey } from './notationScope';
 
@@ -48,6 +56,10 @@ interface Span {
   /** Parallel to `rows`: the doc position of each row's first source char (F3 precise click), accounting for
    *  the skipped blank/leading lines so a clicked sub-term maps to the right row. Set iff `rows` is. */
   rowStarts?: number[];
+  /** §6.2: this INLINE expression carries a brace annotation, so render it `\htmlData`-tagged (a `data-path`
+   *  per sub-term) even though inline math is normally untagged — the annotation overlay needs the sub-term's
+   *  rect. Lazy: only annotated inline exprs pay the tagging cost. Display is always tagged (ignored there). */
+  tagged?: boolean;
 }
 
 /** A block's source with `\n` per hard_break (a system's `$$…$$` is multi-line); null if it has a
@@ -113,11 +125,15 @@ function computeSpans(doc: PMNode): Span[] {
       if (child.isText) {
         const m = child.marks.find((x) => x.type === MARK);
         if (m) {
+          // §6.2: ALWAYS `\htmlData`-tag inline math (a `data-path` per sub-term) — precise sub-term SELECTION
+          // needs the tags to exist BEFORE the expr is annotated (the chicken-and-egg the lazy gate created).
+          // The `\htmlData` trust is scoped/safe (renderMath.ts); the extra DOM is marginal.
           const s: Span = {
             from: pos,
             to: pos + child.nodeSize,
             expr: m.attrs.expr as MathExpression,
             display: false,
+            tagged: true,
           };
           const prev = merged[merged.length - 1];
           if (prev && prev.to === s.from && prev.expr.id === s.expr.id) prev.to = s.to;
@@ -160,29 +176,37 @@ function precisePlace(
   container: HTMLElement,
   rowSurface: string,
   rowStart: number,
+  opts: { mode?: 'caret' | 'select'; suppressAt?: number } = {},
 ): boolean {
+  const mode = opts.mode ?? (e.detail >= 2 ? 'select' : 'caret');
+  const suppressAt = opts.suppressAt;
   if (!isMathRuntimeReady()) return false;
   // Resolve the click by GEOMETRY (smallest `data-path` box containing the point), NOT by
   // `e.target.closest` — KaTeX script vlists stack an ancestor box over the script glyphs, so the
   // event target there is the enclosing node, not the deeper script sub-term (`deepestPathAt`).
-  const boxes: PathBox[] = Array.from(
-    container.querySelectorAll<HTMLElement>('[data-path]'),
-    (el) => {
-      const r = el.getBoundingClientRect();
-      return {
+  // TIGHT boxes for hit resolution: a container's own box carries vlist strut geometry that overlaps its
+  // neighbours (in display style, clicking the exponent `2` resolved to `b`) — the glyph union is the truth.
+  const boxes: PathBox[] = [];
+  for (const el of Array.from(container.querySelectorAll<HTMLElement>('[data-path]'))) {
+    const r = tightRect(el);
+    if (r) {
+      boxes.push({
         path: el.dataset.path ?? '',
         rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
-      };
-    },
-  );
+      });
+    }
+  }
   const hitPath = deepestPathAt(boxes, e.clientX, e.clientY);
+  const dbg = (globalThis as unknown as { __annoDebug?: unknown[] }).__annoDebug;
+  if (Array.isArray(dbg))
+    dbg.push({ phase: 'precisePlace', detail: e.detail, hitPath, rowStart, boxes: boxes.length });
   if (hitPath == null) return false;
   const want = hitPath.split('.').filter(Boolean).map(Number); // "" → [] (root)
   const paths = surfacePaths(rowSurface);
   const hit = paths.find((p) => sameArray(p.path, want));
   if (!hit) return false;
   const tr =
-    e.detail >= 2
+    mode === 'select'
       ? view.state.tr.setSelection(
           TextSelection.create(
             view.state.doc,
@@ -198,9 +222,21 @@ function precisePlace(
             1,
           ),
         );
-  view.dispatch(tr); // the selection moving into the block reveals the hidden source
+  // §6.2 STRUCTURAL selection: when the caller passes `suppressAt` (the inline dblclick), the sub-term is
+  // being selected AS A TARGET — keep the equation RENDERED (the annotate gesture runs entirely on the
+  // render; the source never flashes). Without it, the selection reveals the source as before.
+  if (suppressAt != null) tr.setMeta(KEY, suppressAt);
+  view.dispatch(tr);
   view.focus();
   return true;
+}
+
+/** Mark `tr` so the math span starting at `spanFrom` stays RENDERED even though the selection touches it —
+ *  the §6.2 structural-selection/annotate suppressor (the same plugin meta the widget's single-click sets).
+ *  The suppression persists across pure bookkeeping transactions (no doc/selection change) and lifts on the
+ *  next real edit or caret move. */
+export function suppressMathRevealAt(tr: Transaction, spanFrom: number): Transaction {
+  return tr.setMeta(KEY, spanFrom);
 }
 
 /** Build the KaTeX widget DOM for a rendered span. INLINE (`display:false`): single click → caret beside (stays
@@ -213,27 +249,87 @@ function renderWidget(
   display: boolean,
   spanFrom: number,
   scope: NotationDef[],
+  tagged = false,
 ) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = display ? 'math-render math-render-display' : 'math-render';
     el.contentEditable = 'false';
-    renderMathInto(expr, el, { display, scope });
+    // §6.2 precision: the EXPRESSION ID on the render root. `data-path` values are per-expr-root, so they
+    // COLLIDE across the several `$…$` exprs of one block — the annotation overlay scopes its sub-term lookup
+    // to `[data-expr-id="…"] [data-path="…"]`, which is what pins a brace to the RIGHT expression.
+    el.dataset.exprId = expr.id;
+    renderMathInto(expr, el, { display, scope, tagged });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       if (display) {
-        // A single display equation's surface starts right after the opening `$$` (spanFrom is the first `$`).
-        if (precisePlace(view, e, el, expr.surface_text ?? '', spanFrom + 2)) return;
+        // RENDER-FIRST (§6.2). The invariant that makes a DOUBLE-click reliable: a click must never CHANGE
+        // the source's reveal state (revealing OR hiding reflows the block, moving the widget out from
+        // under the double-click's second click — the display-annotation bug, both directions). So a click
+        // PRESERVES the current state: source hidden → precise caret/selection WITH suppress (stays
+        // rendered-only); source revealed → the same WITHOUT suppress (stays revealed). Single click =
+        // precise caret; dblclick = STRUCTURAL sub-term selection (the annotate popover); dblclick AGAIN
+        // (already structurally selected) = explicit reveal for editing (a deliberate layout change).
+        // A single display equation's surface starts right after the opening `$$` (spanFrom = the first `$`).
+        const surface = expr.surface_text ?? '';
+        const srcLen = surface.length + 4; // `$$` + surface + `$$`
+        const { from: sf, to: st } = view.state.selection;
+        const ps = KEY.getState(view.state);
+        const touching = sf <= spanFrom + srcLen && st >= spanFrom;
+        const revealed = touching && ps?.suppress !== spanFrom;
+        const keep = revealed ? {} : { suppressAt: spanFrom };
+        if (e.detail >= 2) {
+          const alreadyStructural = st > sf && sf >= spanFrom && st <= spanFrom + srcLen;
+          if (
+            alreadyStructural &&
+            precisePlace(view, e, el, surface, spanFrom + 2, { mode: 'caret' })
+          )
+            return; // second dblclick → caret at the sub-term, NO suppress → source reveals for editing
+          if (
+            !alreadyStructural &&
+            precisePlace(view, e, el, surface, spanFrom + 2, { mode: 'select', ...keep })
+          )
+            return;
+        } else {
+          // Preserve an existing structural selection (see the inline branch note) — the second dblclick's
+          // leading single click must not collapse it.
+          if (st > sf && sf >= spanFrom && st <= spanFrom + srcLen) return;
+          if (precisePlace(view, e, el, surface, spanFrom + 2, { mode: 'caret', ...keep })) return;
+        }
         const pos = view.posAtDOM(el, 0); // fallback: reveal the source (caret near start)
         view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos), -1)));
         view.focus();
         return;
+      }
+      // §6.2 STRUCTURAL selection (inline is always `\htmlData`-tagged): the FIRST double-click precise-
+      // selects the clicked SUB-TERM while KEEPING the render (suppress) — the annotate popover then works
+      // entirely on the rendered equation. A SECOND double-click (the selection already sits inside this
+      // span) REVEALS the source for editing — the guaranteed mouse path into the source (keyboard arrow
+      // walk-in also still reveals). `spanFrom + 1` = past the opening `$` (display uses `+ 2`).
+      if (e.detail >= 2) {
+        const { from: sf, to: st } = view.state.selection;
+        const srcLen = (expr.surface_text ?? '').length + 2; // `$` + surface + `$` (UTF-16 = doc positions)
+        const alreadyStructural = st > sf && sf >= spanFrom && st <= spanFrom + srcLen;
+        if (
+          !alreadyStructural &&
+          precisePlace(view, e, el, expr.surface_text ?? '', spanFrom + 1, {
+            mode: 'select',
+            suppressAt: spanFrom,
+          })
+        )
+          return;
       }
       const pos = view.posAtDOM(el, 0);
       if (e.detail >= 2) {
         const sel = Selection.near(view.state.doc.resolve(pos + 1), 1); // just inside → reveal
         view.dispatch(view.state.tr.setSelection(sel));
       } else {
+        // A single click PRESERVES an existing structural selection inside this span — the first click of
+        // a SECOND double-click would otherwise collapse it to a caret, making `alreadyStructural` above
+        // unreachable (the reveal gesture would never fire).
+        const { from: sf1, to: st1 } = view.state.selection;
+        const srcLen1 = (expr.surface_text ?? '').length + 2;
+        if (st1 > sf1 && sf1 >= spanFrom && st1 <= spanFrom + srcLen1) return;
         const sel = Selection.near(view.state.doc.resolve(pos), -1); // beside → stays rendered (suppressed)
         view.dispatch(view.state.tr.setSelection(sel).setMeta(KEY, pos));
       }
@@ -264,11 +360,19 @@ function transientRowExpr(surface: string): MathExpression {
  *  sub-term of the clicked row (F3) — single → caret there, double → select it. Each row carries `data-row=i`
  *  so the handler locates the row (and its surface) without DOM-index math. `rowStarts[i]` is the doc position
  *  of `rows[i]`'s first char (from `systemRowStarts`, which accounts for skipped blank/leading lines). */
-function renderSystemWidget(rows: string[], rowStarts: number[], scope: NotationDef[]) {
+function renderSystemWidget(
+  rows: string[],
+  rowStarts: number[],
+  scope: NotationDef[],
+  exprId: string,
+) {
   return (view: EditorView): HTMLElement => {
     const el = document.createElement('span');
     el.className = 'math-render math-render-display equations';
     el.contentEditable = 'false';
+    // §6.2 precision: the block expression's id on the widget root (rows are `data-row`-scoped within it) —
+    // same collision-proofing as renderWidget; row-scoped annotation lands in 1b.
+    el.dataset.exprId = exprId;
     rows.forEach((surface, i) => {
       const row = document.createElement('span');
       row.className = 'row';
@@ -346,7 +450,12 @@ export const mathLivePreview = new Plugin<PluginState>({
     },
     apply: (tr, prev, _old, newState) => {
       const meta = tr.getMeta(KEY) as number | null | undefined;
-      const suppress = meta !== undefined ? meta : null; // set by a single click; any other tr clears it
+      // Suppression lifecycle: set by a click/structural-select/annotate meta; PRESERVED across pure
+      // bookkeeping transactions (no doc or selection change — e.g. the annotation overlay's reserve
+      // updates, which would otherwise un-render the equation mid-gesture); cleared by any real edit or
+      // caret move.
+      const suppress =
+        meta !== undefined ? meta : !tr.docChanged && !tr.selectionSet ? prev.suppress : null;
       if (!tr.docChanged) {
         return { spans: prev.spans, suppress, scope: prev.scope, scopeKey: prev.scopeKey };
       }
@@ -376,7 +485,7 @@ export const mathLivePreview = new Plugin<PluginState>({
             Decoration.widget(
               span.to,
               isSystem
-                ? renderSystemWidget(span.rows!, span.rowStarts ?? [], ps.scope)
+                ? renderSystemWidget(span.rows!, span.rowStarts ?? [], ps.scope, span.expr.id)
                 : renderWidget(span.expr, true, span.from, ps.scope),
               {
                 side: 1,
@@ -388,21 +497,31 @@ export const mathLivePreview = new Plugin<PluginState>({
               },
             ),
           );
-          if (!touches) decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
+          // The source stays hidden while SUPPRESSED even though the selection touches (a precise click /
+          // structural selection / annotate keeps the equation rendered without the source line appearing —
+          // which would reflow the block and, during a double-click, move the widget out from under the
+          // second click). An unsuppressed touch reveals the source above the render, as before.
+          if (!touches || ps.suppress === span.from)
+            decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
           continue;
         }
         if (touches && ps.suppress !== span.from) continue; // inline: reveal raw on touch
         decos.push(Decoration.inline(span.from, span.to, { class: 'math-hidden' }));
         decos.push(
-          Decoration.widget(span.from, renderWidget(span.expr, false, span.from, ps.scope), {
-            side: -1,
-            // No marks: a widget defaults to inheriting the marks at its position, so for two ADJACENT `$…$`
-            // spans the second equation's KaTeX would render INSIDE the first's `mathExpr` (`.math-src`) span
-            // and pick up the source font/color. `marks: []` keeps the rendered math a clean, unstyled sibling.
-            marks: [],
-            key: `math:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}:${ps.scopeKey}`,
-            ignoreSelection: true,
-          }),
+          Decoration.widget(
+            span.from,
+            renderWidget(span.expr, false, span.from, ps.scope, span.tagged ?? false),
+            {
+              side: -1,
+              // No marks: a widget defaults to inheriting the marks at its position, so for two ADJACENT `$…$`
+              // spans the second equation's KaTeX would render INSIDE the first's `mathExpr` (`.math-src`) span
+              // and pick up the source font/color. `marks: []` keeps the rendered math a clean, unstyled sibling.
+              marks: [],
+              // `tagged` folded into the key so adding/removing an annotation re-renders the expr tagged/untagged.
+              key: `math:${span.expr.id}:${span.expr.surface_text}:${span.expr.parse_status}:${span.tagged ? 't' : 'u'}:${ps.scopeKey}`,
+              ignoreSelection: true,
+            },
+          ),
         );
       }
       const open = openRegionDeco(state);
@@ -428,9 +547,10 @@ export function hiddenMathLineAt(state: EditorState, blockPos: number, block: PM
   const contentEnd = contentStart + block.content.size;
   const { from: selFrom, to: selTo } = state.selection;
   const touches = (from: number, to: number): boolean => selFrom <= to && selTo >= from;
-  // A display equation / system is ONE span over the whole block content.
+  // A display equation / system is ONE span over the whole block content. A SUPPRESSED touch keeps the
+  // source hidden (matches decorations() exactly, so the two can't drift).
   const display = ps.spans.find((s) => s.display && s.from === contentStart && s.to === contentEnd);
-  if (display) return !touches(display.from, display.to);
+  if (display) return !touches(display.from, display.to) || ps.suppress === display.from;
   // Degenerate: a block whose ENTIRE content is inline math spans (a sole `$x$` line), all currently hidden.
   // A gap (plain text) or any touched span ⇒ a real caret line exists ⇒ NOT a trap.
   const inline = ps.spans

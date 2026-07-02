@@ -94,6 +94,34 @@ fn emit_inner(e: &Expr, path: &StructuralPath, out: &mut String, tag: bool) {
             emit(inner, &path.child(0), out, tag);
             out.push_str("\\right)");
         }
+        ExprKind::Tuple(elems) => {
+            out.push_str("\\left(");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                emit(el, &path.child(i), out, tag);
+            }
+            out.push_str("\\right)");
+        }
+        ExprKind::List(elems) => {
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                emit(el, &path.child(i), out, tag);
+            }
+        }
+        ExprKind::Set(elems) => {
+            out.push_str("\\left\\{");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                emit(el, &path.child(i), out, tag);
+            }
+            out.push_str("\\right\\}");
+        }
         ExprKind::Call { head, args } => {
             if let ExprKind::Ident(h) = &head.kind {
                 match (h.as_str(), args.as_slice()) {

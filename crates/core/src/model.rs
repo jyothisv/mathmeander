@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::ids::{
-    AliasId, ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, SpaceId,
-    TagId, TaggingId, UnitId,
+    AliasId, AnnotationTargetId, ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId,
+    ProvenanceId, SpaceId, TagId, TaggingId, UnitId,
 };
 
 // The surface-grammar LEAF types live in `mathmeander-surface` (the surface produces them);
@@ -66,10 +66,10 @@ impl ObjectType {
     /// owning machinery (detail tables, surfaces) lands in later slices, so creating one
     /// now would leave a type-qualified-reference invariant unsatisfiable (§6.1a).
     pub fn is_producible(self) -> bool {
-        !matches!(
-            self,
-            ObjectType::SourceExcerpt | ObjectType::Trail | ObjectType::Annotation
-        )
+        // `annotation` became producible with the §6.2 brace-annotation increment (via its own
+        // `reconcile_annotations` op + `annotation_detail`/`annotation_target` tables), NOT the plain
+        // typed POST — it stays non-directly-creatable (a raw POST still 422s), like `journal_day`.
+        !matches!(self, ObjectType::SourceExcerpt | ObjectType::Trail)
     }
 
     /// Whether a client may mint this type via the DIRECT typed-create path. Only `Note`
@@ -828,6 +828,127 @@ pub struct JournalDayDetail {
 pub struct NotebookDetail {
     pub object_id: ObjectId,
     pub slug: String,
+}
+
+// ── Annotations (§6.2) ───────────────────────────────────────────────────────
+// A brace/embrace annotation BINDS to a precise structural part of content — a math sub-term (a
+// `StructuralPath` into an expression), a set of equation rows, or a prose phrase — and is NOT a
+// free-canvas object (its geometry is DERIVED from what it binds). An annotation IS an object
+// (`ObjectType::Annotation`): an `objects` row + an `AnnotationDetail` (how it is drawn) + one or more
+// `AnnotationTarget` rows (what it binds). Orphaning re-uses the edge lifecycle (`LinkStatus::Stale`),
+// never a silent drop. This is a SEPARATE aggregate from `UnitContent` (so the math model / `save_content`
+// are untouched); the editor re-derives these rows on persist. Placement is constrained (a spacing `gap`);
+// the side is IMPLIED by the brace kind (overbrace = above, etc.). Drag/gutter placement is reserved.
+
+/// A closed, layout-relative spacing step (never device pixels, §2.1) — the reserve between a brace and
+/// the span it embraces. A style skin maps `Small → 0.5em`, etc. The v1 placement knob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutStep {
+    None,
+    Small,
+    Medium,
+    Large,
+}
+
+/// A brace's visible caption — short by nature, so it is a lightweight inline string (reusing the prose
+/// `Inline` vocabulary: formatting `Mark`s, inline `Math` atoms, `Reference` mentions), NOT a separate
+/// `content_units` body. `text` is the plain characters; `inline` overlays them (the same span contract
+/// as `Prose`). A multi-paragraph note body is a strictly larger later slice.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationLabel {
+    pub text: String,
+    pub inline: Vec<Inline>,
+}
+
+/// What an annotation DRAWS (§6.2). The v1 subset is the four braces; a one-anchor decorative `Arrow` and
+/// link-backed semantic arrows are reserved. The brace's SIDE is implied by the kind (overbrace = above,
+/// underbrace = below, left/right = the vertical brace side); `gap` is the reserved spacing. Which target
+/// row(s) a primitive draws over is the annotation's `AnnotationTarget` set (a `Target` for a brace over
+/// one sub-term/phrase; the `Member` rows for a brace over an equation-set).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AnnotationPrimitive {
+    Overbrace {
+        label: AnnotationLabel,
+        gap: LayoutStep,
+    },
+    Underbrace {
+        label: AnnotationLabel,
+        gap: LayoutStep,
+    },
+    LeftBrace {
+        label: AnnotationLabel,
+        gap: LayoutStep,
+    },
+    RightBrace {
+        label: AnnotationLabel,
+        gap: LayoutStep,
+    },
+}
+
+/// Non-content metadata for an `annotation` object (§6.2), the analogue of `NotebookDetail` — HOW the
+/// annotation is drawn. The bound targets are the `annotation_target` rows (`object_id`-keyed here; the
+/// annotation object's own provenance is the trust spine, so no separate `provenance_id` column).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationDetail {
+    pub object_id: ObjectId,
+    pub primitives: Vec<AnnotationPrimitive>,
+}
+
+/// The structural role of one `AnnotationTarget` among an annotation's targets (§6.2). `Target` = the sole
+/// thing a brace embraces (a sub-term or phrase); `Member` = one of an ordered set (equation rows under a
+/// left/right brace). `from`/`to` (arrow ends) are reserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationRole {
+    Target,
+    Member,
+}
+
+/// WHAT one target binds — a PRECISE structural extent, never a free region (§6.2).
+///   • `SubTerm` — a sub-expression addressed by its structural path (`term_path`, child indices in the
+///     canonical AST order; the surface's `verbatim_paths`/`path::resolve` bridge it to a rendered
+///     `data-path` element + a source char-span). This is the annotation-local structural anchor; the Links
+///     `TargetSelector::StructuralPath` stays reserved (§14). Re-resolved on edit; stales if the path is gone.
+///   • `Locator` — reuses `ContentLocator`: `ProseSpan` (a phrase) or `WholeUnit` (an equation row, a `Member`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AnnotationExtent {
+    SubTerm {
+        expression_id: ExpressionId,
+        term_path: Vec<u32>,
+    },
+    Locator {
+        locator: ContentLocator,
+    },
+}
+
+/// One anchor row of an annotation (§6.2): the annotation binds `role`/`position` to `extent` within the
+/// unit `(target_unit_id, target_object_id)` of the HOST object. `status` reuses the edge lifecycle — an
+/// orphaned target (its path/row no longer resolves) flips to `Stale`, never a silent drop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationTarget {
+    pub id: AnnotationTargetId,
+    /// The annotation object this target belongs to (`ObjectType::Annotation`).
+    pub annotation_id: ObjectId,
+    pub role: AnnotationRole,
+    /// Order among the annotation's same-role targets (a brace's ordered `Member` rows).
+    pub position: u32,
+    /// Composite FK `(target_unit_id, target_object_id) → content_units(id, object_id)` — the bound unit
+    /// in the HOST object (the day/notebook), mirroring `Handle`'s composite target.
+    pub target_unit_id: UnitId,
+    pub target_object_id: ObjectId,
+    pub extent: AnnotationExtent,
+    pub status: LinkStatus,
+    pub provenance_id: ProvenanceId,
 }
 
 /// One edge of the provenance derivation chain (§6.1) — a typed, FK-checked join row

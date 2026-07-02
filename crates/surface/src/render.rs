@@ -46,6 +46,36 @@ fn emit(e: &Expr, out: &mut String) {
             push_escaped(s, out);
             out.push_str("</mo>");
         }
+        ExprKind::Tuple(elems) => {
+            out.push_str("<mrow><mo>(</mo>");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("<mo>,</mo>");
+                }
+                emit(el, out);
+            }
+            out.push_str("<mo>)</mo></mrow>");
+        }
+        ExprKind::List(elems) => {
+            out.push_str("<mrow>");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("<mo>,</mo>");
+                }
+                emit(el, out);
+            }
+            out.push_str("</mrow>");
+        }
+        ExprKind::Set(elems) => {
+            out.push_str("<mrow><mo>{</mo>");
+            for (i, el) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("<mo>,</mo>");
+                }
+                emit(el, out);
+            }
+            out.push_str("<mo>}</mo></mrow>");
+        }
         ExprKind::Error(s) => {
             out.push_str("<merror><mtext>");
             push_escaped(s, out);

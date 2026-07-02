@@ -16,6 +16,7 @@ import {
   RewriteSurfaceInputSchema,
   InsertReferenceInputSchema,
   ResolveOccurrenceInputSchema,
+  ReconcileAnnotationsInputSchema,
   UnitSchema,
   type ExpressionIdRemap,
   type InsertReferenceInput,
@@ -29,6 +30,7 @@ import {
   type OpOutcome,
   type Provenance,
   type ResolveOccurrenceInput,
+  type ReconcileAnnotationsInput,
   type RewriteSurfaceInput,
   type SetHandleInput,
   type SetUnitTypeInput,
@@ -54,6 +56,7 @@ import {
   resolveOccurrence,
   rewriteSurface,
   saveContent,
+  reconcileAnnotations,
   setUnitType,
   setHandle,
   toggleHeading,
@@ -75,6 +78,11 @@ import {
   persistContentDelta,
   persistObjectGraph,
 } from '../../db/graph.js';
+import {
+  loadAnnotationTargets,
+  loadAnnotations,
+  persistAnnotationDelta,
+} from '../../db/annotation.js';
 import { requireSession } from './auth.js';
 
 /** Default numbering policy for `GET …/labels` (no policy UI in slice 1d). */
@@ -249,6 +257,41 @@ export function registerGraphRoutes(app: FastifyInstance, deps: AppDeps): void {
       return reply.send({ outcome: result.value });
     },
   );
+
+  // ── reconcile_annotations (the §6.2 brace-annotation axis; the editor's 4th autosave delta) ──
+  app.post(
+    '/api/objects/:id/annotations',
+    { schema: { body: ReconcileAnnotationsInputSchema } },
+    async (req, reply) => {
+      const ctx = await requireSession(deps, req);
+      const { id } = req.params as { id: string };
+      // Trust the SESSION's space (a new annotation object is space-scoped) — never the client's claim.
+      const input: ReconcileAnnotationsInput = {
+        ...(req.body as ReconcileAnnotationsInput),
+        space_id: ctx.spaceId,
+      };
+      const content = await loadContent(deps.db, ctx.spaceId, id);
+      if (!content) throw new AppError(404, 'NOT_FOUND', 'no such object');
+      const current = await loadAnnotationTargets(deps.db, id);
+
+      const { opCtx, provenance, now } = mintOp(deps, ctx.userId);
+      const result = reconcileAnnotations(content, current, input, opCtx, now);
+      if (!result.ok) return sendCoreError(reply, result.error);
+      // Annotations are a separate aggregate — no host-revision gate/bump; a stale extent orphans (status
+      // `stale`) and self-heals on the next re-derive.
+      await persistAnnotationDelta(deps.db, result.value, { provenance, spaceId: ctx.spaceId });
+      return reply.send({ outcome: result.value });
+    },
+  );
+
+  // Load an object's annotations (detail + target rows) for the editor to render braces on open.
+  app.get('/api/objects/:id/annotations', async (req, reply) => {
+    const ctx = await requireSession(deps, req);
+    const { id } = req.params as { id: string };
+    const object = await loadObject(deps.db, ctx.spaceId, id);
+    if (!object) throw new AppError(404, 'NOT_FOUND', 'no such object');
+    return reply.send(await loadAnnotations(deps.db, id));
+  });
 
   // ── split_unit (glue mints the new unit id; propagate the split unit's taggings) ──
   app.post(

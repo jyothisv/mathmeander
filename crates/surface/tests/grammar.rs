@@ -70,12 +70,28 @@ fn canonical_surfaces_round_trip() {
         "x in RR",
         "\"radius\"",
         "f(\"radius\")",
-        "{ x in RR | x \"is natural\" }",
+        // Sets are FIRST-CLASS (`ExprKind::Set`, §6.2 annotation anchors): braces serialize TIGHT
+        // like parens, so the canonical set-builder spelling drops the inner padding.
+        "{x in RR | x \"is natural\"}",
+        "{L, S, R}",
+        "{}",
+        // TUPLES are first-class and strictly distinct from Group/Call: a BARE `(a, b)` only.
+        "(a, b)",
+        "(Q, S, d)",
+        // The unclosed-`(`/`{` verbatim recovery: a lone delimiter round-trips VERBATIM instead of
+        // auto-closing (`{(, ], [}` must NOT become `{(), ], [}`).
+        "{(, ], [}",
         // v3: × (times) distinct from · (*), variant star, piecewise.
         "N times N",
         "Z^*",
         "ZZ^*",
         "cases(a, b)",
+        // v4 (user-reported partial parses, all four must be FULLY renderable + verbatim):
+        "tau = (Q, Sigma, delta)",
+        "delta : Q times Sigma' -> Q times Sigma' times {L, S, R}", // canonical `:` is spaced; `delta:` PARSES the same
+        "delta(q, s) = (q', s', a) \" where \" a in {L, S, R}",
+        // a TOP-LEVEL comma sequence (an enumeration, no brackets) is a first-class List.
+        "a = L, R, S",
     ];
     for s in canon {
         assert_eq!(serialize(&parse(s)), s, "not canonical: {s:?}");
@@ -95,6 +111,21 @@ fn shape(s: &str) -> String {
             }
             ExprKind::Text(s) => format!("\"{s}\""),
             ExprKind::Group(x) => format!("({})", go(x)),
+            ExprKind::Set(elems) => {
+                format!("{{{}}}", elems.iter().map(go).collect::<Vec<_>>().join(","))
+            }
+            ExprKind::Tuple(elems) => {
+                format!(
+                    "tuple({})",
+                    elems.iter().map(go).collect::<Vec<_>>().join(",")
+                )
+            }
+            ExprKind::List(elems) => {
+                format!(
+                    "list({})",
+                    elems.iter().map(go).collect::<Vec<_>>().join(",")
+                )
+            }
             ExprKind::Call { head, args } => format!(
                 "{}({})",
                 go(head),
@@ -131,6 +162,13 @@ fn precedence_and_associativity_are_pinned_by_shape() {
     assert_eq!(shape("a b + c"), "([a b]+c)"); // juxtaposition tighter than +
     assert_eq!(shape("2 x^2"), "[2 (x^2)]"); // script tighter than juxtaposition
     assert_eq!(shape("a + b = c"), "((a+b)=c)"); // relation loosest
+    // The THREE paren roles stay strictly distinct (never conflated):
+    assert_eq!(shape("(a + b)^2"), "(((a+b))^2)"); // grouping parens → Group (the fraction/precedence role)
+    assert_eq!(shape("f(a, b)"), "f(a,b)"); // a head owns its parens → Call
+    assert_eq!(shape("(a, b)"), "tuple(a,b)"); // a BARE comma list → Tuple
+    assert_eq!(shape("tau = (Q, S, d)"), "(tau=tuple(Q,S,d))"); // a tuple is ONE addressable node
+    // A TOP-LEVEL comma sequence → List (loosest of all; bare, never parenthesized like Tuple).
+    assert_eq!(shape("a = L, R, S"), "list((a=L),R,S)");
     // Associativity.
     assert_eq!(shape("a - b - c"), "((a-b)-c)"); // additive left-assoc
     assert_eq!(shape("a/b/c"), "((a/b)/c)"); // fraction left-assoc

@@ -865,6 +865,172 @@
     "note": "unknown tag"
   },
   {
+    "type": "ObjectType",
+    "value": "annotation",
+    "valid": true,
+    "note": "producible via reconcile_annotations, not the plain create path"
+  },
+  {
+    "type": "LayoutStep",
+    "value": "small",
+    "valid": true
+  },
+  {
+    "type": "LayoutStep",
+    "value": "huge",
+    "valid": false,
+    "note": "not a registered step"
+  },
+  {
+    "type": "AnnotationRole",
+    "value": "target",
+    "valid": true
+  },
+  {
+    "type": "AnnotationRole",
+    "value": "member",
+    "valid": true
+  },
+  {
+    "type": "AnnotationRole",
+    "value": "endpoint",
+    "valid": false,
+    "note": "reserved role, not v1"
+  },
+  {
+    "type": "AnnotationExtent",
+    "value": {
+      "kind": "sub_term",
+      "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+      "term_path": [
+        0,
+        1
+      ]
+    },
+    "valid": true,
+    "note": "a math sub-term bound by its structural path"
+  },
+  {
+    "type": "AnnotationExtent",
+    "value": {
+      "kind": "locator",
+      "locator": {
+        "kind": "prose_span",
+        "start": 2,
+        "end": 9
+      }
+    },
+    "valid": true,
+    "note": "a prose phrase"
+  },
+  {
+    "type": "AnnotationExtent",
+    "value": {
+      "kind": "locator",
+      "locator": {
+        "kind": "whole_unit"
+      }
+    },
+    "valid": true,
+    "note": "an equation-set MEMBER row"
+  },
+  {
+    "type": "AnnotationExtent",
+    "value": {
+      "kind": "surface_span"
+    },
+    "valid": false,
+    "note": "unknown extent kind"
+  },
+  {
+    "type": "AnnotationPrimitive",
+    "value": {
+      "kind": "overbrace",
+      "label": {
+        "text": "the discriminant",
+        "inline": []
+      },
+      "gap": "small"
+    },
+    "valid": true
+  },
+  {
+    "type": "AnnotationPrimitive",
+    "value": {
+      "kind": "underbrace",
+      "label": {
+        "text": "",
+        "inline": []
+      },
+      "gap": "none"
+    },
+    "valid": true,
+    "note": "a bare (empty-label) brace"
+  },
+  {
+    "type": "AnnotationPrimitive",
+    "value": {
+      "kind": "overbrace",
+      "label": {
+        "text": "x",
+        "inline": []
+      }
+    },
+    "valid": false,
+    "note": "gap missing"
+  },
+  {
+    "type": "AnnotationPrimitive",
+    "value": {
+      "kind": "sideways_brace",
+      "label": {
+        "text": "x",
+        "inline": []
+      },
+      "gap": "small"
+    },
+    "valid": false,
+    "note": "unknown brace kind (arrow reserved)"
+  },
+  {
+    "type": "AnnotationTarget",
+    "value": {
+      "id": "0197675f-71f4-7000-8000-0000000000f1",
+      "annotation_id": "0197675f-71f4-7000-8000-0000000000f2",
+      "role": "target",
+      "position": 0,
+      "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+      "target_object_id": "0197675f-71f4-7000-8000-000000000001",
+      "extent": {
+        "kind": "sub_term",
+        "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+        "term_path": [
+          0
+        ]
+      },
+      "status": "active",
+      "provenance_id": "0197675f-71f4-7000-8000-000000000002"
+    },
+    "valid": true
+  },
+  {
+    "type": "AnnotationDetail",
+    "value": {
+      "object_id": "0197675f-71f4-7000-8000-0000000000f2",
+      "primitives": [
+        {
+          "kind": "overbrace",
+          "label": {
+            "text": "≥ 0",
+            "inline": []
+          },
+          "gap": "small"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
     "type": "TargetSelector",
     "value": {
       "kind": "expression_ref",

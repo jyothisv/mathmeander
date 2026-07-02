@@ -201,5 +201,49 @@ export const editorSchema = new Schema({
         0,
       ],
     },
+
+    // §6.2 brace ANNOTATIONS: the mark over the ANCHORED range (a prose phrase, or the whole `$…$`/`$$…$$`
+    // expression whose sub-term a brace binds) that CARRIES the whole annotation for the slice-1a single-target
+    // representation. It is BOTH the identity carrier (which annotation) AND the store: the projection seam
+    // re-derives the canonical annotation rows by WALKING these marks on persist (no separate plugin store), so
+    // the doc is the single source of truth and a merge/reproject can't drop an in-flight annotation.
+    //   • `annotationId`/`targetId` — the annotation object's id + its single target row id (client-minted,
+    //     stable; re-minted on paste by annoRecognize → copy-mints-fresh).
+    //   • `kind` — the brace primitive (`overbrace|underbrace|left_brace|right_brace`); `gap` — the `LayoutStep`
+    //     reserve; `label` — the caption text. These three ARE the `AnnotationDetail.primitives[0]`.
+    //   • `extent` — the PRECISE structural binding (§6.2, the load-bearing requirement — a brace binds a
+    //     sub-term/phrase, never a free point): `{ kind:'sub_term', expressionId, termPath }` for a math
+    //     sub-expression (display OR inline — the termPath is a stable structural path, not char offsets), or
+    //     `{ kind:'prose_span' }` for a prose phrase (its char offsets are DERIVED from the mark's live range at
+    //     flush, so an edit before the phrase never desyncs them). The enclosing block's `unitId` is the
+    //     `target_unit_id`, so a not-yet-persisted block's annotation simply defers (like typeNeeds).
+    // Only IDENTITY rides toDOM (so cross-editor paste drops the annotation, re-parsing clean text — v1); the
+    // rich attrs survive intra-doc copy via PM's original-slice reuse, and annoRecognize re-mints the ids.
+    // `inclusive: false` like mathExpr (typing past the range doesn't extend it). Coexists with `mathExpr` on
+    // the same `$…$` text — each recognizer/preview touches only its own mark.
+    annoRef: {
+      attrs: {
+        annotationId: {},
+        targetId: {},
+        kind: { default: 'overbrace' },
+        gap: { default: 'small' },
+        label: { default: '' },
+        extent: { default: null },
+      },
+      inclusive: false,
+      // COEXISTENCE (§6.2): marks of one type EXCLUDE each other by default, so a second annotation on an
+      // overlapping range would silently REPLACE the first. `excludes: ''` lets any number of annoRef marks
+      // share a range (nested/overlapping braces stack); every reader iterates ALL annoRef marks per node.
+      excludes: '',
+      toDOM: (mark) => [
+        'span',
+        {
+          class: 'anno-ref',
+          'data-anno-id': mark.attrs.annotationId,
+          'data-anno-kind': mark.attrs.kind,
+        },
+        0,
+      ],
+    },
   },
 });

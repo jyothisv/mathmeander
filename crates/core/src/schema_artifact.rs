@@ -14,9 +14,9 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::api::{
-    CreateJournalDayResult, CreateNotebookResult, CreateObjectResult, CreatedJournalDay,
-    CreatedNotebook, CreatedObject, MathpackImportResult, MathpackResult, NumberingResult,
-    ObjectResult, OpOutcomeResult,
+    AnnotationOpOutcomeResult, CreateJournalDayResult, CreateNotebookResult, CreateObjectResult,
+    CreatedJournalDay, CreatedNotebook, CreatedObject, MathpackImportResult, MathpackResult,
+    NumberingResult, ObjectResult, OpOutcomeResult,
 };
 use crate::error::{CoreError, ValidationError};
 use crate::mathpack::{
@@ -24,19 +24,21 @@ use crate::mathpack::{
     MathpackMeta,
 };
 use crate::model::{
-    Alias, AliasKind, AliasScope, CanonicalObject, CharSpan, ConfigFamily, ContentLocator,
-    DeclaredBy, DefinitionDetail, EmbedTarget, ExampleKind, ExtractedStructureEnvelope, Handle,
-    HandleScope, HandleStatus, Inline, InputSyntax, JournalDayDetail, Link, LinkStatus, LinkType,
-    MathExpression, NotebookDetail, ObjectStatus, ObjectType, ObjectVersion, Occurrence,
-    OccurrenceTarget, Origin, ParseStatus, Provenance, ProvenanceDerivation, ReferenceTarget,
-    RowRelation, SurfaceFormat, Tag, Tagging, TargetSelector, Unit, UnitContent, UnitStatus,
-    UnitType,
+    Alias, AliasKind, AliasScope, AnnotationDetail, AnnotationExtent, AnnotationLabel,
+    AnnotationPrimitive, AnnotationRole, AnnotationTarget, CanonicalObject, CharSpan, ConfigFamily,
+    ContentLocator, DeclaredBy, DefinitionDetail, EmbedTarget, ExampleKind,
+    ExtractedStructureEnvelope, Handle, HandleScope, HandleStatus, Inline, InputSyntax,
+    JournalDayDetail, LayoutStep, Link, LinkStatus, LinkType, MathExpression, NotebookDetail,
+    ObjectStatus, ObjectType, ObjectVersion, Occurrence, OccurrenceTarget, Origin, ParseStatus,
+    Provenance, ProvenanceDerivation, ReferenceTarget, RowRelation, SurfaceFormat, Tag, Tagging,
+    TargetSelector, Unit, UnitContent, UnitStatus, UnitType,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy, UnitLabel};
 use crate::ops::{
-    DissolveObjectInput, EquationRowInput, ExpressionIdRemap, InsertEquationsInput,
-    InsertReferenceInput, LinkDraft, MaterializeObjectInput, MathContent, MergeUnitsInput,
-    OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput, ResolveOccurrenceInput,
+    AnnotationDraft, AnnotationOpOutcome, AnnotationTargetDraft, DissolveObjectInput,
+    EquationRowInput, ExpressionIdRemap, InsertEquationsInput, InsertReferenceInput, LinkDraft,
+    MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext, OpOutcome,
+    ReconcileAnnotationsInput, RehomeSubtreeInput, ReparentUnitInput, ResolveOccurrenceInput,
     ResolveTarget, RewriteSurfaceInput, SetHandleInput, SetUnitTypeInput, SplitUnitInput,
     ToggleExpressionPlacementInput, ToggleHeadingInput, UnitIdRemap,
 };
@@ -111,6 +113,17 @@ pub fn artifact_json() -> String {
     defs.insert("DefinitionDetail", inline_schema_for::<DefinitionDetail>());
     defs.insert("JournalDayDetail", inline_schema_for::<JournalDayDetail>());
     defs.insert("NotebookDetail", inline_schema_for::<NotebookDetail>());
+    // Annotations (§6.2)
+    defs.insert("LayoutStep", inline_schema_for::<LayoutStep>());
+    defs.insert("AnnotationLabel", inline_schema_for::<AnnotationLabel>());
+    defs.insert(
+        "AnnotationPrimitive",
+        inline_schema_for::<AnnotationPrimitive>(),
+    );
+    defs.insert("AnnotationDetail", inline_schema_for::<AnnotationDetail>());
+    defs.insert("AnnotationRole", inline_schema_for::<AnnotationRole>());
+    defs.insert("AnnotationExtent", inline_schema_for::<AnnotationExtent>());
+    defs.insert("AnnotationTarget", inline_schema_for::<AnnotationTarget>());
     defs.insert(
         "ProvenanceDerivation",
         inline_schema_for::<ProvenanceDerivation>(),
@@ -171,6 +184,19 @@ pub fn artifact_json() -> String {
         "DissolveObjectInput",
         inline_schema_for::<DissolveObjectInput>(),
     );
+    defs.insert(
+        "AnnotationTargetDraft",
+        inline_schema_for::<AnnotationTargetDraft>(),
+    );
+    defs.insert("AnnotationDraft", inline_schema_for::<AnnotationDraft>());
+    defs.insert(
+        "ReconcileAnnotationsInput",
+        inline_schema_for::<ReconcileAnnotationsInput>(),
+    );
+    defs.insert(
+        "AnnotationOpOutcome",
+        inline_schema_for::<AnnotationOpOutcome>(),
+    );
     // Slice 1d projections + packaging (§6.3b numbering, §10 .mathpack)
     defs.insert("NumberingPolicy", inline_schema_for::<NumberingPolicy>());
     defs.insert("UnitLabel", inline_schema_for::<UnitLabel>());
@@ -213,6 +239,10 @@ pub fn artifact_json() -> String {
     defs.insert("ObjectResult", inline_schema_for::<ObjectResult>());
     // Slice 1d FFI envelopes (ops + projections + packaging)
     defs.insert("OpOutcomeResult", inline_schema_for::<OpOutcomeResult>());
+    defs.insert(
+        "AnnotationOpOutcomeResult",
+        inline_schema_for::<AnnotationOpOutcomeResult>(),
+    );
     defs.insert("NumberingResult", inline_schema_for::<NumberingResult>());
     defs.insert("MathpackResult", inline_schema_for::<MathpackResult>());
     defs.insert(
@@ -631,6 +661,53 @@ pub fn conformance_json() -> String {
           "note": "end missing" },
         { "type": "ContentLocator", "value": { "kind": "char_span", "start": 0, "end": 3 }, "valid": false,
           "note": "unknown tag" },
+
+        // ── Annotations (§6.2) ──
+        { "type": "ObjectType", "value": "annotation", "valid": true,
+          "note": "producible via reconcile_annotations, not the plain create path" },
+        { "type": "LayoutStep", "value": "small", "valid": true },
+        { "type": "LayoutStep", "value": "huge", "valid": false, "note": "not a registered step" },
+        { "type": "AnnotationRole", "value": "target", "valid": true },
+        { "type": "AnnotationRole", "value": "member", "valid": true },
+        { "type": "AnnotationRole", "value": "endpoint", "valid": false, "note": "reserved role, not v1" },
+        { "type": "AnnotationExtent",
+          "value": { "kind": "sub_term", "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+                     "term_path": [0, 1] }, "valid": true,
+          "note": "a math sub-term bound by its structural path" },
+        { "type": "AnnotationExtent",
+          "value": { "kind": "locator", "locator": { "kind": "prose_span", "start": 2, "end": 9 } },
+          "valid": true, "note": "a prose phrase" },
+        { "type": "AnnotationExtent",
+          "value": { "kind": "locator", "locator": { "kind": "whole_unit" } }, "valid": true,
+          "note": "an equation-set MEMBER row" },
+        { "type": "AnnotationExtent", "value": { "kind": "surface_span" }, "valid": false,
+          "note": "unknown extent kind" },
+        { "type": "AnnotationPrimitive",
+          "value": { "kind": "overbrace", "label": { "text": "the discriminant", "inline": [] },
+                     "gap": "small" }, "valid": true },
+        { "type": "AnnotationPrimitive",
+          "value": { "kind": "underbrace", "label": { "text": "", "inline": [] }, "gap": "none" },
+          "valid": true, "note": "a bare (empty-label) brace" },
+        { "type": "AnnotationPrimitive",
+          "value": { "kind": "overbrace", "label": { "text": "x", "inline": [] } }, "valid": false,
+          "note": "gap missing" },
+        { "type": "AnnotationPrimitive",
+          "value": { "kind": "sideways_brace", "label": { "text": "x", "inline": [] }, "gap": "small" },
+          "valid": false, "note": "unknown brace kind (arrow reserved)" },
+        { "type": "AnnotationTarget",
+          "value": { "id": "0197675f-71f4-7000-8000-0000000000f1",
+                     "annotation_id": "0197675f-71f4-7000-8000-0000000000f2", "role": "target",
+                     "position": 0, "target_unit_id": "0197675f-71f4-7000-8000-0000000000b1",
+                     "target_object_id": "0197675f-71f4-7000-8000-000000000001",
+                     "extent": { "kind": "sub_term",
+                                 "expression_id": "0197675f-71f4-7000-8000-0000000000c1",
+                                 "term_path": [0] }, "status": "active",
+                     "provenance_id": "0197675f-71f4-7000-8000-000000000002" }, "valid": true },
+        { "type": "AnnotationDetail",
+          "value": { "object_id": "0197675f-71f4-7000-8000-0000000000f2",
+                     "primitives": [ { "kind": "overbrace",
+                                       "label": { "text": "≥ 0", "inline": [] }, "gap": "small" } ] },
+          "valid": true },
 
         // ── TargetSelector ──
         { "type": "TargetSelector",
@@ -1517,6 +1594,21 @@ mod tests {
                 "MathpackResult" => serde_json::from_value::<MathpackResult>(value.clone()).is_ok(),
                 "MathpackImportResult" => {
                     serde_json::from_value::<MathpackImportResult>(value.clone()).is_ok()
+                }
+                // ── §6.2 brace annotations ──
+                "LayoutStep" => serde_json::from_value::<LayoutStep>(value.clone()).is_ok(),
+                "AnnotationRole" => serde_json::from_value::<AnnotationRole>(value.clone()).is_ok(),
+                "AnnotationPrimitive" => {
+                    serde_json::from_value::<AnnotationPrimitive>(value.clone()).is_ok()
+                }
+                "AnnotationExtent" => {
+                    serde_json::from_value::<AnnotationExtent>(value.clone()).is_ok()
+                }
+                "AnnotationDetail" => {
+                    serde_json::from_value::<AnnotationDetail>(value.clone()).is_ok()
+                }
+                "AnnotationTarget" => {
+                    serde_json::from_value::<AnnotationTarget>(value.clone()).is_ok()
                 }
                 other => panic!("conformance corpus names unknown type {other}"),
             };

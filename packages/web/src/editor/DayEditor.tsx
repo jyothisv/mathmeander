@@ -23,6 +23,8 @@ import {
   setHandle,
   reparentUnit,
   toggleHeading,
+  reconcileAnnotations,
+  loadAnnotations,
 } from '../api/client';
 import { currentToken } from '../auth/store';
 import { editorSchema } from './schema';
@@ -36,6 +38,11 @@ import {
   nameNeeds,
   nameIntents,
   docProjectedHandles,
+  docAnnotationDrafts,
+  docAnnotationsForProjection,
+  annotationIntents,
+  serverAnnotationSigs,
+  projectAnnotationsOntoDoc,
   type ProjectedHandle,
   type StructuralIntent,
   type TypeNeed,
@@ -79,6 +86,9 @@ import { wrapSelectionAsMath } from './mathWrap';
 import { transformPastedSlice, guardAtomicPaste, guardAtomicDrop } from './paste';
 import { mathLivePreview } from './mathLivePreview';
 import { mathBackspace, mathDelete } from './mathKeys';
+import { annoRecognize } from './annoRecognize';
+import { annoLivePreview, toggleAnnotations } from './annoLivePreview';
+import { annotationPopover } from './annoKeys';
 import {
   clearDraft,
   getDraft,
@@ -120,6 +130,7 @@ function draftEqualsServer(
   draft: EditorDraft,
   server: MathContent,
   serverNames: Map<string, string>,
+  serverAnnos: Map<string, string>,
 ): boolean {
   try {
     const doc = Node.fromJSON(editorSchema, draft.doc as Parameters<typeof Node.fromJSON>[1]);
@@ -134,7 +145,10 @@ function draftEqualsServer(
       deletes.length === 0 &&
       typeIntents(doc, server).length === 0 &&
       structuralIntents(doc, server).length === 0 && // a pending §B section gesture also keeps the draft
-      nameIntents(doc, serverNames).length === 0
+      nameIntents(doc, serverNames).length === 0 &&
+      // §6.2: an annotation-only edit is chrome (empty content delta), so it must be checked vs the server
+      // annotation baseline too, else the draft is discarded and the brace lost on reload.
+      annotationIntents(doc, serverAnnos).length === 0
     );
   } catch {
     return true;
@@ -171,6 +185,10 @@ export function DayEditor({
   navigateRef.current = navigate;
   // Conflict-resolution handlers, set by the effect and called from the conflict buttons' onClick.
   const conflictRef = useRef<{ takeTheirs: () => void; keepMine: () => void } | null>(null);
+  // §6.2 P3: the annotations on/off toggle — the effect wires the dispatcher; the button drives it. React
+  // mirrors the visibility for the label only (the source of truth is the plugin state).
+  const annoToggleRef = useRef<(() => void) | null>(null);
+  const [annotationsOn, setAnnotationsOn] = useState(true);
   const [status, setStatus] = useState<SaveState>(() => ({
     conflict: false,
     error: false,
@@ -227,8 +245,17 @@ export function DayEditor({
       // TYPED on the server, so a name on a freshly-typed-but-unsaved block needs the OVERLAY below — like
       // keepTypes restoring an un-persisted type (review M2).
       const keepNames = docProjectedHandles(view.state.doc);
+      // §6.2: annotations don't ride the content merge, so the live doc is authoritative — re-overlay its
+      // current braces onto the reprojected doc (the annotation-axis analog of keepNames), else a merge would
+      // drop every brace on screen.
+      const keepAnnos = docAnnotationsForProjection(view.state.doc, objectId);
+      const projected = projectAnnotationsOntoDoc(
+        projectToDoc(c, keepNames),
+        keepAnnos.details,
+        keepAnnos.targets,
+      );
       const tr = view.state.tr
-        .replaceWith(0, view.state.doc.content.size, projectToDoc(c, keepNames).content)
+        .replaceWith(0, view.state.doc.content.size, projected.content)
         .setMeta('addToHistory', false);
       if (keepTypes.length > 0 || keepStruct.length > 0 || keepNames.length > 0) {
         const wantType = new Map(keepTypes.map((t) => [t.unitId, t.type]));
@@ -312,6 +339,15 @@ export function DayEditor({
           .filter((h) => h.target_unit_id)
           .map((h) => [h.id, { unitId: h.target_unit_id as string, name: h.name }]),
       ),
+      // §6.2 annotation axis (the 5th op-axis): a SEPARATE aggregate — `reconcileAnnotations` neither gates
+      // nor bumps the host revision, so the drain just sends the diff + defers on error (autosaveController).
+      applyAnnotations: (upserts, deletes, expectedRevision) =>
+        reconcileAnnotations(objectId, {
+          expected_revision: expectedRevision,
+          upserts,
+          deletes,
+        }).then(() => undefined),
+      docAnnotationDrafts: () => (view ? docAnnotationDrafts(view.state.doc) : []),
       setStatus: setIf,
       cancelScheduledFlush: () => {
         if (timer != null) {
@@ -326,6 +362,9 @@ export function DayEditor({
     conflictRef.current = {
       takeTheirs: () => void ctl.resolveTakeTheirs(),
       keepMine: () => void ctl.resolveKeepMine(),
+    };
+    annoToggleRef.current = () => {
+      if (view) toggleAnnotations(view.state, view.dispatch.bind(view));
     };
 
     const scheduleFlush = () => {
@@ -416,8 +455,15 @@ export function DayEditor({
             // its own block so the construct is recognized on ANY line, not just a block's first (the rules are
             // disjoint — word vs `#` vs the closing `$$`). Inline `$…$` still needs no rule (mathRecognize scans).
             inputRules({ rules: [cueRule, headingCueRule, displayCueRule] }),
+            // §6.2 P3: toggle ALL annotation presentation (braces, captions, reserved space) — off restores
+            // the pristine layout (decoration-only render, nothing baked into content). Bound to ⌘' (macOS
+            // ⌥+letter composes a dead/special character — `Mod-Alt-a` produced `å` and never matched on a
+            // real keyboard; only Playwright's synthetic events passed). The visible button below is the
+            // primary, layout-independent affordance.
+            keymap({ "Mod-'": toggleAnnotations, 'Mod-Alt-a': toggleAnnotations }),
             keymap(baseKeymapNoLineKeys), // Ctrl-a/Ctrl-e dropped → native visual-line nav (see above)
             idStamper,
+            annoRecognize, // re-mint a pasted duplicate annoRef → copy-mints-fresh (after idStamper)
             headingRecognize, // scan a block's leading `#`×n → set the heading flag; demote when gone
             headingResection, // derive every block's parentId from the `#`-depth sequence (sections nest)
             mathRecognize, // scan `$…$`/`$$…$$` text → the mathExpr identity mark + synced expr (skips headings)
@@ -430,6 +476,8 @@ export function DayEditor({
             referenceLivePreview({ selfObjectId: objectId }), // citations resolve their target → live "Theorem 1" link
             activeUnit,
             blockHandle, // a ⋮⋮ hover handle in the left gutter; click → Move up / Move down menu
+            annotationPopover, // §6.2: contextual Over/Under menu on a structural selection (target-first)
+            annoLivePreview, // §6.2: reserve the brace band (node padding) + draw the SVG braces + captions (LAST)
           ],
         }),
         // Type `$` over a SELECTION → wrap it in `$…$` (a 2nd `$` over an inline equation → `$$…$$` display).
@@ -520,12 +568,23 @@ export function DayEditor({
     // Restore-on-mount: prefer an unsynced local draft over the server projection; never auto-delete a
     // draft that still differs from the server (decideRestore: restore / conflict / discard).
     void (async () => {
-      const draft = await getDraft(objectId);
+      // Load the draft AND the persisted annotations together (§6.2). Annotations are a SEPARATE aggregate
+      // (not in `content`), fetched via their own endpoint; a failure degrades to no braces, never a broken
+      // editor. Their baseline seeds the drain (so the first edit doesn't redundantly re-upsert) + the draft
+      // equality check, and they're re-attached to the projected doc as `annoRef` marks below.
+      const [draft, annos] = await Promise.all([
+        getDraft(objectId),
+        loadAnnotations(objectId).catch(() => ({ details: [], targets: [] })),
+      ]);
       if (cancelled) return;
+      const serverAnnos = serverAnnotationSigs(annos.details, annos.targets);
+      ctl.seedAnnotations(Object.fromEntries(serverAnnos));
       // The server's name baseline (handleId → name) from the loaded handles — so a pending name-only edit
       // keeps the draft (§6.3b, review M1). Names aren't in `content`, hence the separate map.
       const serverNames = new Map(handles.map((h) => [h.id, h.name]));
-      const verdict = decideRestore(draft, content, (d, s) => draftEqualsServer(d, s, serverNames));
+      const verdict = decideRestore(draft, content, (d, s) =>
+        draftEqualsServer(d, s, serverNames, serverAnnos),
+      );
       if ((verdict.action === 'restore' || verdict.action === 'conflict') && draft) {
         try {
           buildView(
@@ -546,7 +605,12 @@ export function DayEditor({
       } else if (draft) {
         void clearDraft(objectId); // discard (equal / impossible-future) — safe to clear
       }
-      buildView(projectToDoc(content, handles), false);
+      // No draft restored: project the server content, then re-attach the persisted annotations as `annoRef`
+      // marks so existing braces render on open. (A restored draft already carries its marks in its JSON.)
+      buildView(
+        projectAnnotationsOntoDoc(projectToDoc(content, handles), annos.details, annos.targets),
+        false,
+      );
     })();
 
     // Exit flush: best-effort keepalive PUT + a guaranteed local draft, when the page is going away.
@@ -572,6 +636,7 @@ export function DayEditor({
       cancelled = true;
       ctl.dispose();
       conflictRef.current = null;
+      annoToggleRef.current = null;
       if (timer != null) clearTimeout(timer);
       if (drafter != null) clearTimeout(drafter);
       window.removeEventListener('pagehide', onHide);
@@ -593,6 +658,18 @@ export function DayEditor({
     <div>
       <div ref={mountRef} className="day-editor" aria-label="day content" />
       <SaveStatusIndicator state={status} />
+      <button
+        type="button"
+        className="anno-visibility-toggle"
+        title="Show or hide annotations (⌘')"
+        aria-pressed={annotationsOn}
+        onClick={() => {
+          annoToggleRef.current?.();
+          setAnnotationsOn((on) => !on);
+        }}
+      >
+        {annotationsOn ? 'Annotations: on' : 'Annotations: off'}
+      </button>
       {status.conflict && (
         <div className="conflict-actions" role="group" aria-label="resolve conflict">
           <p className="meta">

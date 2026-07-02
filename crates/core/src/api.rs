@@ -10,14 +10,15 @@ use crate::error::CoreError;
 use crate::ids::UnitId;
 use crate::mathpack::{Mathpack, MathpackGraph, MathpackImport, MathpackMeta};
 use crate::model::{
-    Alias, CanonicalObject, Handle, JournalDayDetail, Link, NotebookDetail, Provenance, Tagging,
-    Unit,
+    Alias, AnnotationTarget, CanonicalObject, Handle, JournalDayDetail, Link, NotebookDetail,
+    Provenance, Tagging, Unit,
 };
 use crate::numbering::{DisplayLabels, NumberingPolicy};
 use crate::ops::{
-    DissolveObjectInput, InsertEquationsInput, InsertReferenceInput, MaterializeObjectInput,
-    MathContent, MergeUnitsInput, OpContext, OpOutcome, RehomeSubtreeInput, ReparentUnitInput,
-    ResolveOccurrenceInput, RewriteSurfaceInput, SetHandleInput, SetUnitTypeInput, SplitUnitInput,
+    AnnotationOpOutcome, DissolveObjectInput, InsertEquationsInput, InsertReferenceInput,
+    MaterializeObjectInput, MathContent, MergeUnitsInput, OpContext, OpOutcome,
+    ReconcileAnnotationsInput, RehomeSubtreeInput, ReparentUnitInput, ResolveOccurrenceInput,
+    RewriteSurfaceInput, SetHandleInput, SetUnitTypeInput, SplitUnitInput,
     ToggleExpressionPlacementInput, ToggleHeadingInput,
 };
 use crate::validate::{CreateContext, CreateObjectInput, ObjectPatch};
@@ -162,6 +163,10 @@ core_result!(
 core_result!(
     /// Envelope of every unit-level canonical operation (all eight yield an `OpOutcome`).
     OpOutcomeResult, OpOutcome
+);
+core_result!(
+    /// Envelope of `reconcile_annotations` (§6.2 brace annotations).
+    AnnotationOpOutcomeResult, AnnotationOpOutcome
 );
 core_result!(
     /// Envelope of `project_numbering` (the §6.3b display-label projection).
@@ -411,6 +416,32 @@ pub fn save_content(
         )?)
     })();
     OpOutcomeResult::from_result(result).to_json()
+}
+
+/// Reconcile a host object's brace/embrace ANNOTATIONS (§6.2 annotation axis) → `AnnotationOpOutcomeResult`
+/// JSON. The glue loads the host `content` (for extent validation) + the `current` annotation target rows
+/// (to tell a first-seen annotation id from an existing one), then persists the outcome (new annotation
+/// objects + detail + target rows + removed ids) in one transaction with the §6.4 revision gate.
+pub fn reconcile_annotations(
+    content_json: &str,
+    current_targets_json: &str,
+    input_json: &str,
+    ctx_json: &str,
+    now_iso: &str,
+) -> String {
+    let result = (|| {
+        let content: MathContent = parse_input("content", content_json)?;
+        let current: Vec<AnnotationTarget> =
+            parse_input("current annotation targets", current_targets_json)?;
+        let input: ReconcileAnnotationsInput =
+            parse_input("reconcile_annotations input", input_json)?;
+        let ctx: OpContext = parse_input("op context", ctx_json)?;
+        let now = parse_now(now_iso)?;
+        Ok(crate::ops::reconcile_annotations(
+            &content, &current, &input, &ctx, now,
+        )?)
+    })();
+    AnnotationOpOutcomeResult::from_result(result).to_json()
 }
 
 /// Split a prose unit at a char offset → `OpOutcomeResult` JSON.

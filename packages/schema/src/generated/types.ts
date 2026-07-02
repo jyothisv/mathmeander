@@ -6,6 +6,16 @@ import {
   AliasSchema,
   AliasKindSchema,
   AliasScopeSchema,
+  AnnotationDetailSchema,
+  AnnotationDraftSchema,
+  AnnotationExtentSchema,
+  AnnotationLabelSchema,
+  AnnotationOpOutcomeSchema,
+  AnnotationOpOutcomeResultSchema,
+  AnnotationPrimitiveSchema,
+  AnnotationRoleSchema,
+  AnnotationTargetSchema,
+  AnnotationTargetDraftSchema,
   AssetChecksumSchema,
   CanonicalObjectSchema,
   CharSpanSchema,
@@ -37,6 +47,7 @@ import {
   InsertEquationsInputSchema,
   InsertReferenceInputSchema,
   JournalDayDetailSchema,
+  LayoutStepSchema,
   LinkSchema,
   LinkDraftSchema,
   LinkStatusSchema,
@@ -70,6 +81,7 @@ import {
   ParseStatusSchema,
   ProvenanceSchema,
   ProvenanceDerivationSchema,
+  ReconcileAnnotationsInputSchema,
   ReferenceTargetSchema,
   RehomeSubtreeInputSchema,
   ReparentUnitInputSchema,
@@ -98,6 +110,16 @@ import {
 export type Alias = z.infer<typeof AliasSchema>;
 export type AliasKind = z.infer<typeof AliasKindSchema>;
 export type AliasScope = z.infer<typeof AliasScopeSchema>;
+export type AnnotationDetail = z.infer<typeof AnnotationDetailSchema>;
+export type AnnotationDraft = z.infer<typeof AnnotationDraftSchema>;
+export type AnnotationExtent = z.infer<typeof AnnotationExtentSchema>;
+export type AnnotationLabel = z.infer<typeof AnnotationLabelSchema>;
+export type AnnotationOpOutcome = z.infer<typeof AnnotationOpOutcomeSchema>;
+export type AnnotationOpOutcomeResult = z.infer<typeof AnnotationOpOutcomeResultSchema>;
+export type AnnotationPrimitive = z.infer<typeof AnnotationPrimitiveSchema>;
+export type AnnotationRole = z.infer<typeof AnnotationRoleSchema>;
+export type AnnotationTarget = z.infer<typeof AnnotationTargetSchema>;
+export type AnnotationTargetDraft = z.infer<typeof AnnotationTargetDraftSchema>;
 export type AssetChecksum = z.infer<typeof AssetChecksumSchema>;
 export type CanonicalObject = z.infer<typeof CanonicalObjectSchema>;
 export type CharSpan = z.infer<typeof CharSpanSchema>;
@@ -129,6 +151,7 @@ export type InputSyntax = z.infer<typeof InputSyntaxSchema>;
 export type InsertEquationsInput = z.infer<typeof InsertEquationsInputSchema>;
 export type InsertReferenceInput = z.infer<typeof InsertReferenceInputSchema>;
 export type JournalDayDetail = z.infer<typeof JournalDayDetailSchema>;
+export type LayoutStep = z.infer<typeof LayoutStepSchema>;
 export type Link = z.infer<typeof LinkSchema>;
 export type LinkDraft = z.infer<typeof LinkDraftSchema>;
 export type LinkStatus = z.infer<typeof LinkStatusSchema>;
@@ -162,6 +185,7 @@ export type Origin = z.infer<typeof OriginSchema>;
 export type ParseStatus = z.infer<typeof ParseStatusSchema>;
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 export type ProvenanceDerivation = z.infer<typeof ProvenanceDerivationSchema>;
+export type ReconcileAnnotationsInput = z.infer<typeof ReconcileAnnotationsInputSchema>;
 export type ReferenceTarget = z.infer<typeof ReferenceTargetSchema>;
 export type RehomeSubtreeInput = z.infer<typeof RehomeSubtreeInputSchema>;
 export type ReparentUnitInput = z.infer<typeof ReparentUnitInputSchema>;

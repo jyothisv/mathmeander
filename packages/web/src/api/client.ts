@@ -4,9 +4,16 @@
 import { z } from 'zod';
 import { v7 as uuidv7 } from 'uuid';
 import {
+  AnnotationDetailSchema,
+  AnnotationOpOutcomeSchema,
+  AnnotationTargetSchema,
   CanonicalObjectSchema,
   MathpackGraphSchema,
   OpOutcomeSchema,
+  type AnnotationDetail,
+  type AnnotationDraft,
+  type AnnotationOpOutcome,
+  type AnnotationTarget,
   type CanonicalObject,
   type MathpackGraph,
   type ObjectPatch,
@@ -302,6 +309,47 @@ export async function rewriteSurface(
   return (
     await request('POST', `/api/objects/${objectId}/ops/rewrite-surface`, OpOutcomeEnvelope, body)
   ).outcome;
+}
+
+// ── §6.2 brace annotations (the editor's 5th autosave axis; a SEPARATE aggregate) ──
+
+const AnnotationOpOutcomeEnvelope = z.object({ outcome: AnnotationOpOutcomeSchema });
+const AnnotationsResponse = z.object({
+  details: z.array(AnnotationDetailSchema),
+  targets: z.array(AnnotationTargetSchema),
+});
+
+/** `reconcile_annotations` (§6.2): the idempotent upsert/delete-by-diff of an object's brace annotations.
+ *  Annotations are a SEPARATE aggregate — this NEVER gates/bumps the host revision (`expected_revision` rides
+ *  only to satisfy the DTO; the server reads the session for `space_id` and applies no revision gate), and a
+ *  broken sub-anchor self-heals to `stale` server-side. Called after the content flush so the bound units
+ *  already exist (else a target on a not-yet-persisted unit 422s → the drain defers + retries). */
+export async function reconcileAnnotations(
+  objectId: string,
+  body: { expected_revision: number; upserts: AnnotationDraft[]; deletes: string[] },
+): Promise<AnnotationOpOutcome> {
+  const input = {
+    expected_revision: body.expected_revision,
+    space_id: objectId, // placeholder; the server injects the session space
+    upserts: body.upserts,
+    deletes: body.deletes,
+  };
+  return (
+    await request(
+      'POST',
+      `/api/objects/${objectId}/annotations`,
+      AnnotationOpOutcomeEnvelope,
+      input,
+    )
+  ).outcome;
+}
+
+/** The object's persisted annotations (detail = HOW each brace is drawn; targets = WHAT each binds), loaded
+ *  on open so the overlay can render existing braces + seed the drain's `sent` baseline. */
+export async function loadAnnotations(
+  objectId: string,
+): Promise<{ details: AnnotationDetail[]; targets: AnnotationTarget[] }> {
+  return request('GET', `/api/objects/${objectId}/annotations`, AnnotationsResponse);
 }
 
 /** Best-effort exit flush (slice 2c autosave): a fire-and-forget `keepalive` PUT used on

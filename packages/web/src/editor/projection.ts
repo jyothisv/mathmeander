@@ -6,9 +6,16 @@
 // units), so non-BMP glyphs anchor correctly. 2c-1 is FLAT PROSE only; see `isFlatProse`.
 import { v7 as uuidv7 } from 'uuid';
 import { Node } from 'prosemirror-model';
+import { Transform } from 'prosemirror-transform';
 import type {
+  AnnotationDetail,
+  AnnotationDraft,
+  AnnotationExtent,
+  AnnotationPrimitive,
+  AnnotationTarget,
   ConfigFamily,
   Inline,
+  LayoutStep,
   MathContent,
   MathExpression,
   Unit,
@@ -1061,4 +1068,335 @@ export function structuralIntents(doc: Node, baseline: MathContent): StructuralI
       out.push({ unitId, heading: wantHeading, parentId: wantParent });
   });
   return out;
+}
+
+// ── §6.2 annotation axis (the FIFTH op-axis): brace/embrace annotations bound to precise structure ──
+// Annotations are a SEPARATE aggregate (never inside `UnitContent`, so `save_content`/`isFlatProse`/the math
+// model are untouched) that the editor RE-DERIVES on persist by walking the `annoRef` marks — the mark IS the
+// store (slice-1a single-target). This axis does NOT gate/bump the host revision (the server persists it
+// without a revision gate); a broken sub-anchor self-heals to `stale` on the next re-derive. It mirrors the
+// name axis (a low-stakes idempotent overlay), so its drain is the simplest — apply the desired set, defer on
+// error, no rebase/merge (autosaveController.drainAnnotations).
+
+/** The PRECISE structural binding of one brace, carried on the `annoRef` mark (§6.2). `sub_term` names a math
+ *  sub-expression by a STABLE structural path (not char offsets, so an edit elsewhere never desyncs it);
+ *  `expression_span` names a contiguous CODE-POINT range of one expression's surface — for a selection that
+ *  is mathematically legitimate but not one AST node (an associative sub-chain like `Sigma' times {L, S, R}`
+ *  in a left-nested product); it flushes as the core's `ContentLocator::ExpressionSpan` and may go stale on
+ *  edit like any locator. `prose_span` names a prose phrase whose char offsets are DERIVED from the mark's
+ *  LIVE range at flush. */
+export type AnnoExtentAttr =
+  | { kind: 'sub_term'; expressionId: string; termPath: number[] }
+  | { kind: 'expression_span'; expressionId: string; start: number; end: number }
+  | { kind: 'prose_span' };
+
+/** The `annoRef` mark's full attribute payload (slice-1a single-target). Kept as a named type so the gesture
+ *  (annoKeys), the recognizer (annoRecognize), and this seam agree on the shape. */
+export interface AnnoRefAttrs {
+  annotationId: string;
+  targetId: string;
+  kind: AnnotationPrimitive['kind'];
+  gap: LayoutStep;
+  label: string;
+  extent: AnnoExtentAttr | null;
+}
+
+/** Per-block code-point spans of each `annoRef` mark (keyed by annotationId), in the SAME offset model as
+ *  `blockToProse` — so a `prose_span` extent aligns exactly with the canonical unit `text` (math/reference
+ *  atoms are zero-width; a hard_break is one `\n`). Only meaningful for a prose-phrase annotation; a sub-term
+ *  annotation over `$…$` math yields a zero-width span here (it uses the stored path, not these offsets). */
+function annoSpansInBlock(block: Node): Map<string, { start: number; end: number }> {
+  const spans = new Map<string, { start: number; end: number }>();
+  let offset = 0; // code-point offset
+  block.forEach((node) => {
+    const isMath = node.marks.some((m) => m.type.name === 'mathExpr');
+    let advance = 0;
+    if (node.isText)
+      advance = isMath ? 0 : cpLen(node.text ?? ''); // `$…$` math text is a zero-width atom
+    else if (node.type.name === 'hard_break') advance = 1;
+    for (const anno of node.marks.filter((m) => m.type.name === 'annoRef')) {
+      // ALL coexisting annoRef marks on this node (`excludes: ''`) — one span per annotationId.
+      const id = anno.attrs.annotationId as string;
+      const prev = spans.get(id);
+      spans.set(id, { start: prev ? prev.start : offset, end: offset + advance });
+    }
+    offset += advance;
+  });
+  return spans;
+}
+
+/** Re-derive the canonical annotation DRAFTS from the doc's `annoRef` marks — the annotation-axis analog of
+ *  `flushToContent` (§6.2). One mark ⇒ one single-target annotation: its `kind`/`gap`/`label` ARE the sole
+ *  `AnnotationDetail` primitive; its `extent` + the enclosing block's `unitId` (the `target_unit_id`) ARE the
+ *  sole target. A block with no persisted `unitId` is SKIPPED (its annotation applies on a later drain, once
+ *  `save_content` created the unit — the `typeNeeds` skip-not-yet-persisted idiom); a duplicate annotationId
+ *  (mid-paste, before annoRecognize re-mints) keeps the FIRST only. A `prose_span` whose live range collapsed
+ *  to empty (the phrase was deleted) is DROPPED here → it falls into the drain's deletes. */
+export function docAnnotationDrafts(doc: Node): AnnotationDraft[] {
+  const out: AnnotationDraft[] = [];
+  const seen = new Set<string>();
+  doc.forEach((block) => {
+    if (block.type.name !== 'prose') return; // display-math blocks are prose nodes too; config never carries it
+    const unitId = block.attrs.unitId as string | null;
+    if (!unitId) return; // not-yet-persisted block — defer
+    const spans = annoSpansInBlock(block);
+    const marksById = new Map<string, AnnoRefAttrs>();
+    block.forEach((node) => {
+      for (const m of node.marks.filter((mk) => mk.type.name === 'annoRef')) {
+        if (!marksById.has(m.attrs.annotationId as string))
+          marksById.set(m.attrs.annotationId as string, m.attrs as unknown as AnnoRefAttrs);
+      }
+    });
+    for (const [id, attrs] of marksById) {
+      if (seen.has(id)) continue; // a paste-duplicated id — annoRecognize re-mints it next tx; skip the dupe
+      const ext = attrs.extent;
+      if (!ext) continue; // malformed mark (no binding) — skip
+      let extent: AnnotationExtent;
+      if (ext.kind === 'sub_term') {
+        extent = { kind: 'sub_term', expression_id: ext.expressionId, term_path: ext.termPath };
+      } else if (ext.kind === 'expression_span') {
+        extent = {
+          kind: 'locator',
+          locator: {
+            kind: 'expression_span',
+            expression_id: ext.expressionId,
+            start: ext.start,
+            end: ext.end,
+          },
+        };
+      } else {
+        const s = spans.get(id);
+        if (!s || s.end <= s.start) continue; // the prose phrase was deleted → drop → becomes a delete
+        extent = { kind: 'locator', locator: { kind: 'prose_span', start: s.start, end: s.end } };
+      }
+      seen.add(id);
+      out.push({
+        annotation_id: id,
+        primitives: [
+          { kind: attrs.kind, label: { text: attrs.label ?? '', inline: [] }, gap: attrs.gap },
+        ],
+        targets: [
+          { id: attrs.targetId, role: 'target', position: 0, target_unit_id: unitId, extent },
+        ],
+      });
+    }
+  });
+  return out;
+}
+
+/** A stable, key-order-independent signature of one annotation draft — the change-detection unit for the
+ *  annotation drain + the draft-equality check (the annotation-axis analog of `contentKeyOf`). */
+export function annotationSig(d: AnnotationDraft): string {
+  return stableStringify(d);
+}
+
+/** My pending annotation INTENTS vs the server's annotation baseline (`serverSigs`: annotationId → sig, from
+ *  the loaded rows via `serverAnnotationSigs`) — the annotation-axis analog of `nameIntents`. An id whose doc
+ *  draft differs from the baseline, OR a baseline annotation the doc dropped, is a pending intent. Used by the
+ *  draft-equality check so an annotation-only edit keeps its draft on reload (§6.2). */
+export function annotationIntents(doc: Node, serverSigs: Map<string, string>): string[] {
+  const drafts = docAnnotationDrafts(doc);
+  const docIds = new Set<string>();
+  const out: string[] = [];
+  for (const d of drafts) {
+    docIds.add(d.annotation_id);
+    if (serverSigs.get(d.annotation_id) !== annotationSig(d)) out.push(d.annotation_id);
+  }
+  for (const id of serverSigs.keys()) if (!docIds.has(id)) out.push(id); // dropped vs the server
+  return out;
+}
+
+/** The server's annotation baseline as annotationId → sig, projecting the loaded detail + target rows into the
+ *  SAME `AnnotationDraft` shape `docAnnotationDrafts` produces (dropping the server-only target facets —
+ *  `target_object_id`/`status`/`provenance_id` — the draft never carries). Seeds `annotationIntents` (draft
+ *  equality) and the drain's `sent` baseline, so an unchanged annotation neither keeps the draft nor re-POSTs. */
+export function serverAnnotationSigs(
+  details: AnnotationDetail[],
+  targets: AnnotationTarget[],
+): Map<string, string> {
+  const byAnnotation = new Map<string, AnnotationTarget[]>();
+  for (const t of targets) {
+    const arr = byAnnotation.get(t.annotation_id) ?? [];
+    arr.push(t);
+    byAnnotation.set(t.annotation_id, arr);
+  }
+  const out = new Map<string, string>();
+  for (const d of details) {
+    const ts = (byAnnotation.get(d.object_id) ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position);
+    const draft: AnnotationDraft = {
+      annotation_id: d.object_id,
+      primitives: d.primitives,
+      targets: ts.map((t) => ({
+        id: t.id,
+        role: t.role,
+        position: t.position,
+        target_unit_id: t.target_unit_id,
+        extent: t.extent,
+      })),
+    };
+    out.set(d.object_id, annotationSig(draft));
+  }
+  return out;
+}
+
+// ── annotation → doc (the LOAD/REPROJECT direction): re-attach `annoRef` marks so persisted braces render ──
+
+/** The contiguous `mathExpr` run whose expr id === `exprId` in a block, as doc positions — where a `sub_term`
+ *  annotation's mark goes (the whole `$…$`/`$$…$$` source; the brace picks the sub-term within by path). */
+function mathRunForExpr(
+  block: Node,
+  contentStart: number,
+  exprId: string,
+): { from: number; to: number } | null {
+  let pos = contentStart;
+  let runFrom = -1;
+  let match: { from: number; to: number } | null = null;
+  block.forEach((child) => {
+    const m = child.isText ? child.marks.find((x) => x.type.name === 'mathExpr') : undefined;
+    const id = m ? (m.attrs.expr as MathExpression).id : null;
+    if (m && id === exprId) {
+      if (runFrom < 0) runFrom = pos;
+    } else if (runFrom >= 0 && !match) {
+      match = { from: runFrom, to: pos };
+      runFrom = -1;
+    }
+    pos += child.nodeSize;
+  });
+  if (runFrom >= 0 && !match) match = { from: runFrom, to: pos };
+  return match;
+}
+
+/** The doc position of code-point offset `target` within a block's canonical prose text — the INVERSE of
+ *  `annoSpansInBlock` (math/reference atoms are zero-width, a hard_break is one `\n`). Used to place a loaded
+ *  `prose_span` annotation's mark. `null` when the offset is past the block's canonical text. */
+function docPosForCpOffsetInBlock(
+  block: Node,
+  contentStart: number,
+  target: number,
+): number | null {
+  let cp = 0;
+  let pos = contentStart;
+  let result: number | null = null;
+  block.forEach((child) => {
+    if (result != null) return;
+    const isMath = child.marks.some((m) => m.type.name === 'mathExpr');
+    if (child.isText && !isMath) {
+      const chars = cps(child.text ?? '');
+      if (target <= cp + chars.length) {
+        const utf16 = chars.slice(0, target - cp).join('').length; // cp offset → UTF-16 within this node
+        result = pos + utf16;
+        return;
+      }
+      cp += chars.length;
+    } else if (child.type.name === 'hard_break') {
+      if (target === cp) result = pos;
+      else cp += 1;
+    }
+    pos += child.nodeSize; // math text + reference atoms advance doc positions but not the cp offset
+  });
+  if (result == null && target === cp) result = pos; // the very end of the block's text
+  return result;
+}
+
+/** Re-attach the persisted annotations to a freshly-projected doc as `annoRef` marks (§6.2), so a reload/merge
+ *  shows every brace. One target per annotation (slice 1a): a `sub_term`/`expression_span` marks the whole
+ *  math source (the brace resolves its structure/char-range within); a `prose_span` marks the phrase (offsets
+ *  → doc positions). A target on a `whole_unit` extent, or a unit not in the doc, is skipped (it self-heals
+ *  on the next re-derive). Pure — a `Transform` over the doc, no editor state. */
+export function projectAnnotationsOntoDoc(
+  doc: Node,
+  details: AnnotationDetail[],
+  targets: AnnotationTarget[],
+): Node {
+  if (details.length === 0) return doc;
+  const targetsByAnn = new Map<string, AnnotationTarget[]>();
+  for (const t of targets) {
+    const arr = targetsByAnn.get(t.annotation_id) ?? [];
+    arr.push(t);
+    targetsByAnn.set(t.annotation_id, arr);
+  }
+  const blockByUnit = new Map<string, { pos: number; node: Node }>();
+  doc.forEach((block, offset) => {
+    const uid = block.attrs.unitId as string | null;
+    if (block.type.name === 'prose' && uid) blockByUnit.set(uid, { pos: offset, node: block });
+  });
+
+  const tr = new Transform(doc);
+  for (const detail of details) {
+    const target = (targetsByAnn.get(detail.object_id) ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)[0];
+    const prim = detail.primitives[0];
+    if (!target || !prim) continue;
+    const blk = blockByUnit.get(target.target_unit_id);
+    if (!blk) continue;
+    const contentStart = blk.pos + 1;
+    let range: { from: number; to: number } | null = null;
+    let extentAttr: AnnoExtentAttr | null = null;
+    if (target.extent.kind === 'sub_term') {
+      range = mathRunForExpr(blk.node, contentStart, target.extent.expression_id);
+      extentAttr = {
+        kind: 'sub_term',
+        expressionId: target.extent.expression_id,
+        termPath: target.extent.term_path,
+      };
+    } else if (
+      target.extent.kind === 'locator' &&
+      target.extent.locator.kind === 'expression_span'
+    ) {
+      range = mathRunForExpr(blk.node, contentStart, target.extent.locator.expression_id);
+      extentAttr = {
+        kind: 'expression_span',
+        expressionId: target.extent.locator.expression_id,
+        start: target.extent.locator.start,
+        end: target.extent.locator.end,
+      };
+    } else if (target.extent.kind === 'locator' && target.extent.locator.kind === 'prose_span') {
+      const from = docPosForCpOffsetInBlock(blk.node, contentStart, target.extent.locator.start);
+      const to = docPosForCpOffsetInBlock(blk.node, contentStart, target.extent.locator.end);
+      if (from != null && to != null && to > from) range = { from, to };
+      extentAttr = { kind: 'prose_span' };
+    }
+    if (!range || !extentAttr) continue;
+    const mark = editorSchema.marks.annoRef.create({
+      annotationId: detail.object_id,
+      targetId: target.id,
+      kind: prim.kind,
+      gap: prim.gap,
+      label: prim.label.text,
+      extent: extentAttr,
+    });
+    tr.addMark(range.from, range.to, mark);
+  }
+  return tr.doc;
+}
+
+/** The doc's CURRENT annotations as (details, targets) — so a merge REPROJECT can re-overlay the user's live
+ *  braces onto the reprojected doc (`projectAnnotationsOntoDoc`), the annotation-axis analog of keepNames.
+ *  Annotations don't ride the content merge, so the doc is authoritative here. */
+export function docAnnotationsForProjection(
+  doc: Node,
+  objectId: string,
+): { details: AnnotationDetail[]; targets: AnnotationTarget[] } {
+  const details: AnnotationDetail[] = [];
+  const targets: AnnotationTarget[] = [];
+  for (const d of docAnnotationDrafts(doc)) {
+    details.push({ object_id: d.annotation_id, primitives: d.primitives });
+    for (const t of d.targets) {
+      targets.push({
+        id: t.id,
+        annotation_id: d.annotation_id,
+        role: t.role,
+        position: t.position,
+        target_unit_id: t.target_unit_id,
+        target_object_id: objectId,
+        extent: t.extent,
+        status: 'active',
+        provenance_id: '',
+      });
+    }
+  }
+  return { details, targets };
 }

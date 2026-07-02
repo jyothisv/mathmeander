@@ -17,6 +17,7 @@ import {
   toggleHeading as addonToggleHeading,
   splitUnit as addonSplitUnit,
   saveContent as addonSaveContent,
+  reconcileAnnotations as addonReconcileAnnotations,
   mergeUnits as addonMergeUnits,
   toggleExpressionPlacement as addonToggleExpressionPlacement,
   insertEquations as addonInsertEquations,
@@ -37,6 +38,7 @@ import {
   CreateNotebookResultSchema,
   ObjectResultSchema,
   OpOutcomeResultSchema,
+  AnnotationOpOutcomeResultSchema,
   NumberingResultSchema,
   MathpackResultSchema,
   MathpackImportResultSchema,
@@ -51,6 +53,9 @@ import {
   type MathContent,
   type OpContext,
   type OpOutcomeResult,
+  type AnnotationOpOutcomeResult,
+  type ReconcileAnnotationsInput,
+  type AnnotationTarget,
   type SetHandleInput,
   type SetUnitTypeInput,
   type ReparentUnitInput,
@@ -295,6 +300,31 @@ export function saveContent(
         JSON.stringify(currentLinks),
         JSON.stringify(upserts),
         JSON.stringify(deletes),
+        JSON.stringify(ctx),
+        now.toISOString(),
+      ),
+    ),
+  );
+}
+
+/**
+ * Reconcile a host object's brace/embrace annotations (§6.2 annotation axis). The glue loads the host
+ * `content` (for extent validation) + the `current` annotation target rows (to tell a first-seen annotation
+ * id from an existing one); returns new annotation objects + detail + target rows + removed ids to persist.
+ */
+export function reconcileAnnotations(
+  content: MathContent,
+  currentTargets: AnnotationTarget[],
+  input: ReconcileAnnotationsInput,
+  ctx: OpContext,
+  now: Date,
+): AnnotationOpOutcomeResult {
+  return AnnotationOpOutcomeResultSchema.parse(
+    JSON.parse(
+      addonReconcileAnnotations(
+        JSON.stringify(content),
+        JSON.stringify(currentTargets),
+        JSON.stringify(input),
         JSON.stringify(ctx),
         now.toISOString(),
       ),

@@ -4,9 +4,10 @@
 // `fetchFresh` mocks, and every side effect by a spy. We drive the private `runMerge` through the public
 // `flush` (by making `save` throw 409/422), exactly as the real 409/422 path does.
 import { describe, expect, it } from 'vitest';
-import type { Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
+import type { AnnotationDraft, Inline, MathContent, Unit, UnitType } from '@mathmeander/schema';
 import { ApiError } from '../api/client';
 import {
+  annotationSig,
   contentKeyOf,
   type StructuralIntent,
   type StructuralNeed,
@@ -218,6 +219,7 @@ interface Harness {
     saves: SaveBody[];
     setTypes: Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>;
     structurals: Array<{ need: StructuralNeed; expectedRevision: number }>;
+    annos: Array<{ upserts: AnnotationDraft[]; deletes: string[]; expectedRevision: number }>;
     persistDraft: number;
     clearDraft: number;
     cancelFlush: number;
@@ -229,6 +231,8 @@ interface Harness {
   setFetch: (fn: () => Promise<MathContent | null>) => void;
   setOnline: (b: boolean) => void;
   setReady: (b: boolean) => void;
+  setDocAnnotations: (a: AnnotationDraft[]) => void;
+  queueAnno: (fn: () => Promise<void>) => void;
 }
 
 function makeHarness(opts: {
@@ -250,11 +254,14 @@ function makeHarness(opts: {
     saves: [] as SaveBody[],
     setTypes: [] as Array<{ unitId: string; type: UnitType | null; expectedRevision: number }>,
     structurals: [] as Array<{ need: StructuralNeed; expectedRevision: number }>,
+    annos: [] as Array<{ upserts: AnnotationDraft[]; deletes: string[]; expectedRevision: number }>,
     persistDraft: 0,
     clearDraft: 0,
     cancelFlush: 0,
     seeds: [] as MathContent[],
   };
+  let docAnnos: AnnotationDraft[] = [];
+  const annoQueue: Array<() => Promise<void>> = [];
   const saveQueue: Array<() => Promise<MathContent>> = [];
   const setTypeQueue: Array<() => Promise<MathContent>> = [];
   const structQueue: Array<() => Promise<MathContent>> = [];
@@ -337,6 +344,14 @@ function makeHarness(opts: {
     // no-op (and `setHandle` is never reached).
     setHandle: () => Promise.resolve(prior.current),
     docNameNeeds: () => [],
+    // §6.2 annotation axis: driven by `docAnnos` + `annoQueue` (empty by default → the drain no-ops, so every
+    // other test is unaffected). `applyAnnotations` resolves void (annotations don't echo content).
+    applyAnnotations: (upserts, deletes, expectedRevision) => {
+      calls.annos.push({ upserts, deletes, expectedRevision });
+      const next = annoQueue.shift();
+      return next ? next() : Promise.resolve();
+    },
+    docAnnotationDrafts: () => docAnnos,
     setStatus: (fn) => {
       state = fn(state);
     },
@@ -367,6 +382,29 @@ function makeHarness(opts: {
     setReady: (b) => {
       ready = b;
     },
+    setDocAnnotations: (a: AnnotationDraft[]) => {
+      docAnnos = a;
+    },
+    queueAnno: (fn: () => Promise<void>) => annoQueue.push(fn),
+  };
+}
+
+/** A minimal annotation draft for the drain tests. `unit` is the bound `target_unit_id` — it must be ON the
+ *  server (in the harness baseline) for the drain to SEND it (the skip-not-yet-persisted rule); defaults to
+ *  `p0`, the unit every drain test's baseline carries. */
+function annoDraft(id: string, label = 'x', unit = 'p0'): AnnotationDraft {
+  return {
+    annotation_id: id,
+    primitives: [{ kind: 'overbrace', label: { text: label, inline: [] }, gap: 'small' }],
+    targets: [
+      {
+        id: `t-${id}`,
+        role: 'target',
+        position: 0,
+        target_unit_id: unit,
+        extent: { kind: 'locator', locator: { kind: 'prose_span', start: 0, end: 1 } },
+      },
+    ],
   };
 }
 
@@ -1154,5 +1192,75 @@ describe('drainStructure — §B section axis', () => {
     expect(h.prior.current.units.find((u) => u.id === 'c1')!.parent_unit_id ?? null).toBe(null); // lifted
     expect(h.doc.docStructuralNeeds(h.prior.current)).toEqual([]); // doc adopted the lift → converged
     expect(h.getState()).toMatchObject({ dirty: false, conflict: false });
+  });
+});
+
+// ── §6.2 annotation axis (the 5th op-axis): a SEPARATE aggregate, no revision gate/bump, defer-on-error ──
+describe('drainAnnotations', () => {
+  it('a doc annotation not on the sent baseline is UPSERTED after content settles', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    h.setDocAnnotations([annoDraft('a1')]);
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(1);
+    expect(h.calls.annos[0]!.upserts.map((d) => d.annotation_id)).toEqual(['a1']);
+    expect(h.calls.annos[0]!.deletes).toEqual([]);
+    expect(h.getState()).toMatchObject({ dirty: false, error: false });
+  });
+
+  it('seeding the baseline suppresses a redundant re-upsert of an unchanged annotation', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    const d = annoDraft('a1');
+    h.ctl.seedAnnotations({ a1: annotationSig(d) });
+    h.setDocAnnotations([d]);
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(0); // nothing changed vs the seeded baseline
+  });
+
+  it('a sent annotation the doc dropped is DELETED', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    h.ctl.seedAnnotations({ a1: annotationSig(annoDraft('a1')) });
+    h.setDocAnnotations([]); // the user deleted the annotated phrase
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(1);
+    expect(h.calls.annos[0]!.deletes).toEqual(['a1']);
+    expect(h.calls.annos[0]!.upserts).toEqual([]);
+  });
+
+  it('a changed annotation (new sig) is re-upserted; the sent baseline then advances (no repeat)', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    h.ctl.seedAnnotations({ a1: annotationSig(annoDraft('a1', 'old')) });
+    h.setDocAnnotations([annoDraft('a1', 'new')]);
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(1);
+    expect(h.calls.annos[0]!.upserts.map((d) => d.annotation_id)).toEqual(['a1']);
+    // A second flush with no further change is a no-op (the baseline advanced to the persisted sig).
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(1);
+  });
+
+  it('a failed reconcile DEFERS (dirty) but NEVER surfaces as a content error — §6.2 self-heals', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    h.setDocAnnotations([annoDraft('a1')]);
+    h.queueAnno(() => Promise.reject(apiErr(500))); // a transient reconcile failure
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(1);
+    // The KEY decoupling (Fix 4): annotations are a separate aggregate — a deferred annotation is dirty (it
+    // retries), but the content-save status must NOT flip to `error` ("Couldn't save"). The content IS saved.
+    expect(h.getState()).toMatchObject({ dirty: true, error: false });
+    expect(h.calls.persistDraft).toBeGreaterThan(0);
+    // Next flush retries (the baseline never advanced on failure).
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(2);
+    expect(h.getState()).toMatchObject({ dirty: false, error: false });
+  });
+
+  it('an annotation on a NOT-YET-PERSISTED unit is skipped (no POST, no 422, no error)', async () => {
+    const h = makeHarness({ baseline: content([prose('p0', 0, 'P0')], 1) });
+    // The bound unit `u-new` is NOT in the baseline (it would be created by a content save first). The drain
+    // must skip it — never POST a target the server doesn't yet have (which would 422) — and never error.
+    h.setDocAnnotations([annoDraft('a1', 'x', 'u-new')]);
+    await h.ctl.flush();
+    expect(h.calls.annos).toHaveLength(0);
+    expect(h.getState()).toMatchObject({ error: false });
   });
 });

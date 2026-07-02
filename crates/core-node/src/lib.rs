@@ -171,6 +171,24 @@ pub fn save_content(
     )
 }
 
+/// Reconcile a host object's brace/embrace annotations (§6.2) → `AnnotationOpOutcomeResult` JSON.
+#[napi]
+pub fn reconcile_annotations(
+    content_json: String,
+    current_targets_json: String,
+    input_json: String,
+    ctx_json: String,
+    now_iso: String,
+) -> String {
+    mathmeander_core::api::reconcile_annotations(
+        &content_json,
+        &current_targets_json,
+        &input_json,
+        &ctx_json,
+        &now_iso,
+    )
+}
+
 /// Merge two prose units (current taggings passed in) → `OpOutcomeResult` JSON.
 #[napi]
 pub fn merge_units(

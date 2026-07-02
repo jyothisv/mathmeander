@@ -34,6 +34,33 @@ CREATE TABLE public.aliases (
 
 
 --
+-- Name: annotation_detail; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.annotation_detail (
+    object_id uuid NOT NULL,
+    primitives jsonb NOT NULL
+);
+
+
+--
+-- Name: annotation_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.annotation_targets (
+    id uuid NOT NULL,
+    annotation_id uuid NOT NULL,
+    role text NOT NULL,
+    "position" integer NOT NULL,
+    target_unit_id uuid NOT NULL,
+    target_object_id uuid NOT NULL,
+    extent jsonb NOT NULL,
+    status text NOT NULL,
+    provenance_id uuid NOT NULL
+);
+
+
+--
 -- Name: content_units; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -269,6 +296,22 @@ ALTER TABLE ONLY public.aliases
 
 
 --
+-- Name: annotation_detail annotation_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_detail
+    ADD CONSTRAINT annotation_detail_pkey PRIMARY KEY (object_id);
+
+
+--
+-- Name: annotation_targets annotation_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_targets
+    ADD CONSTRAINT annotation_targets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: content_units content_units_id_object_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -468,6 +511,20 @@ CREATE INDEX aliases_by_object ON public.aliases USING btree (object_id);
 
 
 --
+-- Name: annotation_targets_annotation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX annotation_targets_annotation_id_idx ON public.annotation_targets USING btree (annotation_id);
+
+
+--
+-- Name: annotation_targets_target_object_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX annotation_targets_target_object_id_idx ON public.annotation_targets USING btree (target_object_id);
+
+
+--
 -- Name: journal_day_detail_by_space_date; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -522,6 +579,38 @@ CREATE UNIQUE INDEX taggings_unique_unit ON public.taggings USING btree (tag_id,
 
 ALTER TABLE ONLY public.aliases
     ADD CONSTRAINT aliases_object_id_fkey FOREIGN KEY (object_id) REFERENCES public.objects(id);
+
+
+--
+-- Name: annotation_detail annotation_detail_object_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_detail
+    ADD CONSTRAINT annotation_detail_object_id_fkey FOREIGN KEY (object_id) REFERENCES public.objects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: annotation_targets annotation_targets_annotation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_targets
+    ADD CONSTRAINT annotation_targets_annotation_id_fkey FOREIGN KEY (annotation_id) REFERENCES public.objects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: annotation_targets annotation_targets_provenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_targets
+    ADD CONSTRAINT annotation_targets_provenance_id_fkey FOREIGN KEY (provenance_id) REFERENCES public.provenance(id);
+
+
+--
+-- Name: annotation_targets annotation_targets_target_unit_id_target_object_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.annotation_targets
+    ADD CONSTRAINT annotation_targets_target_unit_id_target_object_id_fkey FOREIGN KEY (target_unit_id, target_object_id) REFERENCES public.content_units(id, object_id) DEFERRABLE;
 
 
 --
@@ -775,4 +864,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0005'),
     ('0006'),
     ('0007'),
-    ('0008');
+    ('0008'),
+    ('0009');

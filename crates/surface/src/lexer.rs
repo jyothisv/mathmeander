@@ -31,6 +31,9 @@ pub enum Tok {
     Underscore,
     LParen,
     RParen,
+    /// `{` / `}` — the SET literal's delimiters (`{a, b, c}`, §6.3a set notation).
+    LBrace,
+    RBrace,
     Comma,
     /// A symbolic relation operator (one of `grammar::SYMBOLIC_RELATIONS`).
     Rel(String),
@@ -225,6 +228,14 @@ pub fn lex(input: &str) -> Vec<Token> {
             (b')', _) => {
                 i += 1;
                 Tok::RParen
+            }
+            (b'{', _) => {
+                i += 1;
+                Tok::LBrace
+            }
+            (b'}', _) => {
+                i += 1;
+                Tok::RBrace
             }
             (b',', _) => {
                 i += 1;

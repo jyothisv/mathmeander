@@ -83,3 +83,10 @@ id_newtype!(
     /// Identity of a version checkpoint (`object_versions` row, §6.4).
     ObjectVersionId
 );
+id_newtype!(
+    /// Identity of an `annotation_target` row (§6.2) — the anchor rows a brace/embrace
+    /// annotation binds to. The annotation itself IS an object (`ObjectType::Annotation`), so
+    /// its identity is an `ObjectId`; a target needs its own id because a primitive draws over
+    /// its target row(s) and orphaning flips a target's status by id.
+    AnnotationTargetId
+);

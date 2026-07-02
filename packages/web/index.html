@@ -320,10 +320,19 @@
          `.math-src-display` line), which collapses again on blur. The render hugs the surrounding content (no
          spurious blank line); the page reflows when the source line appears/collapses. */
       .day-editor .math-render-display {
-        display: block;
+        /* flow-root (a BFC): interior margins never COLLAPSE THROUGH this element. With plain block,
+           KaTeX's .katex-display 1em margin collapsed out at padding 0 and became interior the moment the
+           annotation reserve applied any paddingTop — a ~24px discontinuity in the padding→gap response
+           that trapped the reserve controller in a grow/shrink limit cycle (visible page flicker) whenever
+           the needed band was smaller than the discontinuity. The spacing katex-display used to provide
+           moves onto this element's own margin (1rem ≈ the previously-collapsed 1em). */
+        display: flow-root;
         text-align: center;
-        margin: 0.5rem 0;
+        margin: 1rem 0;
         cursor: pointer;
+      }
+      .day-editor .math-render-display .katex-display {
+        margin: 0;
       }
       .day-editor .math-src-display {
         display: block;
@@ -368,6 +377,133 @@
       .case-split .case-label {
         font-style: italic;
         color: rgba(110, 110, 150, 0.85);
+      }
+      /* §6.2 brace annotations. The overlay is out-of-band (appended to <body>, positioned in page coords), so
+         it never perturbs the document/caret; it does not intercept pointer events EXCEPT on the editable
+         caption. The bound range's `annoRef` mark is otherwise invisible — the brace is what reads. */
+      /* P2: the per-LINE reserve spacer — a zero-width inline-block whose height grows its LINE box on the
+         braced side (text-bottom-aligned protrudes upward for an overbrace band; text-top downward for an
+         underbrace). Decoration-only (P3): toggling annotations off removes it and the layout is pristine. */
+      .day-editor .anno-spacer {
+        display: inline;
+      }
+      .day-editor .anno-spacer-up,
+      .day-editor .anno-spacer-down {
+        display: inline-block;
+        width: 0;
+      }
+      .day-editor .anno-spacer-up {
+        vertical-align: text-bottom;
+      }
+      .day-editor .anno-spacer-down {
+        vertical-align: text-top;
+      }
+      .mm-anno-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 40;
+        pointer-events: none;
+      }
+      .mm-anno-overlay .anno-brace {
+        overflow: visible;
+      }
+      .mm-anno-overlay .anno-brace-path {
+        stroke: rgba(110, 110, 150, 0.85);
+        stroke-width: 1.4px;
+      }
+      .mm-anno-overlay .anno-label {
+        position: absolute;
+        pointer-events: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.1rem;
+        font-size: 0.82rem;
+        line-height: 1.2;
+        color: rgba(90, 90, 130, 0.95);
+        white-space: nowrap;
+        padding: 0 0.15rem;
+        border-radius: 3px;
+      }
+      .mm-anno-overlay .anno-caption {
+        cursor: text;
+        outline: none;
+        min-width: 0.5rem;
+      }
+      .mm-anno-overlay .anno-label:focus-within {
+        background: rgba(125, 125, 165, 0.12);
+      }
+      .mm-anno-overlay .anno-caption:empty::before {
+        content: 'label…';
+        color: rgba(140, 140, 160, 0.6);
+      }
+      /* The ✕ remove control (Fix 5): always present but FAINT (the overlay re-renders on every tx, so a
+         hover-only reveal is lost mid-hover); it brightens on hover of the annotation or the ✕ itself. */
+      .mm-anno-overlay .anno-remove {
+        pointer-events: auto;
+        border: none;
+        background: none;
+        padding: 0 0.15rem;
+        margin: 0;
+        font: inherit;
+        line-height: 1;
+        color: rgba(120, 120, 150, 0.85);
+        cursor: pointer;
+        border-radius: 3px;
+        opacity: 0.35;
+        transition: opacity 0.1s ease;
+      }
+      .mm-anno-overlay .anno-label:hover .anno-remove {
+        opacity: 1;
+      }
+      .mm-anno-overlay .anno-remove:hover {
+        color: #b00020;
+        background: rgba(176, 0, 32, 0.1);
+      }
+      /* ORPHAN-on-reshape: the target no longer resolves (the sub-term path/phrase changed). No brace is drawn;
+         the caption dims + gets an amber underline (the client mirror of the server flipping it to `stale`). */
+      .mm-anno-overlay .anno-orphan .anno-caption {
+        color: #b8860b;
+        border-bottom: 1px dotted #b8860b;
+        opacity: 0.75;
+      }
+      /* The annotations visibility toggle (P3) — a quiet, always-visible control by the save status. */
+      .anno-visibility-toggle {
+        margin-top: 0.25rem;
+        background: none;
+        border: 1px solid rgba(127, 127, 127, 0.25);
+        border-radius: 4px;
+        padding: 0.15rem 0.5rem;
+        font-size: 0.78rem;
+        color: rgba(110, 110, 150, 0.9);
+        cursor: pointer;
+      }
+      .anno-visibility-toggle:hover {
+        background: rgba(125, 125, 165, 0.1);
+      }
+      /* The target-first contextual popover (Over / Under), reusing the block-menu chrome. */
+      .mm-anno-popover {
+        position: absolute;
+        z-index: 55;
+        display: flex;
+        gap: 0.15rem;
+        background: #fff;
+        border: 1px solid rgba(127, 127, 127, 0.3);
+        border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+        padding: 0.2rem;
+      }
+      .mm-anno-popover button {
+        background: none;
+        border: none;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+      }
+      .mm-anno-popover button:hover {
+        background: rgba(125, 125, 165, 0.15);
       }
     </style>
   </head>

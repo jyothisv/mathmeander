@@ -40,10 +40,11 @@ use mathmeander_surface::{SurfaceEdit, rewrite_with_remap};
 
 use crate::error::ValidationError;
 use crate::ids::{
-    ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId, ProvenanceId, SpaceId, TagId,
-    TaggingId, UnitId,
+    AnnotationTargetId, ExpressionId, HandleId, LinkId, ObjectId, ObjectVersionId, ProvenanceId,
+    SpaceId, TagId, TaggingId, UnitId,
 };
 use crate::model::{
+    AnnotationDetail, AnnotationExtent, AnnotationPrimitive, AnnotationRole, AnnotationTarget,
     CanonicalObject, CharSpan, ContentLocator, DeclaredBy, EmbedTarget, Handle, HandleScope,
     HandleStatus, Inline, Link, LinkStatus, LinkType, MathExpression, ObjectStatus, ObjectType,
     ObjectVersion, Occurrence, OccurrenceTarget, ReferenceTarget, RowRelation, Tagging,
@@ -1735,8 +1736,11 @@ pub fn materialize_object(
     // A §6.5 SURFACE (journal_day; trail later) is created via its own surface op, never COPIED — a
     // copy would mint a dateless, detail-less day, bypassing UNIQUE(space_id, date). The twin of the
     // `rehome_subtree` target guard; reachable since slice 2b made journal_day producible (so instances
-    // can now exist to copy). Non-producible types have no instances, so `is_surface` is the whole gate.
-    if input.source_object.object_type.is_surface() {
+    // can now exist to copy). An `annotation` (§6.2, now producible) is likewise excluded — copying it
+    // would mint a detail-less annotation object; it is authored only via `reconcile_annotations`.
+    if input.source_object.object_type.is_surface()
+        || input.source_object.object_type == ObjectType::Annotation
+    {
         return Err(ValidationError::TypeNotMaterializable {
             object_type: input.source_object.object_type,
         });
@@ -1887,16 +1891,18 @@ pub fn rehome_subtree(
     now: DateTime<Utc>,
 ) -> Result<OpOutcome, ValidationError> {
     // The materialized object must be a producible type — the formal family, never the reserved
-    // source/annotation types (or `trail`) whose detail machinery hasn't landed (§13a/§6.1a).
+    // source type (or `trail`) whose detail machinery hasn't landed (§13a/§6.1a). (`annotation` is now
+    // producible but is excluded from capture just below — it is minted only via `reconcile_annotations`.)
     if !input.new_object_type.is_producible() {
         return Err(ValidationError::TypeNotProducibleYet {
             object_type: input.new_object_type,
         });
     }
-    // ...and never a §6.5 SURFACE. `journal_day` BECAME producible in slice 2b, but it is created
-    // via its own surface op (`create_journal_day` + a dated `journal_day_detail`), never greedy-
-    // captured — materializing one here would mint a dateless day bypassing `UNIQUE(space_id, date)`.
-    if input.new_object_type.is_surface() {
+    // ...and never a §6.5 SURFACE or an `annotation`. `journal_day` BECAME producible in slice 2b, but it
+    // is created via its own surface op (never greedy-captured — capturing one would mint a dateless day
+    // bypassing `UNIQUE(space_id, date)`); `annotation` (§6.2) likewise is minted ONLY via
+    // `reconcile_annotations`, never captured — so it is producible-but-not-materializable, like a surface.
+    if input.new_object_type.is_surface() || input.new_object_type == ObjectType::Annotation {
         return Err(ValidationError::TypeNotMaterializable {
             object_type: input.new_object_type,
         });
@@ -2618,4 +2624,233 @@ fn remint_one(
         kind: "expression".into(),
     })?;
     Ok(())
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Annotations (§6.2) — the brace/embrace annotation axis
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// One target row's client-suppliable fields (the op stamps `status` from resolution + `provenance_id`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationTargetDraft {
+    pub id: AnnotationTargetId,
+    pub role: AnnotationRole,
+    pub position: u32,
+    pub target_unit_id: UnitId,
+    pub extent: AnnotationExtent,
+}
+
+/// One annotation to upsert: its drawing primitives + the target rows it binds. The glue REPLACES the
+/// annotation's detail + targets with these (delete-then-reinsert per annotation, so re-derivation is
+/// idempotent — the editor re-emits an annotation whenever any of its parts changed).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationDraft {
+    pub annotation_id: ObjectId,
+    pub primitives: Vec<AnnotationPrimitive>,
+    pub targets: Vec<AnnotationTargetDraft>,
+}
+
+/// `reconcile_annotations` payload (§6.2): the annotation-axis delta over a host object. `space_id` is
+/// glue-supplied (the route overrides it from the session, like `set_handle`) so a new annotation object is
+/// space-scoped. `expected_revision` rides for the §6.4 gate (never read by the core).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct ReconcileAnnotationsInput {
+    pub expected_revision: u32,
+    pub space_id: SpaceId,
+    pub upserts: Vec<AnnotationDraft>,
+    pub deletes: Vec<ObjectId>,
+}
+
+/// Everything `reconcile_annotations` produces for the glue to persist in one transaction (§6.2): new
+/// annotation OBJECTS (first-seen ids), the detail rows (how each is drawn), the full target rows (status
+/// stamped `Active`, or `Stale` for an orphaned sub-anchor), and the removed annotation ids (their detail +
+/// targets cascade). The annotation object's own provenance is the op's (`ctx.provenance_id`), inserted by
+/// the glue like every other op.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-artifact", derive(schemars::JsonSchema))]
+pub struct AnnotationOpOutcome {
+    pub new_objects: Vec<CanonicalObject>,
+    pub details_upserted: Vec<AnnotationDetail>,
+    pub targets_upserted: Vec<AnnotationTarget>,
+    pub objects_removed: Vec<ObjectId>,
+}
+
+/// The canonical surface of a `MathExpression` by id anywhere in a host's content (a display `Math` unit,
+/// or an inline `Math` atom in prose / a heading title) — for resolving a `SubTerm`/`ExpressionSpan` extent.
+fn expression_surface(host: &MathContent, id: ExpressionId) -> Option<&str> {
+    for u in &host.units {
+        match &u.content {
+            UnitContent::Math { expr } if expr.id == id => return Some(&expr.surface_text),
+            UnitContent::Prose { inline, .. } | UnitContent::Heading { inline, .. } => {
+                for el in inline {
+                    if let Inline::Math { expr, .. } = el
+                        && expr.id == id
+                    {
+                        return Some(&expr.surface_text);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Does an annotation's extent still BIND to something in the host? A `SubTerm` path must resolve in its
+/// expression's AST (`path::resolve`); a `ProseSpan`/`ExpressionSpan` must be in range; a `WholeUnit` is
+/// satisfied by the (caller-checked) unit existing. `false` = an ORPHAN (the sub-part reshaped away) → `Stale`.
+fn extent_resolves(extent: &AnnotationExtent, unit: &Unit, host: &MathContent) -> bool {
+    match extent {
+        AnnotationExtent::SubTerm {
+            expression_id,
+            term_path,
+        } => {
+            let Some(surface) = expression_surface(host, *expression_id) else {
+                return false;
+            };
+            let expr = mathmeander_surface::parser::parse(surface);
+            let path = mathmeander_surface::path::StructuralPath(
+                term_path.iter().map(|&i| i as usize).collect(),
+            );
+            mathmeander_surface::path::resolve(&expr, &path).is_some()
+        }
+        AnnotationExtent::Locator { locator } => match locator {
+            ContentLocator::WholeUnit => true,
+            ContentLocator::ProseSpan { start, end } => match &unit.content {
+                UnitContent::Prose { text, .. } | UnitContent::Heading { text, .. } => {
+                    start <= end && *end <= text.chars().count() as u32
+                }
+                _ => false,
+            },
+            ContentLocator::ExpressionSpan {
+                expression_id,
+                start,
+                end,
+            } => match expression_surface(host, *expression_id) {
+                Some(surface) => start <= end && *end <= surface.chars().count() as u32,
+                None => false,
+            },
+        },
+    }
+}
+
+/// Reconcile a document's brace/embrace ANNOTATIONS (§6.2) against the current rows — the annotation-axis
+/// analogue of `save_content`. UPSERTS replace an annotation's detail + targets (validated against the host;
+/// a broken sub-anchor flips to `Stale` — orphan, never dropped); DELETES remove annotation objects — but
+/// ONLY ids among `current`'s annotations of THIS host: the input's deletes are otherwise attacker-chosen
+/// object ids (an authenticated client could name any object in the store), and mechanically the core is
+/// where that invariant lives. Unknown ids are silently dropped (idempotent delete — the self-healing
+/// annotation axis re-derives; rejecting would wedge autosave when another session already deleted the id).
+/// A first-seen annotation id yields a fresh `annotation` OBJECT (minted directly, like `create_notebook` —
+/// producible-but-not-directly-creatable). Deliberately NO revision gate: this axis is server-authoritative
+/// last-write-wins by design (it never gates or bumps the host revision). Pure: ids + `now` + provenance
+/// are passed in.
+pub fn reconcile_annotations(
+    host: &MathContent,
+    current: &[AnnotationTarget],
+    input: &ReconcileAnnotationsInput,
+    ctx: &OpContext,
+    now: DateTime<Utc>,
+) -> Result<AnnotationOpOutcome, ValidationError> {
+    let units_by_id: std::collections::HashMap<UnitId, &Unit> =
+        host.units.iter().map(|u| (u.id, u)).collect();
+    let existing: std::collections::HashSet<ObjectId> =
+        current.iter().map(|t| t.annotation_id).collect();
+
+    let mut new_objects = Vec::new();
+    let mut details_upserted = Vec::new();
+    let mut targets_upserted = Vec::new();
+
+    for draft in &input.upserts {
+        if draft.primitives.is_empty() {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!(
+                    "annotation {} has no primitive to draw",
+                    draft.annotation_id
+                ),
+            });
+        }
+        if draft.targets.is_empty() {
+            return Err(ValidationError::ContentSaveInvalid {
+                reason: format!("annotation {} binds nothing", draft.annotation_id),
+            });
+        }
+        // A label carries the SAME span contract as Prose (§6.2 model doc) — enforce it mechanically
+        // (in-bounds spans, zero-width Math/Reference atoms), exactly as save_content does for prose.
+        for prim in &draft.primitives {
+            let (AnnotationPrimitive::Overbrace { label, .. }
+            | AnnotationPrimitive::Underbrace { label, .. }
+            | AnnotationPrimitive::LeftBrace { label, .. }
+            | AnnotationPrimitive::RightBrace { label, .. }) = prim;
+            validate_prose_inline(&label.text, &label.inline)?;
+        }
+        details_upserted.push(AnnotationDetail {
+            object_id: draft.annotation_id,
+            primitives: draft.primitives.clone(),
+        });
+        for td in &draft.targets {
+            // The bound unit MUST be a live unit of THIS host (the composite FK requires it); a deleted unit
+            // is a full orphan the editor drops at the mark. A live unit whose SUB-part (path/span) is gone
+            // is a graceful orphan → `Stale`.
+            let Some(unit) = units_by_id.get(&td.target_unit_id) else {
+                return Err(ValidationError::ContentSaveInvalid {
+                    reason: format!(
+                        "annotation target {} references unit {} not in this object",
+                        td.id, td.target_unit_id
+                    ),
+                });
+            };
+            let status = if extent_resolves(&td.extent, unit, host) {
+                LinkStatus::Active
+            } else {
+                LinkStatus::Stale
+            };
+            targets_upserted.push(AnnotationTarget {
+                id: td.id,
+                annotation_id: draft.annotation_id,
+                role: td.role,
+                position: td.position,
+                target_unit_id: td.target_unit_id,
+                target_object_id: host.object_id,
+                extent: td.extent.clone(),
+                status,
+                provenance_id: ctx.provenance_id,
+            });
+        }
+        if !existing.contains(&draft.annotation_id) {
+            new_objects.push(CanonicalObject {
+                id: draft.annotation_id,
+                object_type: ObjectType::Annotation,
+                title: None,
+                raw_source: None,
+                status: ObjectStatus::Draft,
+                schema_version: crate::CURRENT_SCHEMA_VERSION,
+                revision: 1,
+                provenance_id: ctx.provenance_id,
+                space_id: input.space_id,
+                created_at: now,
+                updated_at: now,
+                extra: serde_json::Map::new(),
+            });
+        }
+    }
+
+    // Deletes constrained to THIS host's own annotations (see the doc comment): never pass a client-named
+    // id through to a DELETE it has no claim on.
+    let objects_removed = input
+        .deletes
+        .iter()
+        .copied()
+        .filter(|id| existing.contains(id))
+        .collect();
+
+    Ok(AnnotationOpOutcome {
+        new_objects,
+        details_upserted,
+        targets_upserted,
+        objects_removed,
+    })
 }
