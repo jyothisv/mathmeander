@@ -35,6 +35,7 @@ import { annoOccurrences } from './annoRecognize';
 import { suppressMathRevealAt } from './mathLivePreview';
 import { glyphRects, tightRect } from './domGeom';
 import { spanGlyphRects, spanHullSides } from './exprSpanGeom';
+import { isMathRuntimeReady, surfacePaths } from './mathRuntime';
 import {
   BRACE_DEPTH,
   LABEL_HEIGHT,
@@ -477,9 +478,33 @@ class AnnoOverlay {
       geos.push({ v, u, blockDom, gap, bound, lineEdge, level: 0, off: 0, rowY: null });
     }
 
-    // STACKING levels: same-block, same-side annotations whose union rects overlap (both axes — the same
-    // line) stack — the NARROWEST brace sits nearest the content (level 0), wider/containing ones farther
-    // out. Level = index within the overlap cluster sorted by width ascending.
+    // STACKING levels: same-block, same-side annotations that CONTAIN one another stack — the NARROWEST
+    // brace sits nearest the content (level 0), wider/containing ones farther out. Containment is
+    // STRUCTURAL for two math targets of the SAME expression (char-span superset — the truth), geometric
+    // (box overlap on both axes) only across expressions/prose: pixel boxes GRAZE — an exponent's glyph
+    // can horizontally overlap the neighbouring group's box by a hair at some zoom/DPR, which stacked an
+    // UNRELATED annotation as if nested (its brace + caption hoisted above everything: the reported
+    // regression).
+    const exprSpanCache = new Map<string, Map<string, { start: number; end: number }> | null>();
+    const structSpan = (
+      g: (typeof geos)[number],
+    ): { exprId: string; start: number; end: number } | null => {
+      const ext = g.v.extent;
+      if (ext.kind === 'prose_span') return null;
+      if (ext.kind === 'expression_span')
+        return { exprId: ext.expressionId, start: ext.start, end: ext.end };
+      let spans = exprSpanCache.get(ext.expressionId);
+      if (spans === undefined) {
+        const surface = surfaceForView(this.view, g.v);
+        spans =
+          surface != null && isMathRuntimeReady()
+            ? new Map(surfacePaths(surface).map((p) => [p.path.join('.'), p.charSpan]))
+            : null;
+        exprSpanCache.set(ext.expressionId, spans);
+      }
+      const span = spans?.get(ext.termPath.join('.'));
+      return span ? { exprId: ext.expressionId, start: span.start, end: span.end } : null;
+    };
     const groups = new Map<string, typeof geos>();
     geos.forEach((g, i) => {
       if (!g.u || !g.blockDom) return;
@@ -495,11 +520,24 @@ class AnnoOverlay {
         let level = 0;
         for (let j = 0; j < i; j += 1) {
           const other = sorted[j]!;
-          const overlapsX =
-            Math.min(me.u!.right, other.u!.right) - Math.max(me.u!.left, other.u!.left) > 1;
-          const overlapsY =
-            Math.min(me.u!.bottom, other.u!.bottom) - Math.max(me.u!.top, other.u!.top) > 1;
-          if (overlapsX && overlapsY) level = Math.max(level, other.level + 1);
+          const sMe = structSpan(me);
+          const sOther = structSpan(other);
+          let nested: boolean;
+          if (sMe && sOther && sMe.exprId === sOther.exprId) {
+            // `me` is the wider of the pair (width-sorted): it stacks OUTSIDE `other` only when it
+            // structurally contains it as a PROPER superset of source chars.
+            nested =
+              sMe.start <= sOther.start &&
+              sOther.end <= sMe.end &&
+              (sMe.start < sOther.start || sOther.end < sMe.end);
+          } else {
+            const overlapsX =
+              Math.min(me.u!.right, other.u!.right) - Math.max(me.u!.left, other.u!.left) > 1;
+            const overlapsY =
+              Math.min(me.u!.bottom, other.u!.bottom) - Math.max(me.u!.top, other.u!.top) > 1;
+            nested = overlapsX && overlapsY;
+          }
+          if (nested) level = Math.max(level, other.level + 1);
         }
         me.level = level;
       }
@@ -517,11 +555,28 @@ class AnnoOverlay {
     for (const groupArr of groups.values()) {
       const byTop = groupArr.slice().sort((a, b) => a.u!.top - b.u!.top);
       const clusters: (typeof geos)[] = [];
+      // Targets of ONE expression share its line BY CONSTRUCTION (systems are gated to slice 1b) — never
+      // let a knife-edge glyph gap split them across clusters (a raised exponent's box can miss its base
+      // row's vertical range by a pixel at some zoom levels).
+      const clusterByExpr = new Map<string, (typeof geos)[number][]>();
       for (const g of byTop) {
+        const exprId = g.v.extent.kind !== 'prose_span' ? g.v.extent.expressionId : null;
+        const structural = exprId ? clusterByExpr.get(exprId) : undefined;
+        if (structural) {
+          structural.push(g);
+          continue;
+        }
         const last = clusters[clusters.length - 1];
         const lastBottom = last ? Math.max(...last.map((m) => m.u!.bottom)) : -Infinity;
-        if (last && g.u!.top < lastBottom) last.push(g);
-        else clusters.push([g]);
+        let target: (typeof geos)[number][];
+        if (last && g.u!.top < lastBottom) {
+          last.push(g);
+          target = last;
+        } else {
+          target = [g];
+          clusters.push(target);
+        }
+        if (exprId) clusterByExpr.set(exprId, target);
       }
       for (const arr of clusters) this.layoutSlabs(arr);
     }
